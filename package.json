@@ -9,6 +9,8 @@
   },
   "scripts": {
     "demo": "node --no-warnings src/demo.ts",
+    "demo:challenge": "node --no-warnings src/foundation/demo.ts",
+    "challenge": "node --no-warnings src/foundation/cli.ts",
     "test": "node --no-warnings --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "mcp": "node --no-warnings src/mcp-server.ts"
   }

@@ -1,0 +1,29 @@
+{
+  "id": "contract-registry",
+  "title": "Cross-repo contract registry",
+  "problem": "How should AgentFactory let repos and workstreams change a shared interface (APIs, events, file formats) without breaking each other, when consumers may sit in other repos, including client-owned ones?",
+  "constraints": [
+    "Zero-dependency MVP: Node built-ins and git only",
+    "Respect engagement walls: no shared state across clients",
+    "Breaking changes route by decision rights",
+    "Some consumers are invisible to us"
+  ],
+  "criteria": [
+    { "id": "catches_breaking", "text": "Catches breaking changes before merge, including semantic ones", "weight": 3 },
+    { "id": "cost_to_run", "text": "Low cost to build and run for a small team", "weight": 2 },
+    { "id": "fits_walls", "text": "Works inside engagement walls and client-owned repos", "weight": 2 },
+    { "id": "time_to_mvp", "text": "Short time to a working MVP", "weight": 1 }
+  ],
+  "owner": "partner",
+  "angles": ["user-value", "feasibility", "risk", "contrarian", "outside-view"],
+  "challenger": "challenger",
+  "lead": "lead",
+  "budget": { "optionsPerAngle": 2, "mvpAssumptions": 3 },
+  "evidence": [
+    { "source": "repo:src/factcheck.ts", "text": "Today's registry is one JSON file of consumer names, read by the fact-checker's no_other_consumers claim.", "tags": ["code"] },
+    { "source": "repo:src/evaluator.ts", "text": "The Evaluator already replays frozen criteria at a pinned commit, with pluggable checkers.", "tags": ["code", "constraints"] },
+    { "source": "text:engagement test run, 2026-10-28", "text": "A change that switched a unit from percent to dollars kept an identical output schema and failed 7 example-based cases.", "tags": ["incidents", "risk"] },
+    { "source": "text:prior art", "text": "Consumer-driven contract testing (Pact, can-i-deploy) and schema-registry compatibility modes (backward, forward, full) are established patterns.", "tags": ["prior-art"] },
+    { "source": "repo:docs/client-repo-policy.md", "text": "Client repos accept our commit trailers and lease refs.", "tags": ["constraints"] }
+  ]
+}

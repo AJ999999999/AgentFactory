@@ -1,0 +1,15 @@
+{
+  "name": "agentfactory",
+  "version": "0.1.0",
+  "description": "MVP of a git-native multi-agent system: shared context layer, Observator/Solver/Evaluator self-evolution loop, escalation policy for one human.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "demo": "node --no-warnings src/demo.ts",
+    "test": "node --no-warnings --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "mcp": "node --no-warnings src/mcp-server.ts"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "repo:read": { "grantableByFactory": true, "description": "Read the engagement's repos" },
+  "repo:write:lease": { "grantableByFactory": true, "description": "Write inside the member's leased paths only" },
+  "mcp:context:author": { "grantableByFactory": true, "description": "Context layer tools for authors" },
+  "mcp:context:lead": { "grantableByFactory": true, "description": "Context layer tools for leads, including spawn and charter" },
+  "web:read": { "grantableByFactory": true, "description": "Read public web pages for research" },
+  "data:market:read": { "grantableByFactory": true, "requiresDecision": "new_vendor", "description": "Read from the market data vendor, once one is chosen" },
+  "broker:read_positions": { "grantableByFactory": false, "description": "Read broker positions. Partner decision only" },
+  "broker:trade": { "grantableByFactory": false, "never": true, "description": "Place orders. Never granted to agents" },
+  "secrets:read": { "grantableByFactory": false, "description": "Read engagement secrets. Partner decision only" }
+}

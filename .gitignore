@@ -1,0 +1,11 @@
+node_modules/
+*.log
+.DS_Store
+
+# Generated run output
+TEST-RESULTS.txt
+DEMO-OUTPUT.txt
+*-DEMO.txt
+
+# Private engagements are excluded locally in .git/info/exclude (see README),
+# so this public file never names them.

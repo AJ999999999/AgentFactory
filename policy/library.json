@@ -1,0 +1,25 @@
+{
+  "skills": {
+    "base": ["orient", "plan-and-claim-scope", "checkpoint", "self-check", "report", "stop-and-ask"],
+    "lead": ["decompose-along-boundaries", "write-charter-by-reference", "staff-from-library", "review-structured-reports", "answer-or-batch-questions"],
+    "coordinator": ["schedule", "track-dependencies", "manage-leases", "merge-queue", "status-report"],
+    "domain": {
+      "tdd": { "source": "firm", "status": "active" },
+      "contract-codegen": { "source": "firm", "status": "active" }
+    }
+  },
+  "roles": {
+    "engagement-lead": { "version": 3, "kind": "lead", "model": "large-model", "skills": [], "permissions": ["repo:read", "mcp:context:lead"], "decisionRights": ["plan_within_sow", "workstream_interfaces", "agent_config"] },
+    "coordinator": { "version": 2, "kind": "coordinator", "model": "small-model", "skills": [], "permissions": ["repo:read", "mcp:context:lead"], "decisionRights": [] },
+    "backend-engineer": { "version": 7, "kind": "worker", "model": "large-model", "skills": ["tdd", "contract-codegen"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:author", "data:market:read"], "decisionRights": ["implementation"] },
+    "app-surface-engineer": { "version": 4, "kind": "worker", "model": "large-model", "skills": ["contract-codegen"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:author"], "decisionRights": ["implementation"] },
+    "test-case-worker": { "version": 2, "kind": "side", "model": "small-model", "skills": ["tdd"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:author"], "decisionRights": [] },
+    "data-research-worker": { "version": 1, "kind": "side", "model": "small-model", "skills": [], "permissions": ["web:read", "repo:write:lease"], "decisionRights": [] }
+  },
+  "moduleKinds": {
+    "backend": "backend-engineer",
+    "frontend": "app-surface-engineer",
+    "tests": "test-case-worker",
+    "research": "data-research-worker"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "attention_budget": {
+    "max_briefs_per_day": 8,
+    "interrupt_immediately": ["blocks_critical_path", "security_incident"]
+  },
+  "triggers": {
+    "irreversible": ["data_migration", "destructive_delete", "breaking_public_api_change", "production_release", "force_push_to_protected_branch"],
+    "boundary": {
+      "contract_paths": ["contracts/**"],
+      "tags": ["cross_repo_change_without_owner_ack", "new_external_dependency_or_vendor"]
+    },
+    "disagreement": { "author_reviewer_unresolved_after_rounds": 2 },
+    "thresholds": {
+      "security_paths": ["auth/**", "iam/**", "secrets/**", "crypto/**"],
+      "compliance_tags": ["customer_pii", "data_retention", "audit_logging"],
+      "monthly_cost_delta_usd": 500,
+      "diff_lines": 800,
+      "files_changed": 25
+    }
+  },
+  "auto_resolve": {
+    "require": ["ci_green", "blind_review_approved", "all_load_bearing_claims_verified", "fresh_precedent_match", "revertible_in_one_commit"]
+  },
+  "evolution": {
+    "kinds": ["basis_propagation", "agent_config_change"],
+    "require": ["ci_green", "replay_passed", "all_load_bearing_claims_verified", "revertible_in_one_commit"],
+    "replay_required_when": { "kinds": ["basis_propagation", "agent_config_change"], "diff_lines_over": 200 },
+    "revise_max_rounds": 2
+  },
+  "never_auto": {
+    "kinds": ["policy_change", "criteria_change"],
+    "paths": [".agents/escalation-policy.json", ".agents/context/tasks/*.criteria.json"]
+  },
+  "trust": {
+    "demote_when": { "revert_rate_30d": 0.05, "missed_escalations": 1 }
+  },
+  "decision_rights": {
+    "scope_priorities_acceptance": "client",
+    "client_production_or_data": "client",
+    "basis_rules": "client",
+    "price_contract_change_order_cost": "partner",
+    "client_commitment": "partner",
+    "firm_risk_and_policy": "partner",
+    "new_vendor": "partner",
+    "cross_engagement_staffing": "partner",
+    "library_promotion": "partner",
+    "plan_within_sow": "engagement_lead",
+    "workstream_interfaces": "engagement_lead",
+    "agent_config": "engagement_lead",
+    "module_design": "workstream_lead",
+    "implementation": "task_agent",
+    "owner_conflict": "partner"
+  },
+  "profiles": {
+    "standard": { "coordinator": true, "max_workers": 7, "combined_digest_when_client_is_partner": false },
+    "small_engagement": { "coordinator": false, "max_workers": 3, "combined_digest_when_client_is_partner": true }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "raee-context": {
+      "type": "local",
+      "command": "node",
+      "args": ["--no-warnings", "tools/agentfactory/src/mcp-server.ts"],
+      "env": {
+        "RAEE_REPO": "."
+      },
+      "tools": ["*"]
+    }
+  }
+}

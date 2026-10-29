@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node .agents/hooks/session-start.mjs",
+        "timeoutSec": 5
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "node .agents/hooks/pre-tool-use.mjs",
+        "timeoutSec": 5
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node .agents/hooks/session-end.mjs",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

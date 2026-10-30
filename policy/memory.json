@@ -1,0 +1,9 @@
+{
+  "comment": "How memory about a principal (you, a client) turns into what agents may assume. Preferences fade unless repeated; intentions expire; a suggestion of ours that was accepted is not new evidence of a preference. Nothing in memory grants permission.",
+  "sourceWeights": { "stated": 1, "chosen": 0.6, "inferred": 0.25, "accepted": 0 },
+  "halfLifeDays": { "preference": 180 },
+  "intentionDays": 14,
+  "defaultAbove": 0.5,
+  "staleBelow": 0.25,
+  "contestedRatio": 0.6
+}

@@ -1,6 +1,6 @@
 // Long-running harness, from the command line.
 //
-//   npm run harness -- open <engagement.json> [--remote <git url or path>] [--world world.mjs] [--seed dir]   start an engagement
+//   npm run harness -- open <engagement.json> [--remote <git url or path>] [--world world.mjs] [--seed dir] [--memory dir]   start an engagement
 //   npm run harness -- tick [--runner r1] [--caps shell,gpu] [--slots 2]    one wake (for Task Scheduler / cron)
 //   npm run harness -- loop [--runner r1] [--poll 10] [--log file] ...        keep waking, sleeping as told
 //   npm run harness -- doctor [--copilot path]                                check this machine end to end
@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { cloneControl, Git, initBare } from "../git.ts";
 import { resolveCommand, runCommand, sleepUntil } from "../proc.ts";
+import { aboutLines, loadMemoryPolicy, readMemory, understand } from "../memory/memory.ts";
 import { CopilotTurnAgent, userAgentsDir } from "./agents.ts";
 import type { LaneConfig, TurnAgent } from "./agents.ts";
 import { Harness } from "./harness.ts";
@@ -55,7 +56,7 @@ function currentEngagement(): string {
 }
 
 async function harness(engagement: string): Promise<Harness> {
-  const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string; world?: string };
+  const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string; world?: string; memory?: string };
   const lanesFile = path.join(ROOT, "policy", "harness-agents.json");
   const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string>; profilePrefix?: string; models?: Record<string, string> } & ToolConfig;
   // A path to the binary is resolved here; turns run with the worktree as their cwd.
@@ -70,7 +71,15 @@ async function harness(engagement: string): Promise<Harness> {
   // scheduled loop loads the same red lines a manual run does.
   const worldFile = flag("world") ?? cfg.world;
   const world: World = !worldFile ? {} : worldFile.startsWith("case:") ? await caseWorld(worldFile.slice(5)) : ((await import(path.resolve(worldFile))) as { world: World }).world;
-  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`) });
+  // Memory about the people this engagement serves (open --memory <dir>), read fresh
+  // for every turn so a lapsed plan is gone the moment it lapses.
+  const memPolicy = loadMemoryPolicy(path.join(ROOT, "policy", "memory.json"));
+  const about = (s: { engagement: { memory?: { principal: string; subjects: string[] } } | null }) => {
+    const m = s.engagement?.memory;
+    if (!m || !cfg.memory) return [];
+    return aboutLines(understand(readMemory(cfg.memory, m.principal), Date.now(), memPolicy, { subjects: m.subjects }), m.principal);
+  };
+  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`), about });
 }
 
 async function caseWorld(name: string): Promise<World> {
@@ -145,7 +154,8 @@ async function main(): Promise<void> {
       const w = flag("world");
       const world = w ? (w.startsWith("case:") ? w : path.resolve(w)) : undefined;
       if (world && !world.startsWith("case:")) await import(world); // fail now, not in the scheduled task
-      fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}) }, null, 2));
+      const mem = flag("memory") ? path.resolve(flag("memory")!) : undefined;
+      fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}), ...(mem ? { memory: mem } : {}) }, null, 2));
       await (await harness(def.id)).open(def);
       console.log(`opened ${def.id}: ${def.goals.length} goal(s), state in ${remote}`);
       return;

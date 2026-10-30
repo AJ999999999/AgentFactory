@@ -179,6 +179,7 @@ The user's brief says what to achieve; it doesn't say who should work on it. The
 - **State lives only in git.** Every event is a file on main, never edited. Claims and the "last checked" times live in refs; losing the latter costs one extra check. A fresh clone projects exactly the same state, which a test checks.
 - **Rules can run anywhere.** Rule-generated events have ids derived from their cause, so two machines noticing the same thing write it once.
 - **The handoff packet.** It's generated from state, never written by a model, and stays under 16 lines and 1,800 characters however long the engagement has run. The full record is one command away.
+- **What the people it serves have told us arrives as defaults, never as permission.** An engagement that declares a principal and subjects gets that principal's current memory in its packets: the defaults that apply, and what to check first. Lapsed plans, other subjects and guesses we made ourselves never pass as preferences. See the README's memory section.
 - **Time follows cause and effect.** The log is ordered by time, and machines' clocks disagree. A writer never stamps an event earlier than the latest event it has read: the stamp is the wall clock, nudged forward by a millisecond only when the clock would contradict what the writer saw.
 
 ## What the simulations caught

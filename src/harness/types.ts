@@ -116,6 +116,9 @@ export type EngagementDef = {
   experts?: string[]; // roles whose judgments count as expert evidence (lawyer, pharmacist)
   redLines?: string[]; // registered checkers run on every turn
   evidence?: Partial<Record<Category, Grade[]>>; // overrides policy defaults
+  // Whose memory the agents should see, and on which subjects ("work.*"): what applies
+  // reaches their packets as defaults and things to check, never as permission.
+  memory?: { principal: string; subjects: string[] };
 };
 
 // ---------- work ----------

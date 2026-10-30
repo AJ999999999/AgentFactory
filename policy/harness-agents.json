@@ -1,0 +1,10 @@
+{
+  "comment": "Lane -> Copilot CLI custom agent and model. Replan and synthesis judge other lanes' work, so they run on a different model family. Model names are placeholders: use the ones your Copilot plan offers.",
+  "fallback": { "agent": "author", "model": "model-a" },
+  "lanes": {
+    "replan": { "agent": "strategist", "model": "model-b" },
+    "synthesis": { "agent": "strategist", "model": "model-b" },
+    "replicate": { "agent": "experimenter", "model": "model-c" },
+    "review": { "agent": "blind-reviewer", "model": "model-b" }
+  }
+}

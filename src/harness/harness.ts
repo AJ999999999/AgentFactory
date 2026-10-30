@@ -107,6 +107,11 @@ export class Harness {
       });
       for (const name of basisNames) if (!currentBasis(repo, def.id, name)) writeBasis(repo, def.id, name, { fingerprint: "initial" }, "open");
     });
+    // Run the rules once, so the team is staffed and the first questions (an intake
+    // action, a spend) are waiting the moment the engagement is opened.
+    const s = await this.state();
+    const follow = settle(s, now);
+    if (follow.length) await appendEvents(this.control, this.engagement, follow, `harness: open ${def.id}`);
   }
 
   async state(knownMain?: string): Promise<State> {

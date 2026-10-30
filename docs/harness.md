@@ -204,7 +204,10 @@ npm run harness -- tick --world case:kids-rockets    # one wake
 npm run harness -- loop --runner laptop --caps shell # keep waking; sleeps as told
 npm run harness -- status --packet                   # beliefs, open work, what it's waiting on, questions for you
 npm run harness -- answer ask-spend-ads --choice approve
+npm run harness -- answer ask-action-playtest --choice done --result supports --metrics attempts_to_clear=9 --note "finished on attempt 9"
 ```
+
+`open` also takes `--world <module>` (checkers and providers, saved with the engagement) and `--seed <dir>` (files committed into the engagement repo first, such as a brief). An answer is recorded as the role the question was addressed to unless you pass `--by`, because the grade of what you report depends on who you are. Agents see the answers their work depends on, directly or through earlier work, in their handoff packet.
 
 You can run it in two ways:
 - **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. The README's Windows section has the steps.

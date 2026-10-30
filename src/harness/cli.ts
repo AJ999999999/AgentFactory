@@ -1,11 +1,12 @@
 // Long-running harness, from the command line.
 //
-//   npm run harness -- open <engagement.json> [--remote <git url or path>]   start an engagement
+//   npm run harness -- open <engagement.json> [--remote <git url or path>] [--world world.mjs] [--seed dir]   start an engagement
 //   npm run harness -- tick [--runner r1] [--caps shell,gpu] [--slots 2]    one wake (for Task Scheduler / cron)
 //   npm run harness -- loop [--runner r1] [--poll 10] [--log file] ...        keep waking, sleeping as told
 //   npm run harness -- doctor [--copilot path]                                check this machine end to end
 //   npm run harness -- status [--goal G] [--for partner]                      handoff packets and open questions
 //   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300]
+//                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
 //
 // State lives in git (the control repo); .af/harness/<engagement>/config.json only
 // says where that repo is. The runner (Copilot CLI, by default) and the world (job,
@@ -54,18 +55,20 @@ function currentEngagement(): string {
 }
 
 async function harness(engagement: string): Promise<Harness> {
-  const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string };
+  const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string; world?: string };
   const lanesFile = path.join(ROOT, "policy", "harness-agents.json");
-  const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string>; profilePrefix?: string } & ToolConfig;
+  const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string>; profilePrefix?: string; models?: Record<string, string> } & ToolConfig;
   // A path to the binary is resolved here; turns run with the worktree as their cwd.
   const bin = flag("copilot", "copilot")!;
   const agent: TurnAgent = new CopilotTurnAgent({
-    bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: cfg2.fallback, lanes: cfg2.lanes, agents: cfg2.agents, profilePrefix: cfg2.profilePrefix,
+    bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: cfg2.fallback, lanes: cfg2.lanes, agents: cfg2.agents, profilePrefix: cfg2.profilePrefix, models: cfg2.models,
     tools: { tools: cfg2.tools, always: cfg2.always }, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000,
   });
   // --world <module.ts> exporting `world` (your job, metric and probe providers and
   // checkers), or case:<name> for a built-in case's checkers and simulated sources.
-  const worldFile = flag("world");
+  // The engagement's world (checkers, providers) is saved when it's opened, so the
+  // scheduled loop loads the same red lines a manual run does.
+  const worldFile = flag("world") ?? cfg.world;
   const world: World = !worldFile ? {} : worldFile.startsWith("case:") ? await caseWorld(worldFile.slice(5)) : ((await import(path.resolve(worldFile))) as { world: World }).world;
   return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`) });
 }
@@ -105,6 +108,9 @@ async function main(): Promise<void> {
     case "open": {
       // A JSON file, or "case:<name>" for one of the six built-in cases' definitions.
       const def = rest[0].startsWith("case:") ? await caseDef(rest[0].slice(5)) : (JSON.parse(fs.readFileSync(rest[0], "utf8")) as EngagementDef);
+      // Check what's passed before anything is created.
+      if (flag("seed") && !fs.statSync(path.resolve(flag("seed")!), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`--seed ${flag("seed")} is not a folder`);
+      if (flag("world") && !flag("world")!.startsWith("case:")) await import(path.resolve(flag("world")!));
       const dir = home(def.id);
       fs.mkdirSync(dir, { recursive: true });
       let remote = flag("remote");
@@ -122,7 +128,24 @@ async function main(): Promise<void> {
       }
       const repo = path.join(dir, "control");
       if (!fs.existsSync(repo)) cloneControl(remote, repo);
-      fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote }, null, 2));
+      // --seed <dir>: files the work builds on (a brief, contracts) committed into the
+      // engagement repo first, where agents read them and you can edit them.
+      const seedDir = flag("seed");
+      if (seedDir) {
+        const src = path.resolve(seedDir);
+        const g = new Git(repo, { name: "partner", email: "partner@agents.local" });
+        await g.runAsync(["fetch", "-q", "origin"]);
+        await g.tryAsync(["reset", "-q", "--hard", "origin/main"]);
+        for (const e of fs.readdirSync(src)) {
+          if ([".agents", "policy", ".git", ".af"].includes(e)) throw new Error(`--seed can't write ${e}/: it belongs to the harness`);
+          fs.cpSync(path.join(src, e), path.join(repo, e), { recursive: true });
+        }
+        if (await g.commitAll(`seed ${def.id}: ${fs.readdirSync(src).join(", ")}`, { Engagement: def.id })) await g.runAsync(["push", "-q", "origin", "HEAD:main"]);
+      }
+      const w = flag("world");
+      const world = w ? (w.startsWith("case:") ? w : path.resolve(w)) : undefined;
+      if (world && !world.startsWith("case:")) await import(world); // fail now, not in the scheduled task
+      fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}) }, null, 2));
       await (await harness(def.id)).open(def);
       console.log(`opened ${def.id}: ${def.goals.length} goal(s), state in ${remote}`);
       return;
@@ -244,14 +267,26 @@ async function main(): Promise<void> {
       const h = await harness(currentEngagement());
       const revFile = flag("revision");
       const budget = flag("budget");
+      const kv = (x: string) => Object.fromEntries(x.split(",").map((p) => { const [k, v] = p.split("="); return [k.trim(), Number(v)]; }));
+      // What you observed (a playtest, a review), as evidence on the assumption the
+      // action tests. Its grade comes from who you are, never from the answer.
+      const result = flag("result") as "supports" | "refutes" | "neutral" | undefined;
+      if (result && !["supports", "refutes", "neutral"].includes(result)) throw new Error("--result is supports, refutes or neutral");
+      const s = await h.state();
+      const ask = s.asks.get(rest[0]);
+      const tests = ask?.todo ? s.todos.get(ask.todo)?.tests : undefined;
+      const metrics = flag("metrics");
+      // You answer as whoever the question is for (the parent, the lawyer): the grade
+      // of what you report depends on that role, so it isn't silently "partner".
       await h.answer(rest[0], {
-        by: flag("by", "partner")!,
+        by: flag("by") ?? ask?.to ?? "partner",
         choice: flag("choice")!,
         note: flag("note"),
         revision: revFile ? (JSON.parse(fs.readFileSync(revFile, "utf8")) as GoalRevision) : undefined,
-        budget: budget ? Object.fromEntries(budget.split(",").map((kv) => { const [k, v] = kv.split("="); return [k, Number(v)]; })) : undefined,
+        budget: budget ? kv(budget) : undefined,
+        finding: result ? { assumption: flag("assumption") ?? tests, direction: result, text: flag("note") ?? "", metrics: metrics ? kv(metrics) : undefined, runs: flag("runs") ? Number(flag("runs")) : undefined } : undefined,
       });
-      console.log(`answered ${rest[0]}: ${flag("choice")}`);
+      console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
       return;
     }
     default:
@@ -286,9 +321,9 @@ function appendLog(file: string, line: string): void {
 // library, and (on Windows) the scheduled task and its heartbeat.
 async function doctor(): Promise<boolean> {
   let ok = true;
-  const line = (good: boolean, what: string, fix = "") => {
-    console.log(`${good ? "ok  " : "FAIL"} ${what}${!good && fix ? `\n     fix: ${fix}` : ""}`);
-    if (!good) ok = false;
+  const line = (good: boolean, what: string, fix = "", warnOnly = false) => {
+    console.log(`${good ? "ok  " : warnOnly ? "warn" : "FAIL"} ${what}${!good && fix ? `\n     fix: ${fix}` : ""}`);
+    if (!good && !warnOnly) ok = false;
   };
   const [maj, min] = process.versions.node.split(".").map(Number);
   line(maj > 22 || (maj === 22 && min >= 18), `node ${process.versions.node}`, "install Node 22.18 or later (TypeScript runs without a build step from 22.18)");
@@ -315,6 +350,10 @@ async function doctor(): Promise<boolean> {
     const dir = userAgentsDir();
     const missing = roles.filter((r) => !fs.existsSync(path.join(dir, `af-${r}.agent.md`)));
     line(!missing.length, `agent profiles in ${dir}: ${missing.length ? `missing ${missing.map((r) => `af-${r}`).join(", ")}` : `${roles.length} installed`}`, "npm run harness -- agents install (turns still run without them, with the role in the prompt)");
+    const ac = JSON.parse(fs.readFileSync(path.join(ROOT, "policy", "harness-agents.json"), "utf8")) as { models?: Record<string, string> };
+    const used = [...new Set([...Object.values(policy.team.library.roles).map((r) => r.model), policy.team.library.generated?.model ?? ""])].filter((m) => /^model-[a-z]$/.test(m));
+    const unmapped = used.filter((m) => !ac.models?.[m]);
+    line(!unmapped.length, `models: ${unmapped.length ? `${unmapped.join(", ")} not mapped, so those seats use Copilot's default model and judges share the workers' model` : used.map((m) => `${m}=${ac.models![m]}`).join(", ")}`, "set \"models\" in policy/harness-agents.json to model ids your Copilot plan offers (different families for model-a and model-b)", true);
   }
   const dir = path.join(process.cwd(), ".af", "harness");
   const engs = flag("engagement") ? [flag("engagement")!] : fs.existsSync(dir) ? fs.readdirSync(dir) : [];

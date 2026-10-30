@@ -71,9 +71,11 @@ export class CopilotTurnAgent implements TurnAgent {
   agents: Record<string, string>; // role -> custom agent profile name, when it isn't <prefix><role>
   prefix: string;
   profileDirs: string[] | null; // where profiles are looked for; null = don't check
+  models: Record<string, string>; // placeholder (model-a) -> your plan's model id
   tools: ToolConfig;
   timeoutMs: number;
-  constructor(opts: { bin?: string; lanes?: Record<string, LaneConfig>; fallback: LaneConfig; agents?: Record<string, string>; profilePrefix?: string; profileDirs?: string[] | null; tools?: ToolConfig; timeoutMs: number }) {
+  constructor(opts: { bin?: string; lanes?: Record<string, LaneConfig>; fallback: LaneConfig; agents?: Record<string, string>; profilePrefix?: string; profileDirs?: string[] | null; models?: Record<string, string>; tools?: ToolConfig; timeoutMs: number }) {
+    this.models = opts.models ?? {};
     this.bin = opts.bin ?? "copilot";
     this.lanes = opts.lanes ?? {};
     this.fallback = opts.fallback;
@@ -118,16 +120,22 @@ export class CopilotTurnAgent implements TurnAgent {
   }
 
   // Which custom agent, model and tools this turn gets.
-  launch(ctx: TurnContext): { agent?: string; model: string; flags: string[] } {
+  launch(ctx: TurnContext): { agent?: string; model?: string; flags: string[] } {
     const seat = ctx.seat;
-    if (seat) return { agent: this.profile(seat, ctx.wtDir), model: seat.model, flags: toolFlags(seat.effective, this.tools) };
+    if (seat) return { agent: this.profile(seat, ctx.wtDir), model: this.model(seat.model), flags: toolFlags(seat.effective, this.tools) };
     const lane = this.lanes[ctx.todo.lane] ?? this.fallback;
-    return { agent: lane.agent, model: lane.model, flags: ["--allow-tool", "write", ...(this.tools.always ?? DEFAULT_ALWAYS)] };
+    return { agent: lane.agent, model: this.model(lane.model), flags: ["--allow-tool", "write", ...(this.tools.always ?? DEFAULT_ALWAYS)] };
+  }
+
+  // A placeholder model name (model-a) that isn't mapped to a real one is left out, so
+  // Copilot uses its default rather than failing every turn on an unknown model.
+  model(name: string): string | undefined {
+    return this.models[name] || (/^model-[a-z]$/.test(name) ? undefined : name);
   }
 
   async run(ctx: TurnContext): Promise<TurnOutput> {
     const l = this.launch(ctx);
-    const args = ["-p", this.prompt(ctx), ...(l.agent ? ["--agent", l.agent] : []), "--model", l.model, "-s", "--no-ask-user", ...l.flags];
+    const args = ["-p", this.prompt(ctx), ...(l.agent ? ["--agent", l.agent] : []), ...(l.model ? ["--model", l.model] : []), "-s", "--no-ask-user", ...l.flags];
     const { stdout } = await runCommand(this.bin, args, { cwd: ctx.wtDir, timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
     return parseTurnOutput(stdout);
   }

@@ -1,14 +1,12 @@
 // Turn agents: what does one bounded slice of work. The harness only sees this
 // interface, so a scripted agent (tests, demos) and Copilot CLI are interchangeable.
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { runCommand } from "../proc.ts";
 import type { Belief, State, TodoState } from "./project.ts";
 import type { SeatView, ToolConfig } from "./team.ts";
 import { REVIEW_LANE, toolFlags } from "./team.ts";
 import type { Finding, GoalDef } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 
-const execFileP = promisify(execFile);
 
 export type TurnContext = {
   turn: string;
@@ -111,7 +109,7 @@ export class CopilotTurnAgent implements TurnAgent {
   async run(ctx: TurnContext): Promise<TurnOutput> {
     const l = this.launch(ctx);
     const args = ["-p", this.prompt(ctx), "--agent", l.agent, "--model", l.model, "-s", "--no-ask-user", ...l.flags];
-    const { stdout } = await execFileP(this.bin, args, { cwd: ctx.wtDir, timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
+    const { stdout } = await runCommand(this.bin, args, { cwd: ctx.wtDir, timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
     return parseTurnOutput(stdout);
   }
 }

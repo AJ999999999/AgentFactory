@@ -139,6 +139,15 @@ export class Harness {
   // ---------- the tick ----------
 
   private last = new Map<string, { main: string; hint: Hint }>();
+
+  // The quiet-wake memory (main's commit and the last hint), so a runner a scheduler
+  // starts fresh every few minutes can still skip a wake with one ls-remote.
+  memory(runnerId: string): { main: string; hint: Hint } | undefined {
+    return this.last.get(runnerId);
+  }
+  remember(runnerId: string, m: { main: string; hint: Hint }): void {
+    this.last.set(runnerId, m);
+  }
   private claimsAtStart: Promise<Claim[]> = Promise.resolve([]);
 
   async tick(runner: Runner, opts: { slots?: number } = {}): Promise<TickResult> {

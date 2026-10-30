@@ -1,10 +1,7 @@
 // Angle runners. The process only sees this interface, so a scripted runner (tests,
 // demos) and a model-backed one (Copilot CLI) are interchangeable.
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { runCommand } from "../proc.ts";
 import type { Draft, Entry, EntryType } from "./entries.ts";
-
-const execFileP = promisify(execFile);
 
 export type Stage = "challenge_frame" | "diverge" | "critique" | "score" | "assumptions";
 
@@ -73,7 +70,7 @@ export class CopilotAngleRunner implements AngleRunner {
   async run(task: AngleTask): Promise<Draft[]> {
     const args = [...this.binArgs, "-p", this.prompt(task), "--model", task.angle.model, "-s", "--no-ask-user", "--deny-tool", "write", "--deny-tool", "shell"];
     this.calls.push({ stage: task.stage, angle: task.angle.id, args });
-    const { stdout } = await execFileP(this.bin, args, { timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
+    const { stdout } = await runCommand(this.bin, args, { timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
     return parseDrafts(stdout);
   }
 }

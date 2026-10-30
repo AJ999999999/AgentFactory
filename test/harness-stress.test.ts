@@ -184,12 +184,16 @@ console.log("I did the thing. Note the braces {like these} in prose.");
 console.log(JSON.stringify({ done: true, note: "used {braces} in a string", findings: [{ direction: "neutral", grade: "opinion", source: "", text: "ok" }] }));
 `);
   fs.chmodSync(fake, 0o755);
-  const agent = new CopilotTurnAgent({ bin: fake, fallback: { agent: "author", model: "model-a" }, lanes: { review: { agent: "reviewer", model: "model-b" } }, timeoutMs: 30_000 });
+  // The generated role's profile (af-author) is installed in this folder.
+  const profiles = path.join(dir, "agents");
+  fs.mkdirSync(profiles, { recursive: true });
+  fs.writeFileSync(path.join(profiles, "af-author.agent.md"), "---\nname: af-author\n---\n");
+  const agent = new CopilotTurnAgent({ bin: fake, fallback: { agent: "author", model: "model-a" }, profileDirs: [profiles], timeoutMs: 30_000 });
   const { hs } = await machines(1, def([{ id: "t", lane: "x", text: "t", writeScope: ["work"] }]), agent);
   const r = await hs[0].tick({ id: "r1", capabilities: [] });
   assert.equal(r.turns[0].result, "completed");
   const args = JSON.parse(hs[0].control.run(["show", "origin/main:work/args.json"]));
-  for (const flag of ["--agent", "author", "--model", "model-a", "--no-ask-user", "shell(git push)"]) assert.ok(args.includes(flag), flag);
+  for (const flag of ["--agent", "af-author", "--model", "model-a", "--no-ask-user", "shell(git push)"]) assert.ok(args.includes(flag), flag);
   assert.ok(args[args.indexOf("-p") + 1].includes("Your todo t"), "the prompt carries the handoff packet");
   assert.deepEqual(parseTurnOutput('text {"a": "}"} more {"done": true, "note": "{x}"}'), { done: true, note: "{x}" });
 });

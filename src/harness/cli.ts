@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { cloneControl, Git, initBare } from "../git.ts";
 import { resolveCommand, runCommand, sleepUntil } from "../proc.ts";
-import { CopilotTurnAgent } from "./agents.ts";
+import { CopilotTurnAgent, userAgentsDir } from "./agents.ts";
 import type { LaneConfig, TurnAgent } from "./agents.ts";
 import { Harness } from "./harness.ts";
 import { buildPacket } from "./packet.ts";
@@ -56,11 +56,11 @@ function currentEngagement(): string {
 async function harness(engagement: string): Promise<Harness> {
   const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string };
   const lanesFile = path.join(ROOT, "policy", "harness-agents.json");
-  const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string> } & ToolConfig;
+  const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string>; profilePrefix?: string } & ToolConfig;
   // A path to the binary is resolved here; turns run with the worktree as their cwd.
   const bin = flag("copilot", "copilot")!;
   const agent: TurnAgent = new CopilotTurnAgent({
-    bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: cfg2.fallback, lanes: cfg2.lanes, agents: cfg2.agents,
+    bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: cfg2.fallback, lanes: cfg2.lanes, agents: cfg2.agents, profilePrefix: cfg2.profilePrefix,
     tools: { tools: cfg2.tools, always: cfg2.always }, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000,
   });
   // --world <module.ts> exporting `world` (your job, metric and probe providers and
@@ -189,6 +189,29 @@ async function main(): Promise<void> {
       process.exitCode = (await doctor()) ? 0 : 1;
       return;
     }
+    case "agents": {
+      // The harness's Copilot custom agent profiles, one per library role, installed in
+      // your user folder so every engagement repo can use them.
+      const src = path.join(ROOT, "integrations", "copilot", "harness-agents");
+      const dest = userAgentsDir();
+      const files = fs.readdirSync(src).filter((f) => f.endsWith(".agent.md"));
+      if (rest[0] === "install") {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const f of files) {
+          const to = path.join(dest, f);
+          if (fs.existsSync(to) && !rest.includes("--force")) {
+            console.log(`kept    ${to} (yours may be edited; --force replaces it)`);
+            continue;
+          }
+          fs.copyFileSync(path.join(src, f), to);
+          console.log(`wrote   ${to}`);
+        }
+      } else {
+        for (const f of files) console.log(`${fs.existsSync(path.join(dest, f)) ? "installed" : "missing  "} ${path.join(dest, f)}`);
+        console.log("install with: npm run harness -- agents install");
+      }
+      return;
+    }
     case "status": {
       const h = await harness(currentEngagement());
       const s = await h.state();
@@ -232,7 +255,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | answer <ask> --choice <id> | doctor");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | answer <ask> --choice <id> | doctor | agents [install]");
   }
 }
 
@@ -288,6 +311,10 @@ async function doctor(): Promise<boolean> {
   if (policy.team) {
     const bad = checkLibrary(policy.team.library, policy.team.catalog);
     line(!bad.length, `library: ${bad.length ? bad.join("; ") : `${Object.keys(policy.team.library.lanes ?? {}).length} lanes staffed`}`);
+    const roles = [...new Set([...Object.values(policy.team.library.lanes ?? {}), policy.team.library.generated?.agent ?? "author"])];
+    const dir = userAgentsDir();
+    const missing = roles.filter((r) => !fs.existsSync(path.join(dir, `af-${r}.agent.md`)));
+    line(!missing.length, `agent profiles in ${dir}: ${missing.length ? `missing ${missing.map((r) => `af-${r}`).join(", ")}` : `${roles.length} installed`}`, "npm run harness -- agents install (turns still run without them, with the role in the prompt)");
   }
   const dir = path.join(process.cwd(), ".af", "harness");
   const engs = flag("engagement") ? [flag("engagement")!] : fs.existsSync(dir) ? fs.readdirSync(dir) : [];

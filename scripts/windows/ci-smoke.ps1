@@ -69,6 +69,8 @@ $copilot = Join-Path $npm "copilot.cmd"
     "todos": [{ "id": "hello", "lane": "build", "text": "Write work/hello.md", "writeScope": ["work"] }] }] }
 '@ | Set-Content -Encoding ascii -Path (Join-Path $work "smoke.json")
 Push-Location $work
+& node --no-warnings $cli agents install
+if ($LASTEXITCODE) { Fail "agents install failed" }
 & node --no-warnings $cli open smoke.json
 if ($LASTEXITCODE) { Fail "harness open failed" }
 
@@ -103,7 +105,7 @@ $control = Join-Path $engDir "control"
 $hello = & git -C $control show origin/main:work/hello.md
 if ($hello -notmatch "fake Copilot CLI on Windows") { Fail "work/hello.md isn't on main" }
 $argsJson = & git -C $control show origin/main:work/args.json
-if ($argsJson -notmatch "--agent") { Fail "the fake CLI didn't get the expected flags: $argsJson" }
+if ($argsJson -notmatch '"--agent","af-builder"') { Fail "the fake CLI didn't get the builder's profile: $argsJson" }
 $autocrlf = & git -C $control config --get core.autocrlf
 if ($autocrlf -ne "false") { Fail "the control repo converts line endings (core.autocrlf=$autocrlf)" }
 

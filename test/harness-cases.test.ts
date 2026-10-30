@@ -75,6 +75,12 @@ test("case 1, an Unreal 6 engine: scope first, the riskiest assumption next, GPU
   assert.equal(await status(r.s, "engine", "W1"), "supported");
   assert.ok(!r.ask((a) => a.origin === "rule:load_bearing_refuted"));
   assert.equal(r.s.goals.get("engine")!.spent.gpuHours, 14);
+  // The team follows the work: each workstream got its own seats when its work appeared.
+  for (const g of ["renderer", "editor", "assets"]) assert.equal(r.s.seats.get(`${g}/build`)?.template, "builder@v1", `${g} has its own builder`);
+  assert.ok(r.s.seats.get("engine/renderer/build") === undefined);
+  assert.equal(r.s.seats.get("engine/spike")!.model, "model-c");
+  assert.notEqual(r.s.seats.get("engine/synthesis")!.model, r.s.seats.get("engine/build")!.model, "synthesis judges on another model");
+  assert.ok(r.calls.filter((c) => c.todo.startsWith("spike")).every((c) => c.role === "experimenter"));
 });
 
 test("case 2, Starship kits for kids: demand before design, money before ads, a frozen test, the lawyer decides the name, a pivot to classrooms", async () => {
@@ -101,6 +107,22 @@ test("case 2, Starship kits for kids: demand before design, money before ads, a 
   assert.equal(g.status, "done");
   for (const a of ["T1", "F1", "S1"]) assert.equal(await status(r.s, "kids", a), "supported");
   assert.equal(g.spent.usd, 350);
+  // No library role for CAD or lessons: both were generated, on probation.
+  const design = r.s.seats.get("kids/design")!;
+  const lessons = r.s.seats.get("kids/curriculum")!;
+  assert.ok(design.generated && lessons.generated);
+  assert.deepEqual(lessons.permissions, ["repo:read", "repo:write:lease"], "a generated role gets the least access");
+  // The CAD's printability checker vouched for it, so no agent review; the lessons had none, so the reviewer read them.
+  assert.ok(![...r.s.todos.values()].some((t) => t.reviews?.startsWith("cad")));
+  const reviews = [...r.s.todos.values()].filter((t) => t.reviews === "lessons");
+  assert.equal(reviews.length, 2);
+  const verdicts = r.events.filter((e) => e.type === "review_verdict").map((e) => (e as { verdict: string }).verdict);
+  assert.deepEqual(verdicts, ["reject", "accept"], "the first draft went back, the second passed");
+  assert.equal(r.s.todos.get("lessons")!.status, "done");
+  assert.match(r.onMain("curriculum/lessons.md")!, /eye protection/);
+  assert.ok(r.calls.filter((c) => c.lane === "probation-review").every((c) => c.role === "blind-reviewer"));
+  assert.equal(r.s.seats.get("kids/probation-review")!.model, "model-b", "reviewed on another model than the generated role's");
+  assert.ok(lessons.probation, "one acceptance isn't enough to leave probation");
 });
 
 test("case 3, a medicine assistant for seniors: work that doesn't depend on the regulator keeps moving, experts sign off, labels change after launch", async () => {
@@ -125,6 +147,9 @@ test("case 3, a medicine assistant for seniors: work that doesn't depend on the 
   assert.equal(reval.status, "done");
   assert.ok(r.ask((a) => a.kind === "review" && a.todo === reval.id && a.answeredBy === "pharmacist"));
   assert.ok(r.ask((a) => a.origin === "monitor:labels")!.urgent);
+  // The interaction rules came from a generated role, but a named pharmacist reviews them, so no agent review on top.
+  assert.ok(r.s.seats.get("meds/content")!.generated);
+  assert.ok(![...r.s.todos.values()].some((t) => t.lane === "probation-review"));
 });
 
 test("case 4 (added), a legacy migration: fix and retest keeps the plan, nothing deploys in the freeze, and done means stop", async () => {
@@ -160,6 +185,12 @@ test("case 5 (added), an open research question: spin caught, contradiction synt
   assert.equal(await status(r.s, "q", "H2"), "supported");
   assert.equal(r.s.goals.get("q")!.status, "done");
   assert.ok(r.s.goals.get("q")!.spent.gpuHours <= 120);
+  // Reading the company's tickets needed the partner's say-so; only the data lane waited for it.
+  const access = r.ask((a) => a.origin === "rule:staffing")!;
+  assert.equal(access.lane, "data");
+  assert.equal(access.choice, "grant");
+  assert.ok(r.turnsOf("data")[0].at >= access.answeredAt!, "the dataset waited for access");
+  assert.ok(r.turnsOf("lit")[0].at < access.answeredAt!, "the literature review didn't");
 });
 
 test("case 6 (added), perpetual stewardship: quiet days cost nothing, each event is one piece of work, busywork is refused, the advisory jumps the queue", async () => {

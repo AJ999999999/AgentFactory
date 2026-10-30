@@ -11,12 +11,17 @@
 // count "80% of surveyed parents would buy" as demand; take the IP lawyer's word on the
 // name and drop the branded work; when pre-orders miss, trip the kill criterion and
 // let the partner pivot (to classrooms), dropping the old plan's work; then run the
-// new market test, the print test with a real printer, and a safety review.
+// new market test, the print test with a real printer, and a safety review. The team
+// follows the work: the library has no role for CAD or lesson plans, so both get
+// generated roles on probation. The CAD role's work is vouched for by the printability
+// checker; the lessons go to an independent reviewer, who sends back the first draft.
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { ScriptedTurnAgent } from "../agents.ts";
 import type { EngagementDef, GoalRevision } from "../types.ts";
 import { SimMetrics } from "../world.ts";
 import type { CaseSetup } from "./kit.ts";
-import { about, contains, exists, lane, on, origin, person, write } from "./kit.ts";
+import { about, contains, exists, lane, nth, on, origin, person, write } from "./kit.ts";
 
 const START = "2026-11-02T09:00:00Z";
 
@@ -65,7 +70,7 @@ export const classrooms: GoalRevision = {
     { id: "teacher-page", lane: "build", text: "Class-pack page for teachers, standards-aligned", tests: "T1", writeScope: ["site/classroom"], check: "classpage" },
     { id: "teacher-test", kind: "wait", lane: "market", text: "Three weeks listed on a teacher marketplace", after: ["teacher-page"], cost: { usd: 150 }, freeze: ["site/classroom"], wait: { source: "teachers", minDays: 21, informs: [{ assumption: "T1", metric: "class_preorders" }] } },
     { id: "cad2", lane: "design", text: "Design the printable class pack (generic rocket, no trademarks)", assumes: ["T1"], writeScope: ["cad"], check: "printable" },
-    { id: "lessons", lane: "build", text: "Three lessons: thrust, stability, recovery", assumes: ["T1"], writeScope: ["curriculum"] },
+    { id: "lessons", lane: "curriculum", text: "Three lessons: thrust, stability, recovery", assumes: ["T1"], writeScope: ["curriculum"] },
     { id: "print-test", kind: "action", lane: "test", text: "Print the pack on a school printer; report print time and failures", assignee: "maker", after: ["cad2"] },
     { id: "safety-review", kind: "action", lane: "review", text: "Review the pack and labels for ages 8+", assignee: "toy-safety", after: ["cad2"] },
   ],
@@ -86,7 +91,21 @@ export function kidsRockets(): CaseSetup {
     lane("design", (c) => { write(c, "cad/rocket.stl", "solid rocket\n# overhang 40\nendsolid\n"); return { done: true }; }),
     on("teacher-page", (c) => { write(c, "site/classroom/index.html", "<h1>Class packs: NGSS-aligned rocket engineering</h1><button>Pre-order $49</button><p>Not for children under 3: small parts.</p>"); return { done: true }; }),
     lane("synthesis", () => ({ done: true, note: "Parents didn't convert (1.1%); teachers did. Name must stay generic. Prints fine." })),
-    on("lessons", (c) => { write(c, "curriculum/lessons.md", "1. Thrust\n2. Stability\n3. Recovery\n"); return { done: true }; }),
+    // Lesson plans are a teacher's work; the library has no role for it, so a generated
+    // one writes them, on probation. Its first draft forgets launch safety.
+    on("lessons", (c) => {
+      const safety = nth(c) > 1 ? "\nLaunch day: ages 8+, eye protection, an adult runs the launcher.\n" : "";
+      write(c, "curriculum/lessons.md", `1. Thrust\n2. Stability\n3. Recovery: launch and retrieve\n${safety}`);
+      return { done: true };
+    }),
+    // The independent reviewer (another model) reads what was written.
+    lane("probation-review", (c) => {
+      const f = path.join(c.wtDir, "curriculum", "lessons.md");
+      const text = fs.existsSync(f) ? fs.readFileSync(f, "utf8") : "";
+      return /eye protection/i.test(text)
+        ? { done: true, verdict: "accept", note: "Covers the three topics and launch safety for 8+" }
+        : { done: true, verdict: "reject", note: "The recovery lesson has a launch but no safety rules for 8-year-olds" };
+    }),
   ]);
 
   const partner = person("partner", 24 * 60, [

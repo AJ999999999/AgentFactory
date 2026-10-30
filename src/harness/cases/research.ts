@@ -10,7 +10,9 @@
 // contradict each other, hand them to an independent synthesis that finds the
 // contaminated run and discounts it; count the refutation as progress (a milestone,
 // not a failure); notice the literature review going nowhere and replan; then let the
-// partner turn the negative result into a new hypothesis and test that.
+// partner turn the negative result into a new hypothesis and test that. The dataset
+// comes from the company's own tickets: the data seat's access to private data waits
+// for the partner, and only the data lane waits.
 import { ScriptedTurnAgent } from "../agents.ts";
 import type { EngagementDef, GoalRevision } from "../types.ts";
 import { SimJobs } from "../world.ts";
@@ -92,6 +94,7 @@ export function research(): CaseSetup {
   });
 
   const partner = person("partner", 24 * 60, [
+    { match: origin("rule:staffing"), answer: () => ({ choice: "grant", note: "Closed tickets only, no customer names in the split" }) },
     { match: origin("rule:load_bearing_refuted"), answer: () => ({ choice: "pivot", revision: retrieval, note: "Fine-tuning doesn't pay; try retrieval" }) },
     { match: origin("rule:success"), answer: () => ({ choice: "close" }) },
   ]);

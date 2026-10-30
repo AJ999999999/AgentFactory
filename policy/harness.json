@@ -19,5 +19,7 @@
   "proposals": {"maxTodosPerTurn": 5, "maxAsksPerTurn": 2, "noteChars": 280},
   "packet": {"maxLines": 16, "maxChars": 1800},
   "schedule": {"jobPollMinutes": [10, 30, 60, 240], "maxSleepMinutes": 720, "waitPollMinutes": 1440},
-  "protected": [".agents/harness/**", "policy/**", ".github/hooks/**"]
+  "protected": [".agents/harness/**", "policy/**", ".github/hooks/**"],
+  "probation": {"promoteAfter": 3, "rejectStreak": 2},
+  "team": {"library": "library.json", "catalog": "permission-catalog.json"}
 }

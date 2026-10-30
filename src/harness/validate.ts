@@ -16,11 +16,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
-import type { AskOption, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity } from "./types.ts";
-import type { Belief, State, TodoState } from "./project.ts";
+import type { AskOption, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import type { Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
 import { activeFreezes } from "./select.ts";
 import { eid, safeId } from "./store.ts";
+import { REVIEW_LANE } from "./team.ts";
 
 export type FindingDraft = { assumption?: string; direction: Direction; grade: Grade; source: string; text: string; metrics?: Record<string, number> };
 export type AskDraft = { question: string; options: AskOption[]; to?: string };
@@ -35,6 +36,7 @@ export type TurnOutput = {
   supersede?: Array<{ todo: string; reason: string }>;
   discount?: Array<{ finding: string; reason: string }>;
   note?: string;
+  verdict?: Verdict; // probation reviews only
 };
 
 export type Validated = { result: TurnResult; granularity: Granularity; events: HEvent[]; reasons: string[] };
@@ -54,8 +56,16 @@ export function validateTurn(input: {
   checked: boolean; // a checker covered this todo's output and passed
   wtDir: string;
   knownSources: string[];
+  seat?: SeatState; // who did the turn; absent when the policy has no team
 }): Validated {
-  const { s, todo: t, agent, turn, now, output: o, files } = input;
+  const { s, todo: t, agent, turn, now, output: o, files, seat } = input;
+  // Who did it: the seat when there's a team, else the runner. "Your own evidence" means
+  // evidence from the same seat, not from the same machine.
+  const actor = seat?.key ?? agent;
+  const actorOf = (turnId?: string) => {
+    const x = turnId ? s.turns.find((y) => y.id === turnId) : undefined;
+    return x ? (x.seat ?? x.agent) : undefined;
+  };
   const p = s.policy;
   const g = s.goals.get(t.goal)!;
   const chain = goalChain(s, t.goal);
@@ -92,7 +102,7 @@ export function validateTurn(input: {
     }
     if (d.source?.startsWith("repo:") && !fs.existsSync(path.join(input.wtDir, d.source.slice(5)))) { reasons.push(`finding ${i}: cited ${d.source}, which doesn't exist`); continue; }
     const f: Finding = {
-      id: eid(turn, "f", i), goal: owner, assumption: d.assumption, direction: d.direction, grade: d.grade, source: d.source ?? "", author: agent,
+      id: eid(turn, "f", i), goal: owner, assumption: d.assumption, direction: d.direction, grade: d.grade, source: d.source ?? "", author: actor,
       text: String(d.text ?? "").slice(0, 500), metrics: d.metrics, untrusted: /^https?:|^client:|^web:/.test(d.source ?? "") || undefined, todo: t.id, turn,
     };
     accepted.findings.push(f);
@@ -145,7 +155,7 @@ export function validateTurn(input: {
     const f = s.findings.get(d.finding);
     if (t.lane !== "synthesis") { reasons.push(`discount ${i}: only synthesis may discount findings`); continue; }
     if (!f || !chain.some((c) => c.id === f.goal)) { reasons.push(`discount ${i}: no finding ${d.finding} in this goal`); continue; }
-    if (f.author === agent || (f.turn && s.turns.find((x) => x.id === f.turn)?.agent === agent)) { reasons.push(`discount ${i}: can't discount evidence you produced`); continue; }
+    if (f.author === actor || actorOf(f.turn) === actor) { reasons.push(`discount ${i}: can't discount evidence you produced`); continue; }
     if (!d.reason) { reasons.push(`discount ${i}: needs a reason`); continue; }
     events.push({ id: eid("disc", f.id), at, by, type: "finding_discounted", finding: f.id, reason: d.reason });
     accepted.discount++;
@@ -177,6 +187,20 @@ export function validateTurn(input: {
     });
     events.push({ id: eid("block", t.id, t.turns + 1), at, by, type: "todo_blocked", todo: t.id, reason: String(o.blocker).slice(0, 200), ask: id });
     result = "blocked";
+  } else if (o.done && t.reviews) {
+    // A probation review is finished only with a verdict on the work it reviews.
+    if (o.verdict !== "accept" && o.verdict !== "reject") reasons.push(`a probation review needs a verdict: "accept" or "reject"`);
+    else {
+      const target = s.todos.get(t.reviews);
+      if (target && target.status === "review" && target.reviewTodo === t.id) {
+        const why = String(o.note ?? "").slice(0, 200);
+        events.push({ id: eid("verdict", t.id), at, by, type: "review_verdict", todo: target.id, review: t.id, seat: `${target.goal}/${target.lane}`, verdict: o.verdict, note: why || undefined });
+        if (o.verdict === "accept") events.push({ id: eid("done", target.id, "review", t.id), at, by, type: "todo_done", todo: target.id, turn });
+        else events.push({ id: eid("reopen", target.id, "review", t.id), at, by, type: "todo_reopened", todo: target.id, reason: `review ${t.id}: ${why || "rejected"}` });
+      }
+      events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
+      result = "completed";
+    }
   } else if (o.done) {
     const firstAsk = events.find((e) => e.type === "ask_opened" && e.ask.origin === `turn:${turn}`);
     if (firstAsk && firstAsk.type === "ask_opened" && !t.review) {
@@ -192,11 +216,25 @@ export function validateTurn(input: {
         },
       });
       events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, ask: id });
+    } else if (seat?.probation && !input.checked) {
+      // A generated role on probation: an independent reviewer (another lane, another
+      // model) checks the work before it counts. A passing checker or a named person's
+      // review (above) already vouches for it, so those skip this.
+      const rid = eid("prv", t.id, t.turns + 1);
+      events.push({
+        id: `add-${rid}`, at, by: "harness", type: "todo_added", provenance: "rule:probation",
+        todo: {
+          id: rid, goal: t.goal, lane: REVIEW_LANE, kind: "task", priority: Math.max(1, t.priority), reviews: t.id, because: t.id, maxTurns: 2,
+          text: `Independent review: the ${seat.role} role is on probation. Does ${files.join(", ") || "its output"} do "${t.text}"? Reply with a verdict, "accept" or "reject", and say why.`,
+        },
+      });
+      events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, reviewTodo: rid });
     } else {
       events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
     }
     result = "completed";
   }
+  if (o.verdict && !t.reviews) reasons.push("verdict ignored: only a probation review gives one");
 
   // ---- granularity ----
   const flips = beliefFlips(s, accepted.findings);
@@ -215,13 +253,13 @@ export function validateTurn(input: {
   else if (events.length || files.length) granularity = "surface";
   if (flips.length) reasons.push(`belief changed: ${flips.join(", ")}`);
 
-  const rec: TurnRecord = { id: turn, todo: t.id, goal: t.goal, agent, result, granularity, reasons, files, why: input.why };
+  const rec: TurnRecord = { id: turn, todo: t.id, goal: t.goal, agent, result, granularity, reasons, files, why: input.why, seat: seat?.key };
   events.unshift({ id: `turn-${turn}`, at, by, type: "turn", turn: rec });
   return { result, granularity, events, reasons };
 }
 
-function failed(input: { s: State; todo: TodoState; agent: string; turn: string; now: number; why: string; files: string[] }, hard: string[]): Validated {
-  const rec: TurnRecord = { id: input.turn, todo: input.todo.id, goal: input.todo.goal, agent: input.agent, result: "validation_failed", granularity: "none", reasons: hard, files: input.files, why: input.why };
+function failed(input: { s: State; todo: TodoState; agent: string; turn: string; now: number; why: string; files: string[]; seat?: SeatState }, hard: string[]): Validated {
+  const rec: TurnRecord = { id: input.turn, todo: input.todo.id, goal: input.todo.goal, agent: input.agent, result: "validation_failed", granularity: "none", reasons: hard, files: input.files, why: input.why, seat: input.seat?.key };
   return { result: "validation_failed", granularity: "none", reasons: hard, events: [{ id: `turn-${input.turn}`, at: input.now, by: input.agent, type: "turn", turn: rec }] };
 }
 

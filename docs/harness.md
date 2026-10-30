@@ -1,13 +1,13 @@
 # The long-running harness
 
-The foundation decides what to build and which assumptions the decision rests on. The harness keeps an engagement moving for weeks or months after that, with no human acting as the clock. It wakes, picks one bounded piece of work, checks the result independently, records it in git, and says when to wake next. It brings a person in only for decisions that are theirs, for money, and for work only a person can do.
+The foundation decides what to build and which assumptions the decision rests on. The harness keeps an engagement moving for weeks or months after that, with no human acting as the clock. It wakes, picks one bounded piece of work, hands it to the right agent, checks the result independently, records it in git, and says when to wake next. It brings a person in only for decisions that are theirs, for money, and for work only a person can do.
 
-LoopX (an open-source control plane for long-running agents) showed the shape of the loop: a bounded turn, a "should I run" check that costs nothing, claims, writeback before spend, scheduler hints, and handoff through successor todos instead of a leader. The rest of the design came from walking six very different engagements from intake to an MVP, a change of direction and implementation, and from simulating each one through the real code. The simulations found nine design flaws, listed at the end.
+LoopX (an open-source control plane for long-running agents) showed the shape of the loop: a bounded turn, a "should I run" check that costs nothing, claims, writeback before spend, scheduler hints, and handoff through successor todos instead of a leader. The rest of the design came from walking six very different engagements from intake to an MVP, a change of direction and implementation, and from simulating each one through the real code. The simulations found ten design flaws, listed at the end.
 
 ```bash
 npm run demo:harness                  # all six cases, simulated, with a timeline each
 npm run demo:harness -- senior-meds   # one case
-npm test                              # includes 37 harness tests (rules, cases, stress)
+npm test                              # includes 44 harness tests (rules, team, cases, stress)
 ```
 
 ## The six cases
@@ -30,7 +30,7 @@ What happens in the simulation:
 3. **Demand before code.** The riskiest new assumption is demand, so the landing page and waitlist go first. The first landing page says "Unreal-class"; the trademark red line throws that turn away, and the second attempt is clean.
 4. **Spikes on GPUs only.** Two renderer spikes run in parallel. Their benchmarks run only on the GPU runner, three runs each, against thresholds set before the data existed.
 5. **The partner picks.** An agent turns the benchmark numbers into a decision for the partner (74 fps against 41), and the partner picks the meshlet renderer.
-6. **Teams after contracts.** Contracts are written. The split into workstreams waits until the waitlist proves demand. Three workstreams are then spawned, with 150 turns carved out of the parent's budget; because that's more than a quarter of what's left, the partner approves it.
+6. **Teams after contracts.** Contracts are written. The split into workstreams waits until the waitlist proves demand. Three workstreams are then spawned, with 150 turns carved out of the parent's budget; because that's more than a quarter of what's left, the partner approves it. Each workstream gets its own seats as its work appears (renderer, editor and assets each get a builder). The spikes run on the experimenter's model; synthesis runs on a third.
 7. **The competitor news.** On day 45 a competitor ships a stylized preset. A monitor turns that into a research todo. The agent's web-sourced finding against the demand assumption is only a weak signal, so it earns a proper re-test (activation among waitlisted developers) instead of a pivot. Demand holds.
 
 ### 2. "SpaceX Starship 3D printing for kids"
@@ -51,7 +51,8 @@ What happens:
 4. **What counts as demand.** 80% of surveyed parents said they'd buy. That's stated interest, and it doesn't count: pre-orders are 1.1% of visitors.
 5. **The lawyer decides the name.** The trademark question goes to the IP lawyer, whose answer counts as expert evidence. "No" drops the branded work at once, because the name isn't load-bearing.
 6. **The pivot.** The pre-order conversion trips the kill criterion and refutes demand. The partner pivots once (the second, redundant question becomes moot) to classroom packs for teachers. The old plan's work is dropped.
-7. **The second version.** It runs a teacher-marketplace test ($150, approved), a print test by a teacher with a printer (three prints), and a toy-safety review. It closes as done after spending $350 of $500 and 6 model turns.
+7. **Roles nobody planned.** The firm's library has no role for CAD or for lesson plans, so both get roles generated for the lane, with the least access and on probation. The CAD role's work is vouched for by the printability checker. The lesson plans have no checker and no named reviewer, so an independent reviewer on another model reads them, sends the first draft back (the launch lesson had no safety rules for 8-year-olds) and accepts the second.
+8. **The second version.** It runs a teacher-marketplace test ($150, approved), a print test by a teacher with a printer (three prints), and a toy-safety review. It closes as done after spending $350 of $500 and 9 model turns.
 
 ### 3. "A medicine and supplement AI assistant for seniors"
 
@@ -67,7 +68,7 @@ What happens:
 2. **Dosing is dropped.** The consultant says patient-specific dosing would make it a device, so the dosing feature is dropped without a turn ever being spent on it.
 3. **Unsafe output is thrown away.** The first draft of the rules tells people to double a missed dose; the red line discards the whole turn.
 4. **Blog "evidence" is refused.** The second draft cites a supplement blog as "expert" evidence. That's refused (agents can't record expert evidence), and the blog's content is marked untrusted.
-5. **Expert and measured sign-off.** The rules go to the pharmacist, whose approval counts as expert evidence for the safety assumption. A red-team job (300 risky questions, 3 runs, 99.5% refusals) supports the refusal assumption, and a 4-week pilot supports demand.
+5. **Expert and measured sign-off.** The rules come from a generated role (the library has no clinical-content role), and they go to the pharmacist, whose approval counts as expert evidence for the safety assumption. A named expert's review stands in for the agent review a role on probation would otherwise get. A red-team job (300 risky questions, 3 runs, 99.5% refusals) supports the refusal assumption, and a 4-week pilot supports demand.
 6. **The labels change after launch.** On day 60 the drug label feed changes. The monitor bumps the versioned basis, the interaction rules (pinned to the old version) go stale, and a priority-0 rebuild goes back through the pharmacist. The partner gets an urgent notice.
 
 ### 4. Added: moving a legacy order system
@@ -86,9 +87,10 @@ What happens:
 "Can a 7B model fine-tuned on our repos beat our assistant on our own tickets?" There's no product until it's answered, a negative answer is a real result, experiments are expensive and noisy, and an agent can read papers forever.
 
 What happens:
-1. **The going-nowhere review.** The literature review produces three turns of notes and no sources. That counts as spin: a replan (priority 0) drops it.
-2. **Contradicting results.** Config A's evaluation refutes the hypothesis (−3 points) and config B's supports it (+2). The harness doesn't ask the partner about direction while B is still running. When the results contradict each other, an independent synthesis finds that 12% of B's evaluation tickets were in its training data and discounts it, with that reason.
-3. **The negative result.** The refutation stands, and the partner turns it into the next question: does retrieval lift the assistant by 5 points? It does (+7, three runs), and the goal closes.
+1. **Private data waits for a person.** The dataset comes from the company's own tickets. The data engineer's seat needs access to private data, which the catalog says only the owner can grant, so the partner is asked once. Only the data lane waits; the literature review runs meanwhile.
+2. **The going-nowhere review.** The literature review produces three turns of notes and no sources. That counts as spin: a replan (priority 0) drops it.
+3. **Contradicting results.** Config A's evaluation refutes the hypothesis (−3 points) and config B's supports it (+2). The harness doesn't ask the partner about direction while B is still running. When the results contradict each other, an independent synthesis finds that 12% of B's evaluation tickets were in its training data and discounts it, with that reason.
+4. **The negative result.** The refutation stands, and the partner turns it into the next question: does retrieval lift the assistant by 5 points? It does (+7, three runs), and the goal closes.
 
 ### 6. Added: keeping an open-source library healthy
 
@@ -161,11 +163,23 @@ Each mechanism is here because at least one case needed it.
   - An agent's scope estimate far over budget asks before anything is built.
   - Among goals, urgent work goes first. Then the goal furthest below its compute share. Within a goal: priority, then risk × uncertainty, then age.
 
+### Who does the work
+
+The user's brief says what to achieve; it doesn't say who should work on it. The team is derived from the work, the way the phase is derived from the evidence:
+
+- **A seat per lane, per goal.** The first open task in a lane of a goal staffs a seat for it. A spawned workstream gets its own seats. Jobs, waits and actions need no seat (they're machines and people).
+- **From the library when it can.** `policy/library.json` maps lanes to roles: research to a researcher, build to a builder, experiments to an experimenter, private data to a data engineer, replan and synthesis to a strategist, and so on. A seat takes the role's model, skills and custom agent.
+- **Permissions come only from the catalog.** A role's list is filtered through `policy/permission-catalog.json`: anything the factory can't grant is dropped, so a role edited to ask for more gets nothing more. A permission that needs a decision (reading the client's private data) asks the goal's owner once, and only that lane waits. Copilot CLI tool flags are built from the seat's permissions; a seat that can't write gets `--deny-tool write`.
+- **Generated when it must, on probation.** A lane the library doesn't cover (CAD, lesson plans, clinical content) gets a role generated for it: the fallback agent, the least access (read, and write inside the todo's scope), and a charter in its prompt. Its finished work counts only after someone vouches for it: a passing checker, a named person's review, or else an independent reviewer on a different model, read-only, who must accept or reject. A rejection sends the work back with the reason. Three acceptances in a row end probation. Two rejections in a row ask the owner whether to keep trying or drop the lane's work, and only that lane waits. Dropping a review drops the work it was reviewing, so nothing slips through unreviewed.
+- **Judges don't share the model they judge.** Replan and synthesis judge every lane, and probation reviews judge generated roles, so they run on a different model. The CLI refuses a library that breaks this.
+- **Who did it is the seat, not the machine.** Every turn records its seat, and "you can't discount your own evidence" is checked by seat. A strategist and a researcher running on the same laptop are different agents; one runner identity used to make them the same.
+
 ### Continuity
 
 - **State lives only in git.** Every event is a file on main, never edited. Claims and the "last checked" times live in refs; losing the latter costs one extra check. A fresh clone projects exactly the same state, which a test checks.
 - **Rules can run anywhere.** Rule-generated events have ids derived from their cause, so two machines noticing the same thing write it once.
 - **The handoff packet.** It's generated from state, never written by a model, and stays under 16 lines and 1,800 characters however long the engagement has run. The full record is one command away.
+- **Time follows cause and effect.** The log is ordered by time, and machines' clocks disagree. A writer never stamps an event earlier than the latest event it has read: the stamp is the wall clock, nudged forward by a millisecond only when the clock would contradict what the writer saw.
 
 ## What the simulations caught
 
@@ -180,6 +194,7 @@ Each of these was a flaw in the design, found by running a case, and fixed befor
 7. **"Is this goal idle?" was asked on top of "every success criterion is met".**
 8. **A competitor-triggered review was dropped as "question already settled"**, which defeated its purpose. Work triggered by a new event is now exempt.
 9. **Quiet wakes cost about 15 git calls.** Now it's one `ls-remote` when nothing has changed. The stewardship case went from 73 to 26 seconds of simulation.
+10. **A review that landed in the same millisecond as the work it reviewed was replayed first.** The log was ordered by each machine's clock with ties broken by id, so "sent back" was applied before "sent for review", and the lesson plans were stuck in review forever. A runner whose clock is a few seconds behind would do the same. Writers now never stamp before what they've read.
 
 ## Running it
 
@@ -195,7 +210,7 @@ You can run it in two ways:
 - **Scheduled.** On Windows, Task Scheduler can run `npm run harness -- tick` every 10 minutes. A quiet wake costs one `git ls-remote`.
 - **Long-running.** Run `loop`, which sleeps until the next timer, capped at 12 hours so new answers get noticed.
 
-Turns run in Copilot CLI, one headless session per turn in the turn's worktree, with the handoff packet as the prompt. `policy/harness-agents.json` maps lanes to custom agents and models. Replan and synthesis judge other lanes' work, so they run on a different model family.
+Turns run in Copilot CLI, one headless session per turn in the turn's worktree, with the handoff packet and the seat's role as the prompt. The seat picks the custom agent and model; `policy/harness-agents.json` turns its permissions into tool flags. `status` shows each goal's team.
 
 Jobs, metric sources, monitor probes and checkers come from a module you pass as `--world`. A red line or checker that isn't registered fails the turn rather than being skipped.
 
@@ -207,4 +222,6 @@ Jobs, metric sources, monitor probes and checkers come from a module you pass as
 - **Pivots don't cancel running jobs.** Their results still arrive as findings.
 - **One engagement per harness instance.** Scheduling across engagements belongs to the firm layer and isn't built.
 - **People answer everything.** Questions go to people. Workstream leads that are agents answering the questions their decision rights cover isn't wired yet.
+- **Generated roles are templates, not designs.** A generated role's charter is written by deterministic code from the lane and its todos. A model-backed factory would write a better one, behind the same limits (catalog permissions, probation). Probation ends only through independent reviews; checker passes don't count toward it.
+- **Tool and model names are placeholders.** The flags in `policy/harness-agents.json` and the model names in the library have to match your Copilot CLI version and plan.
 - **Tested on Linux only.**

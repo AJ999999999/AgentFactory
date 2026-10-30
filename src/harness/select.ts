@@ -7,7 +7,7 @@
 import { pathsOverlap } from "../util.ts";
 import type { PulseData } from "./claims.ts";
 import type { AskState, State, TodoState } from "./project.ts";
-import { beliefOf, findAssumption, goalChain } from "./project.ts";
+import { beliefOf, findAssumption, goalChain, seatKey } from "./project.ts";
 
 export type Runner = { id: string; capabilities: string[] };
 
@@ -56,6 +56,11 @@ export function blockers(s: State, t: TodoState, now: number, runner?: Runner): 
   if (t.kind === "task" && t.lane !== "replan") {
     const replan = [...s.todos.values()].find((x) => x.goal === t.goal && x.lane === "replan" && ["open", "running"].includes(x.status));
     if (replan) why.push(`replan first: ${replan.id}`);
+  }
+  if (t.kind === "task") {
+    // Seat questions (a permission, a struggling generated role) hold only that lane.
+    for (const a of s.asks.values()) if (a.status === "open" && a.lane === t.lane && a.goal === t.goal) why.push(`waiting on ${a.to}: ${a.id}`);
+    if (s.policy.team && !s.seats.has(seatKey(t.goal, t.lane))) why.push(`no seat for ${t.lane} yet`);
   }
   for (const dep of t.after ?? []) {
     const d = s.todos.get(dep);

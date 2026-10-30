@@ -43,10 +43,29 @@ export function readEvents(repo: string, engagement: string): HEvent[] {
   return out.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
 
+// The log is ordered by time, so time has to respect cause and effect: a writer never
+// stamps an event earlier than (or level with) the latest event it has already seen.
+// Without this, a review written in the same millisecond as the turn it reviews, or by
+// a runner whose clock is a few seconds behind, sorts before it and is replayed first.
+// (A hybrid logical clock: the stamp is the wall clock, nudged forward only when the
+// clock would contradict what the writer read.)
+export function latestAt(repo: string, engagement: string): number {
+  const dir = path.join(repo, eventsDir(engagement));
+  if (!fs.existsSync(dir)) return -Infinity;
+  let max = -Infinity;
+  for (const f of fs.readdirSync(dir)) {
+    const at = Number(f.slice(0, 15));
+    if (f.endsWith(".json") && Number.isFinite(at) && at > max) max = at;
+  }
+  return max;
+}
+
 export function writeEventFiles(repo: string, engagement: string, events: HEvent[]): string[] {
   const written: string[] = [];
-  for (const e of events) {
-    if (!safeId(e.id)) throw new Error(`unsafe event id: ${e.id}`);
+  const floor = latestAt(repo, engagement) + 1;
+  for (const e0 of events) {
+    if (!safeId(e0.id)) throw new Error(`unsafe event id: ${e0.id}`);
+    const e = e0.at < floor ? { ...e0, at: floor } : e0;
     const rel = `${eventsDir(engagement)}/${String(e.at).padStart(15, "0")}-${e.id}.json`;
     writeJson(path.join(repo, rel), e);
     written.push(rel);

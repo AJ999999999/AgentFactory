@@ -156,7 +156,30 @@ export type TodoDraft = {
   assignee?: string; // action: role that does it
   cost?: { usd: number }; // money: authorized before, not accounted after
   maxTurns?: number; // stopping rule for open-ended tasks
+  reviews?: string; // probation review: the todo whose output this reviews
 };
+
+// ---------- the team ----------
+
+// A seat is who does one lane of work in one goal: a role from the firm library, or a
+// role generated for a lane the library doesn't cover (on probation until independent
+// reviews accept its work). Seats are derived from the work, never configured: the
+// first open todo in a lane staffs it. Permissions come only from the catalog.
+export type SeatDef = {
+  goal: string;
+  lane: string;
+  role: string; // library role, or "gen-<lane>"
+  template: string; // "builder@v1", "generated:<lane>@v1"
+  model: string;
+  agent: string; // Copilot CLI custom agent
+  skills: string[];
+  permissions: string[]; // granted now
+  pending: Array<{ permission: string; decision: string }>; // need the owner's decision
+  generated: boolean;
+  charter?: string; // what a generated role is for
+};
+
+export type Verdict = "accept" | "reject";
 
 // ---------- asks ----------
 
@@ -185,6 +208,7 @@ export type Ask = {
   question: string;
   options: AskOption[];
   blocksGoal?: boolean; // otherwise it blocks only the todos that depend on it
+  lane?: string; // blocks the goal's tasks in this lane (a seat question)
   todo?: string; // the todo it is about
   origin: string; // "rule:<name>", "turn:<id>", "todo:<id>"
   urgent?: boolean;
@@ -216,6 +240,7 @@ export type TurnRecord = {
   reasons: string[];
   files: string[];
   why?: string; // why this todo was selected over the others
+  seat?: string; // "<goal>/<lane>": who did it (the runner is only where)
 };
 
 // ---------- events ----------
@@ -231,7 +256,7 @@ export type HEvent = Base &
     | { type: "todo_added"; todo: TodoDraft & { id: string; goal: string }; provenance: string }
     | { type: "todo_started"; todo: string; handle?: string; ask?: string }
     | { type: "todo_done"; todo: string; turn?: string }
-    | { type: "todo_review"; todo: string; ask: string }
+    | { type: "todo_review"; todo: string; ask?: string; reviewTodo?: string }
     | { type: "todo_reopened"; todo: string; reason: string; resetFailures?: boolean }
     | { type: "todo_superseded"; todo: string; reason: string }
     | { type: "todo_blocked"; todo: string; reason: string; ask?: string }
@@ -246,6 +271,8 @@ export type HEvent = Base &
     | { type: "spend"; goal: string; todo: string; usd: number }
     | { type: "source_changed"; goal: string; monitor: string; fingerprint: string; summary: string }
     | { type: "note"; goal: string; text: string; turn?: string }
+    | { type: "seat_staffed"; seat: SeatDef; ask?: string }
+    | { type: "review_verdict"; todo: string; review: string; seat: string; verdict: Verdict; note?: string }
   );
 
 export type EventOf<T extends HEvent["type"]> = Extract<HEvent, { type: T }>;

@@ -16,8 +16,10 @@ import { CopilotTurnAgent } from "./agents.ts";
 import type { LaneConfig, TurnAgent } from "./agents.ts";
 import { Harness } from "./harness.ts";
 import { buildPacket } from "./packet.ts";
-import { beliefs, loadPolicy } from "./project.ts";
+import { beliefs, loadPolicy, seatPermissions } from "./project.ts";
 import { blockers, phase } from "./select.ts";
+import type { ToolConfig } from "./team.ts";
+import { checkLibrary } from "./team.ts";
 import type { EngagementDef, GoalRevision } from "./types.ts";
 import type { World } from "./world.ts";
 import { SystemClock } from "./world.ts";
@@ -25,6 +27,10 @@ import { SystemClock } from "./world.ts";
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
 const [, , cmd, ...rest] = process.argv;
+if (policy.team) {
+  const bad = checkLibrary(policy.team.library, policy.team.catalog);
+  if (bad.length) throw new Error(`policy/library.json: ${bad.join("; ")}`);
+}
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -47,10 +53,13 @@ function currentEngagement(): string {
 async function harness(engagement: string): Promise<Harness> {
   const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string };
   const lanesFile = path.join(ROOT, "policy", "harness-agents.json");
-  const lanes = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig> };
+  const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string> } & ToolConfig;
   // A path to the binary is resolved here; turns run with the worktree as their cwd.
   const bin = flag("copilot", "copilot")!;
-  const agent: TurnAgent = new CopilotTurnAgent({ bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: lanes.fallback, lanes: lanes.lanes, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000 });
+  const agent: TurnAgent = new CopilotTurnAgent({
+    bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: cfg2.fallback, lanes: cfg2.lanes, agents: cfg2.agents,
+    tools: { tools: cfg2.tools, always: cfg2.always }, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000,
+  });
   // --world <module.ts> exporting `world` (your job, metric and probe providers and
   // checkers), or case:<name> for a built-in case's checkers and simulated sources.
   const worldFile = flag("world");
@@ -145,6 +154,8 @@ async function main(): Promise<void> {
         console.log(`\n## ${g.id} v${g.version} (${g.status}): ${g.def.title}`);
         console.log(`phase: ${ph ? `${ph.category} (${ph.assumption})` : "-"} · spent ${g.spent.turns}/${g.def.budget.turns ?? "∞"} turns`);
         for (const b of beliefs(s, g.id)) console.log(`  ${b.def.id.padEnd(6)} ${b.status.padEnd(10)} ${b.def.text}`);
+        const seats = [...s.seats.values()].filter((x) => x.goal === g.id);
+        if (seats.length) console.log(`team: ${seats.map((x) => `${x.lane}=${x.template}${x.probation ? ` (probation, ${x.accepted} accepted)` : ""}${x.pending.length ? ` [${seatPermissions(s, x).length > x.permissions.length ? "granted" : "pending"}: ${x.pending.map((p) => p.permission).join(",")}]` : ""}`).join(" · ")}`);
         const open = [...s.todos.values()].filter((t) => t.goal === g.id && ["open", "running", "review", "blocked"].includes(t.status));
         for (const t of open) {
           const why = t.status === "open" ? blockers(s, t, Date.now()) : t.status === "running" ? [`running (${t.handle ?? t.ask ?? ""})`] : t.ask ? [`waiting on ${t.ask}`] : [];

@@ -46,7 +46,7 @@ const done = (name: string, f?: (c: Parameters<Behavior["run"]>[0]) => void): Be
 
 test("a runner that dies mid-turn: its claim expires, the next tick records the failure and redoes the work", async () => {
   const agent = new ScriptedTurnAgent([done("ok")]);
-  const { hs, clock } = await machines(1, def([{ id: "t", lane: "x", text: "t" }]), agent);
+  const { hs, clock } = await machines(1, def([{ id: "t", lane: "build", text: "t" }]), agent);
   const h = hs[0];
   // A runner claims the todo and dies without writing anything back.
   await h.claims.tryClaim("t", "dead", "t-1-dead", clock.now() + policy.claims.ttlMinutes * MIN);
@@ -63,7 +63,7 @@ test("a runner that dies mid-turn: its claim expires, the next tick records the 
 test("repeated failures stop retrying and ask; a retry from the owner starts the count again", async () => {
   let calls = 0;
   const agent: TurnAgent = { name: "flaky", run: async () => { calls++; throw new Error("model timeout"); } };
-  const { hs, clock } = await machines(1, def([{ id: "t", lane: "x", text: "t" }]), agent);
+  const { hs, clock } = await machines(1, def([{ id: "t", lane: "build", text: "t" }]), agent);
   const h = hs[0];
   for (let i = 0; i < 5; i++) {
     await h.tick({ id: "r1", capabilities: [] });
@@ -85,7 +85,7 @@ test("two machines wake at the same moment: each todo is done once and each job 
   const agent = new ScriptedTurnAgent([done("ok", (c) => seen.push(c.todo.id))]);
   const jobs = new SimJobs(() => ({ minutes: 30, metrics: { x: 1 } }));
   const todos: TodoDraft[] = [
-    ...["a", "b", "c", "d"].map((id) => ({ id, lane: "x", text: id })),
+    ...["a", "b", "c", "d"].map((id) => ({ id, lane: "build", text: id })),
     { id: "j", kind: "job", lane: "job", text: "j", job: { spec: {} } },
     { id: "m", kind: "wait", lane: "m", text: "paid test", cost: { usd: 50 }, wait: { source: "none" } },
   ];
@@ -113,7 +113,7 @@ test("a turn that outlives its claim is thrown away; whoever took over keeps the
       return { done: true, note: "B's answer" };
     },
   };
-  const m = await machines(2, def([{ id: "t", lane: "x", text: "t" }]), agent);
+  const m = await machines(2, def([{ id: "t", lane: "build", text: "t" }]), agent);
   clock = m.clock;
   other = m.hs[1];
   await m.hs[0].tick({ id: "A", capabilities: [] });
@@ -125,7 +125,7 @@ test("a turn that outlives its claim is thrown away; whoever took over keeps the
 
 test("restart anywhere: a fresh clone projects exactly the same state and carries on", async () => {
   const agent = new ScriptedTurnAgent([done("ok")]);
-  const d = def([{ id: "a", lane: "x", text: "a" }, { id: "b", lane: "x", text: "b", after: ["a"] }, { id: "c", lane: "x", text: "c", after: ["b"] }]);
+  const d = def([{ id: "a", lane: "build", text: "a" }, { id: "b", lane: "build", text: "b", after: ["a"] }, { id: "c", lane: "build", text: "c", after: ["b"] }]);
   const { hs, clock, origin, dir } = await machines(1, d, agent);
   await hs[0].tick({ id: "r1", capabilities: [] });
   const before = await hs[0].state();
@@ -139,7 +139,7 @@ test("restart anywhere: a fresh clone projects exactly the same state and carrie
 
 test("an agent that produces nothing: replan, then the goal stops and asks the owner; no more turns are spent", async () => {
   const agent = new ScriptedTurnAgent([{ name: "nothing", when: () => true, run: () => ({ note: "thinking about it" }) }]);
-  const sim = await Sim.create({ dir: tmp("idle"), def: def([{ id: "a", lane: "x", text: "a" }, { id: "b", lane: "x", text: "b" }]), policy, start: START, world: {}, agent, runners: [{ runner: { id: "r1", capabilities: [] } }], people: [] });
+  const sim = await Sim.create({ dir: tmp("idle"), def: def([{ id: "a", lane: "build", text: "a" }, { id: "b", lane: "build", text: "b" }]), policy, start: START, world: {}, agent, runners: [{ runner: { id: "r1", capabilities: [] } }], people: [] });
   await sim.run({ until: "2026-12-31T00:00:00Z" });
   const s = await sim.harness.state();
   const stuck = [...s.asks.values()].find((a) => a.origin === "rule:spin")!;

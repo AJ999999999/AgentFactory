@@ -43,6 +43,8 @@ for (const make of all) {
   for (const g of s.goals.values()) {
     lines.push(`**${g.id}** v${g.version}, ${g.status}: ${g.def.title}. Spent ${g.spent.turns} turns${g.def.budget.turns ? ` of ${g.def.budget.turns}` : ""}.`);
     for (const b of beliefs(s, g.id)) lines.push(`- ${b.def.id} ${b.status}: ${b.def.text}${b.adequate.length ? ` (${b.adequate.map((f) => f.grade).join(", ")})` : ""}`);
+    const team = [...s.seats.values()].filter((x) => x.goal === g.id);
+    if (team.length) lines.push(`- team: ${team.map((x) => `${x.lane} = ${x.generated ? `generated (${x.probation ? `probation, ${x.accepted} accepted, ${x.rejected} sent back` : "promoted"})` : x.template}`).join("; ")}`);
     const dropped = [...s.todos.values()].filter((t) => t.goal === g.id && t.status === "superseded");
     if (dropped.length) lines.push(`- dropped: ${dropped.map((t) => `${t.id} (${t.reason})`).join("; ")}`);
     lines.push("");

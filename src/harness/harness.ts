@@ -24,7 +24,7 @@ import { Claims, Pulse } from "./claims.ts";
 import type { Claim, PulseData } from "./claims.ts";
 import { buildPacket } from "./packet.ts";
 import type { HarnessPolicy, State, TodoState } from "./project.ts";
-import { apply, beliefs, compare, findAssumption, project } from "./project.ts";
+import { apply, beliefs, compare, findAssumption, project, seatOf, seatPermissions } from "./project.ts";
 import { settle } from "./rules.ts";
 import type { Answer } from "./answers.ts";
 import { answerEvents } from "./answers.ts";
@@ -402,6 +402,9 @@ export class Harness {
   private async runTurn(runner: Runner, s: State, t: TodoState, why: string, turnId: string, claim: Claim, now: number): Promise<TickResult["turns"][number]> {
     let summary: TickResult["turns"][number] = { todo: t.id, result: "host_failure", granularity: "none", reasons: [] };
     const g = s.goals.get(t.goal)!;
+    // Who does it: the lane's seat (role, model, permissions), when there's a team.
+    const seatState = seatOf(s, t);
+    const seat = seatState ? { ...seatState, effective: seatPermissions(s, seatState) } : undefined;
     // Path leases guard the files; the claim already guards the todo. A turn that
     // writes nothing gets a lease on a path of its own.
     const lockPaths = t.writeScope?.length ? t.writeScope : [`.agents/harness/${this.engagement}/turns/${turnId}`];
@@ -417,7 +420,7 @@ export class Harness {
         let hostError = "";
         try {
           output = await withTimeout(
-            this.agent.run({ turn: turnId, agent: runner.id, now, packet, todo: t, goal: g.def, beliefs: beliefs(s, g.id), findings: relevant, wtDir, state: s }),
+            this.agent.run({ turn: turnId, agent: runner.id, now, packet, todo: t, goal: g.def, beliefs: beliefs(s, g.id), findings: relevant, wtDir, state: s, seat }),
             this.policy.claims.turnTimeoutMinutes * MIN,
           );
         } catch (e) {
@@ -427,10 +430,10 @@ export class Harness {
         let events: HEvent[];
         if (!output) {
           await discard(wt);
-          events = [turnEvent(turnId, t, runner.id, now, why, "host_failure", [hostError || "no output"], files)];
+          events = [turnEvent(turnId, t, runner.id, now, why, "host_failure", [hostError || "no output"], files, seat?.key)];
         } else {
           const { failures, checked } = await this.runCheckers(wtDir, t, files);
-          const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}) });
+          const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}), seat: seatState });
           if (v.result === "validation_failed") await discard(wt);
           else if (t.artifact && t.pins?.length && v.result === "completed") {
             writeLockfile(wtDir, {
@@ -444,7 +447,7 @@ export class Harness {
         // A turn that outlived its claim must not overwrite whoever took over.
         if (!(await this.claims.holds(claim))) {
           await discard(wt);
-          events = [turnEvent(turnId, t, runner.id, now, why, "claim_lost", ["claim expired before writeback"], files)];
+          events = [turnEvent(turnId, t, runner.id, now, why, "claim_lost", ["claim expired before writeback"], files, seat?.key)];
         }
         // Scratch never lands in history.
         fs.rmSync(path.join(wtDir, ".agents", "session.json"), { force: true });
@@ -453,7 +456,7 @@ export class Harness {
         summary = { todo: t.id, result: rec.result, granularity: rec.granularity, reasons: rec.reasons };
         return {
           message: `turn ${t.id}: ${rec.result} (${rec.granularity})`,
-          trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, Result: rec.result },
+          trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, ...(seat ? { Seat: `${seat.key} ${seat.template}${seat.probation ? " (probation)" : ""}` } : {}), Result: rec.result },
         };
       },
     });
@@ -497,7 +500,7 @@ export class Harness {
     const out = [];
     for (const a of s.asks.values()) {
       if (a.status !== "open" || (a.to !== role && role !== "partner")) continue;
-      const blocks = [...s.todos.values()].filter((t) => ["open", "blocked", "review", "running"].includes(t.status) && ((a.blocksGoal && t.goal === a.goal) || (t.after ?? []).includes(a.id) || t.ask === a.id || a.todo === t.id)).length;
+      const blocks = [...s.todos.values()].filter((t) => ["open", "blocked", "review", "running"].includes(t.status) && ((a.blocksGoal && t.goal === a.goal) || (a.lane !== undefined && t.goal === a.goal && t.lane === a.lane && t.kind === "task") || (t.after ?? []).includes(a.id) || t.ask === a.id || a.todo === t.id)).length;
       out.push({ id: a.id, question: a.question, blocks, urgent: !!a.urgent, goal: a.goal, options: a.options.map((o) => o.id) });
     }
     return out.sort((x, y) => Number(y.urgent) - Number(x.urgent) || y.blocks - x.blocks || x.id.localeCompare(y.id));
@@ -511,8 +514,8 @@ function mergePulse(a: PulseData, b: PulseData): PulseData {
   return out;
 }
 
-function turnEvent(turn: string, t: TodoState, agent: string, now: number, why: string, result: TurnRecord["result"], reasons: string[], files: string[]): HEvent {
-  return { id: `turn-${turn}`, at: now, by: agent, type: "turn", turn: { id: turn, todo: t.id, goal: t.goal, agent, result, granularity: "none", reasons, files, why } };
+function turnEvent(turn: string, t: TodoState, agent: string, now: number, why: string, result: TurnRecord["result"], reasons: string[], files: string[], seat?: string): HEvent {
+  return { id: `turn-${turn}`, at: now, by: agent, type: "turn", turn: { id: turn, todo: t.id, goal: t.goal, agent, result, granularity: "none", reasons, files, why, seat } };
 }
 
 async function discard(wt: Git): Promise<void> {

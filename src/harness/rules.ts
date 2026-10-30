@@ -5,9 +5,10 @@
 import { sha256 } from "../util.ts";
 import type { Ask, AskOption, HEvent, TodoDraft } from "./types.ts";
 import type { GoalState, State, TodoState } from "./project.ts";
-import { apply, beliefOf, beliefs, criterionMet, findAssumption, metricsOf, openAsks, thinStreak } from "./project.ts";
+import { apply, beliefOf, beliefs, criterionMet, findAssumption, metricsOf, openAsks, seatKey, thinStreak } from "./project.ts";
 import { blockers, spendAskId } from "./select.ts";
 import { eid } from "./store.ts";
+import { staffSeat } from "./team.ts";
 
 const DAY = 86_400_000;
 const LIVE = ["open", "running", "review", "blocked"];
@@ -90,6 +91,32 @@ function rules(s: State, now: number, emitOut: Emit): void {
     // Questions about a direction the goal has already left are moot.
     for (const a of openAsks(s, g.id)) {
       if (a.goalVersion !== undefined && a.goalVersion < g.version) emit({ id: eid("moot", a.id), at: now, by: H, type: "ask_answered", ask: a.id, answeredBy: H, choice: "moot", note: `goal moved to v${g.version}` });
+    }
+
+    // Staffing: the first open task in a lane gets that lane a seat.
+    for (const lane of new Set(live.filter((x) => x.status === "open" && x.kind === "task").map((x) => x.lane))) {
+      if (!s.seats.has(seatKey(g.id, lane))) for (const e of staffSeat(s, g, lane, now)) emit(e);
+    }
+    // A role on probation whose work keeps failing independent review: the owner looks.
+    // Only that lane waits.
+    for (const seat of s.seats.values()) {
+      const streak = p.probation?.rejectStreak ?? 2;
+      if (seat.goal !== g.id || !seat.probation || seat.rejectStreak < streak) continue;
+      const lane = live.filter((x) => x.lane === seat.lane && x.status === "open");
+      emit(ask(now, {
+        id: eid("ask-probation", g.id, seat.lane, seat.rejected), goal: g.id, to: owner, kind: "decision", lane: seat.lane, origin: "rule:probation",
+        question: `The ${seat.role} role generated for ${seat.lane} work failed independent review ${seat.rejectStreak} times in a row. Keep it trying, or drop the open ${seat.lane} work?`,
+        options: [
+          { id: "keep", label: "Keep trying", effect: { type: "ack" } },
+          { id: "drop", label: `Drop the open ${seat.lane} work`, effect: { type: "supersede", todos: lane.map((x) => x.id) } },
+        ],
+      }));
+    }
+    // Work waiting on a probation review that was dropped goes with it: dropping the
+    // review must never let unreviewed work through.
+    for (const t of live.filter((x) => x.status === "review" && x.reviewTodo)) {
+      const r = s.todos.get(t.reviewTodo!);
+      if (r?.status === "superseded") emit(supersede(now, t, `its review was dropped (${r.reason})`));
     }
 
     for (const t of live.filter((x) => x.status === "open")) {

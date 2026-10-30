@@ -3,10 +3,12 @@
 // applies events literally; consequences (supersede this, ask that) are written as
 // their own events by the rules, so every state change has an audit trail.
 import * as fs from "node:fs";
+import * as path from "node:path";
+import type { Catalog, Library } from "../factory.ts";
 import { AGENT_GRADES } from "./types.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
-  TodoDraft, TodoKind, TurnRecord,
+  SeatDef, TodoDraft, TodoKind, TurnRecord,
 } from "./types.ts";
 
 export type HarnessPolicy = {
@@ -25,10 +27,18 @@ export type HarnessPolicy = {
   packet: { maxLines: number; maxChars: number };
   schedule: { jobPollMinutes: number[]; maxSleepMinutes: number; waitPollMinutes: number };
   protected: string[];
+  probation?: { promoteAfter: number; rejectStreak: number };
+  // The firm library and permission catalog, loaded from the files the policy names.
+  // Without them, nothing is staffed and every lane runs as the fallback agent.
+  team?: { library: Library; catalog: Catalog };
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
-  return JSON.parse(fs.readFileSync(file, "utf8")) as HarnessPolicy;
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Omit<HarnessPolicy, "team"> & { team?: { library: string; catalog: string } };
+  const { team, ...rest } = raw;
+  if (!team) return rest;
+  const read = (f: string) => JSON.parse(fs.readFileSync(path.resolve(path.dirname(file), f), "utf8"));
+  return { ...rest, team: { library: read(team.library) as Library, catalog: read(team.catalog) as Catalog } };
 }
 
 export type GoalState = {
@@ -64,9 +74,24 @@ export type TodoState = TodoDraft & {
   handle?: string;
   startedAt?: number;
   ask?: string;
+  reviewTodo?: string; // a probation review in progress
   doneAt?: number;
   reason?: string;
 };
+
+export type SeatState = SeatDef & {
+  key: string; // "<goal>/<lane>"
+  staffedAt: number;
+  ask?: string; // the owner's decision on pending permissions
+  probation: boolean;
+  accepted: number;
+  acceptStreak: number;
+  rejectStreak: number;
+  rejected: number;
+  promotedAt?: number;
+};
+
+export const seatKey = (goal: string, lane: string) => `${goal}/${lane}`;
 
 export type AskState = Ask & {
   status: "open" | "answered";
@@ -89,6 +114,7 @@ export type State = {
   discounted: Map<string, string>;
   turns: TurnAt[];
   sources: Map<string, { fingerprint: string; at: number }>; // "<goal>/<monitor>"
+  seats: Map<string, SeatState>; // "<goal>/<lane>"
   eventIds: Set<string>;
   lastAt: number;
   policy: HarnessPolicy;
@@ -105,6 +131,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     discounted: new Map(),
     turns: [],
     sources: new Map(),
+    seats: new Map(),
     eventIds: new Set(),
     lastAt: 0,
     policy,
@@ -177,12 +204,12 @@ export function apply(s: State, e: HEvent): void {
     }
     case "todo_review": {
       const t = s.todos.get(e.todo);
-      if (t && !["done", "superseded"].includes(t.status)) Object.assign(t, { status: "review", ask: e.ask });
+      if (t && !["done", "superseded"].includes(t.status)) Object.assign(t, { status: "review", ask: e.ask, reviewTodo: e.reviewTodo });
       break;
     }
     case "todo_reopened": {
       const t = s.todos.get(e.todo);
-      if (t && t.status !== "superseded") Object.assign(t, { status: "open", reason: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined });
+      if (t && t.status !== "superseded") Object.assign(t, { status: "open", reason: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
       break;
     }
     case "todo_superseded": {
@@ -258,7 +285,40 @@ export function apply(s: State, e: HEvent): void {
       if (g) g.notes.push({ at: e.at, text: e.text, turn: e.turn, version: g.version });
       break;
     }
+    case "seat_staffed": {
+      const key = seatKey(e.seat.goal, e.seat.lane);
+      if (!s.seats.has(key)) s.seats.set(key, { ...e.seat, key, staffedAt: e.at, ask: e.ask, probation: e.seat.generated, accepted: 0, acceptStreak: 0, rejectStreak: 0, rejected: 0 });
+      break;
+    }
+    case "review_verdict": {
+      const seat = s.seats.get(e.seat);
+      if (!seat) break;
+      if (e.verdict === "accept") {
+        seat.accepted++;
+        seat.acceptStreak++;
+        seat.rejectStreak = 0;
+        // Off probation after enough independent acceptances in a row.
+        if (seat.probation && seat.acceptStreak >= (s.policy.probation?.promoteAfter ?? 3)) Object.assign(seat, { probation: false, promotedAt: e.at });
+      } else {
+        seat.rejected++;
+        seat.rejectStreak++;
+        seat.acceptStreak = 0;
+      }
+      break;
+    }
   }
+}
+
+// What a seat may do right now: what the catalog granted, plus pending permissions
+// once the owner granted them.
+export function seatPermissions(s: State, seat: SeatState): string[] {
+  const a = seat.ask ? s.asks.get(seat.ask) : undefined;
+  const granted = a?.status === "answered" && a.choice === "grant";
+  return granted ? [...seat.permissions, ...seat.pending.map((p) => p.permission)] : [...seat.permissions];
+}
+
+export function seatOf(s: State, t: { goal: string; lane: string }): SeatState | undefined {
+  return s.seats.get(seatKey(t.goal, t.lane));
 }
 
 // ---------- derived views ----------

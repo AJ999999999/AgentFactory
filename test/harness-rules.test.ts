@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { apply, beliefOf, loadPolicy, project } from "../src/harness/project.ts";
+import { apply, beliefOf, loadPolicy, project, seatOf, seatPermissions } from "../src/harness/project.ts";
+import { checkLibrary } from "../src/harness/team.ts";
+import { CopilotTurnAgent } from "../src/harness/agents.ts";
+import type { TurnContext } from "../src/harness/agents.ts";
+import { readEvents, writeEventFiles } from "../src/harness/store.ts";
 import type { State } from "../src/harness/project.ts";
 import { settle } from "../src/harness/rules.ts";
 import { blockers, nextWake, phase, rank, readyTodos } from "../src/harness/select.ts";
@@ -15,7 +19,10 @@ import { buildPacket } from "../src/harness/packet.ts";
 import { criteriaHash } from "../src/harness/validate.ts";
 import type { AssumptionDef, Finding, GoalDef, HEvent, TodoDraft, TurnRecord } from "../src/harness/types.ts";
 
-const policy = loadPolicy(path.join(import.meta.dirname, "..", "policy", "harness.json"));
+// Most tests here check one mechanism at a time, without a team (nothing is staffed);
+// the team tests at the end use the full policy.
+const teamPolicy = loadPolicy(path.join(import.meta.dirname, "..", "policy", "harness.json"));
+const policy = { ...teamPolicy, team: undefined };
 const T0 = Date.parse("2026-11-02T09:00:00Z");
 const DAY = 86_400_000;
 let seq = 0;
@@ -339,4 +346,159 @@ test("validation: an agent can't make its own work survive a pivot, outlast the 
   const t = added[0].type === "todo_added" ? added[0].todo : null;
   assert.ok(t && t.carry === undefined && t.maxTurns === policy.retries.maxTurnsPerTodo && t.priority === 1);
   assert.ok(v.reasons.some((r) => r.includes("reviewer ghost is not a principal")));
+});
+
+// ---------- the team ----------
+
+const tst = (...events: HEvent[]): State => project([engagement, ...events], teamPolicy);
+
+test("the team follows the work: library roles by lane, a generated role with the least access, a gated permission holds only its lane", () => {
+  const g = goal({ id: "G" });
+  const s = tst(g, todo("G", { id: "r", lane: "research", text: "r" }), todo("G", { id: "c", lane: "cad", text: "design the printable kit" }), todo("G", { id: "d", lane: "data", text: "split the tickets" }), todo("G", { id: "j", kind: "job", lane: "bench", text: "j", job: { spec: {} } }));
+  assert.ok(blockers(s, s.todos.get("r")!, T0).includes("no seat for research yet"), "nothing runs unstaffed");
+  const out = settle(s, T0);
+  assert.deepEqual(out.filter((e) => e.type === "seat_staffed").map((e) => (e as Extract<HEvent, { type: "seat_staffed" }>).seat.lane).sort(), ["cad", "data", "research"], "lanes with open tasks get seats; a job needs none");
+  const research = s.seats.get("G/research")!;
+  assert.equal(research.template, "researcher@v1");
+  assert.ok(research.permissions.includes("web:read") && !research.probation);
+  const cad = s.seats.get("G/cad")!;
+  assert.ok(cad.generated && cad.probation);
+  assert.deepEqual(cad.permissions, ["repo:read", "repo:write:lease"]);
+  assert.match(cad.charter!, /design the printable kit/);
+  const data = s.seats.get("G/data")!;
+  assert.deepEqual(data.pending, [{ permission: "data:private:read", decision: "data_access" }]);
+  assert.ok(!seatPermissions(s, data).includes("data:private:read"), "not before the owner decides");
+  assert.deepEqual(blockers(s, s.todos.get("d")!, T0), [`waiting on partner: ${data.ask}`]);
+  assert.deepEqual(blockers(s, s.todos.get("r")!, T0), [], "other lanes don't wait");
+  for (const e of answerEvents(s, data.ask!, { by: "partner", choice: "grant" }, T0 + 1)) apply(s, e);
+  assert.ok(seatPermissions(s, data).includes("data:private:read"));
+  assert.deepEqual(blockers(s, s.todos.get("d")!, T0 + 1), []);
+  // Template drift never widens access: whatever a role lists, the catalog decides.
+  const lib = structuredClone(teamPolicy.team!.library);
+  lib.roles.builder.permissions.push("broker:trade", "secrets:read", "made:up");
+  const s2 = project([engagement, g, todo("G", { id: "b", lane: "build", text: "b" })], { ...teamPolicy, team: { library: lib, catalog: teamPolicy.team!.catalog } });
+  settle(s2, T0);
+  assert.deepEqual(s2.seats.get("G/build")!.permissions, ["repo:read", "repo:write:lease", "shell:test", "mcp:context:author"]);
+  // Each workstream gets its own team.
+  const child = goal({ id: "C", parent: "G", scope: ["work/c"] });
+  apply(s, child);
+  apply(s, todo("C", { id: "cr", lane: "research", text: "cr" }));
+  settle(s, T0 + 2);
+  assert.ok(s.seats.has("C/research") && s.seats.get("C/research") !== s.seats.get("G/research"));
+});
+
+test("probation: a generated role's work goes to an independent reviewer, unless a checker or a named person vouches for it", () => {
+  const s = tst(goal({ id: "G" }), todo("G", { id: "c1", lane: "cad", text: "c1", writeScope: ["work"] }), todo("G", { id: "c2", lane: "cad", text: "c2", writeScope: ["work"] }), todo("G", { id: "p", lane: "cad", text: "p", review: "pharmacist", writeScope: ["work"] }));
+  settle(s, T0);
+  const seat = s.seats.get("G/cad")!;
+  let v = validate(s, "c1", { done: true }, ["work/a"], { seat, checked: true });
+  assert.ok(v.events.some((e) => e.type === "todo_done" && e.todo === "c1"), "a passing checker vouches");
+  v = validate(s, "p", { done: true }, ["work/p"], { seat });
+  assert.ok(v.events.some((e) => e.type === "ask_opened" && e.ask.to === "pharmacist") && !v.events.some((e) => e.type === "todo_added"), "a named reviewer vouches");
+  v = validate(s, "c2", { done: true }, ["work/b"], { seat });
+  for (const e of v.events) apply(s, e);
+  const rev = [...s.todos.values()].find((t) => t.reviews === "c2")!;
+  assert.equal(rev.lane, "probation-review");
+  assert.equal(s.todos.get("c2")!.status, "review");
+  settle(s, T0 + 2);
+  const reviewer = s.seats.get("G/probation-review")!;
+  assert.equal(reviewer.template, "blind-reviewer@v1");
+  assert.notEqual(reviewer.model, seat.model, "reviewed on another model");
+  assert.ok(!reviewer.permissions.some((p) => p.startsWith("repo:write")), "a reviewer can't edit what it reviews");
+  let r = validate(s, rev.id, { done: true }, [], { seat: reviewer });
+  assert.ok(r.reasons.some((x) => x.includes("needs a verdict")) && r.result !== "completed");
+  r = validate(s, rev.id, { done: true, verdict: "reject", note: "the overhangs need supports" }, [], { seat: reviewer });
+  for (const e of r.events) apply(s, e);
+  assert.equal(s.todos.get("c2")!.status, "open");
+  assert.match(s.todos.get("c2")!.reason!, /overhangs need supports/);
+  assert.equal(s.seats.get("G/cad")!.rejectStreak, 1);
+  assert.ok(validate(s, "c1", { verdict: "accept" }, [], { seat }).reasons.some((x) => x.includes("verdict ignored")), "only a review gives a verdict");
+});
+
+test("probation ends after three acceptances in a row; two rejections in a row ask the owner and hold only that lane; dropping a review drops the work", () => {
+  const s = tst(goal({ id: "G" }), todo("G", { id: "c", lane: "cad", text: "c" }), todo("G", { id: "r", lane: "research", text: "r" }));
+  settle(s, T0);
+  const verdict = (v: "accept" | "reject", n: number) => apply(s, { id: `v${n}`, at: T0 + n, by: "r1", type: "review_verdict", todo: "c", review: `rv${n}`, seat: "G/cad", verdict: v });
+  verdict("reject", 1);
+  verdict("reject", 2);
+  const ask = settle(s, T0 + 3).find((e) => e.type === "ask_opened" && e.ask.origin === "rule:probation");
+  assert.ok(ask && ask.type === "ask_opened" && ask.ask.lane === "cad" && !ask.ask.blocksGoal);
+  assert.ok(blockers(s, s.todos.get("c")!, T0 + 3).some((x) => x.includes(ask.id)));
+  assert.deepEqual(blockers(s, s.todos.get("r")!, T0 + 3), []);
+  for (const e of answerEvents(s, ask.id, { by: "partner", choice: "keep" }, T0 + 4)) apply(s, e);
+  verdict("accept", 5);
+  verdict("accept", 6);
+  assert.ok(s.seats.get("G/cad")!.probation);
+  verdict("accept", 7);
+  assert.ok(!s.seats.get("G/cad")!.probation, "promoted");
+  // Work in review whose review was dropped never slips through.
+  const s2 = tst(goal({ id: "G" }), todo("G", { id: "w", lane: "cad", text: "w" }), todo("G", { id: "rv", lane: "probation-review", text: "rv", reviews: "w" }));
+  apply(s2, { id: "rev", at: T0 + 1, by: "r1", type: "todo_review", todo: "w", reviewTodo: "rv" });
+  apply(s2, { id: "sup-rv", at: T0 + 2, by: "r1", type: "todo_superseded", todo: "rv", reason: "replan" });
+  settle(s2, T0 + 3);
+  assert.equal(s2.todos.get("w")!.status, "superseded");
+});
+
+test("the library's judges run on another model than the work they judge", () => {
+  const { library, catalog } = teamPolicy.team!;
+  assert.deepEqual(checkLibrary(library, catalog), []);
+  const same = structuredClone(library);
+  same.roles.strategist.model = "model-a";
+  assert.ok(checkLibrary(same, catalog).some((v) => v.startsWith("judge lane replan")));
+  const rev = structuredClone(library);
+  rev.roles["blind-reviewer"].model = rev.generated!.model;
+  assert.ok(checkLibrary(rev, catalog).some((v) => v.startsWith("judge lane probation-review")));
+  const typo = structuredClone(library);
+  typo.lanes!.cad = "cad-designer";
+  assert.ok(checkLibrary(typo, catalog).some((v) => v.includes("unknown role cad-designer")));
+});
+
+test("Copilot CLI turns run as their seat: the role's agent and model, tools from its permissions, a generated role's charter", () => {
+  const cfg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "policy", "harness-agents.json"), "utf8"));
+  const s = tst(goal({ id: "G" }), todo("G", { id: "r", lane: "research", text: "r" }), todo("G", { id: "y", lane: "synthesis", text: "y" }), todo("G", { id: "c", lane: "cad", text: "design the printable kit" }), todo("G", { id: "pr", lane: "probation-review", text: "review c", reviews: "c" }));
+  settle(s, T0);
+  const agent = new CopilotTurnAgent({ fallback: cfg.fallback, agents: cfg.agents, tools: { tools: cfg.tools, always: cfg.always }, timeoutMs: 1000 });
+  const ctx = (id: string): TurnContext => {
+    const t = s.todos.get(id)!;
+    const seat = seatOf(s, t)!;
+    return { turn: "x", agent: "r1", now: T0, packet: "PACKET", todo: t, goal: s.goals.get("G")!.def, beliefs: [], findings: [], wtDir: tmp, state: s, seat: { ...seat, effective: seatPermissions(s, seat) } };
+  };
+  const pairs = (f: string[]) => f.map((x, i) => (x.startsWith("--") ? `${x} ${f[i + 1]}` : "")).filter(Boolean);
+  const r = agent.launch(ctx("r"));
+  assert.deepEqual([r.agent, r.model], ["researcher", "model-a"]);
+  assert.ok(pairs(r.flags).includes("--allow-tool web_fetch") && pairs(r.flags).includes("--allow-tool write"));
+  const y = agent.launch(ctx("y"));
+  assert.deepEqual([y.agent, y.model], ["strategist", "model-b"]);
+  assert.ok(pairs(y.flags).includes("--deny-tool write"), "a judge can't write");
+  assert.ok(pairs(y.flags).includes("--deny-tool shell(git push)"));
+  const c = agent.launch(ctx("c"));
+  assert.equal(c.agent, "author", "a generated role runs as the fallback agent...");
+  const prompt = agent.prompt(ctx("c"));
+  assert.match(prompt, /design the printable kit/, "...with its charter in the prompt");
+  assert.match(prompt, /on probation/);
+  assert.match(agent.prompt(ctx("pr")), /"verdict": "accept" or "reject"/);
+});
+
+test("evidence you produced means your seat's, not your machine's: synthesis can discount the researcher's finding from the same laptop", () => {
+  const s = tst(
+    goal({ id: "G", assumptions: [A({ id: "F", category: "feasibility" })] }), todo("G", { id: "syn", lane: "synthesis", text: "s" }), todo("G", { id: "r", lane: "research", text: "r" }),
+    finding({ id: "theirs", goal: "G", assumption: "F", direction: "supports", grade: "reported", author: "G/research" }),
+    finding({ id: "mine", goal: "G", assumption: "F", direction: "refutes", grade: "reported", author: "G/synthesis" }),
+  );
+  settle(s, T0);
+  const v = validate(s, "syn", { discount: [{ finding: "theirs", reason: "the blog cites itself" }, { finding: "mine", reason: "x" }] }, [], { seat: s.seats.get("G/synthesis") });
+  assert.deepEqual(v.events.filter((e) => e.type === "finding_discounted").map((e) => (e as { finding: string }).finding), ["theirs"]);
+  assert.ok(v.reasons.some((x) => x.includes("can't discount evidence you produced")));
+});
+
+test("event time respects cause and effect: a writer never stamps an event before what it has read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-hlc-"));
+  const note = (id: string, at: number): HEvent => ({ id, at, by: "r", type: "note", goal: "G", text: id });
+  writeEventFiles(dir, "e", [note("turn-sent-to-review", 1000)]);
+  // Same millisecond, and a runner whose clock is behind: both land after what they read.
+  writeEventFiles(dir, "e", [note("a-review-verdict", 1000), note("b-skewed-clock", 400)]);
+  writeEventFiles(dir, "e", [note("later", 5000)]);
+  const evs = readEvents(dir, "e");
+  assert.deepEqual(evs.map((e) => e.id), ["turn-sent-to-review", "a-review-verdict", "b-skewed-clock", "later"]);
+  assert.deepEqual(evs.map((e) => e.at), [1000, 1001, 1001, 5000], "nudged only as far as needed");
 });

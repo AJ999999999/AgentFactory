@@ -207,8 +207,10 @@ npm run harness -- answer ask-spend-ads --choice approve
 ```
 
 You can run it in two ways:
-- **Scheduled.** On Windows, Task Scheduler can run `npm run harness -- tick` every 10 minutes. A quiet wake costs one `git ls-remote`.
-- **Long-running.** Run `loop`, which sleeps until the next timer, capped at 12 hours so new answers get noticed.
+- **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. The README's Windows section has the steps.
+- **One wake per process.** `tick` for cron or a CI schedule. It keeps its quiet-wake memory on disk, so an unchanged engagement still costs one `git ls-remote`.
+
+`doctor` checks a machine end to end: node, git, Copilot CLI, the control repo and remote, the heartbeat and the scheduled task.
 
 Turns run in Copilot CLI, one headless session per turn in the turn's worktree, with the handoff packet and the seat's role as the prompt. The seat picks the custom agent and model; `policy/harness-agents.json` turns its permissions into tool flags. `status` shows each goal's team.
 
@@ -224,4 +226,4 @@ Jobs, metric sources, monitor probes and checkers come from a module you pass as
 - **People answer everything.** Questions go to people. Workstream leads that are agents answering the questions their decision rights cover isn't wired yet.
 - **Generated roles are templates, not designs.** A generated role's charter is written by deterministic code from the lane and its todos. A model-backed factory would write a better one, behind the same limits (catalog permissions, probation). Probation ends only through independent reviews; checker passes don't count toward it.
 - **Tool and model names are placeholders.** The flags in `policy/harness-agents.json` and the model names in the library have to match your Copilot CLI version and plan.
-- **Tested on Linux only.**
+- **Windows is tested in CI, not on your machine.** The suite and a scheduled-task smoke test (install, one turn through an npm-style `copilot.cmd`, doctor, a quiet tick, uninstall) run on a GitHub Windows runner with a fake Copilot CLI. The task there runs as S4U, because the CI user has no interactive logon; on your machine it runs Interactive.

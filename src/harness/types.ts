@@ -276,6 +276,8 @@ export type HEvent = Base &
     | { type: "note"; goal: string; text: string; turn?: string }
     | { type: "seat_staffed"; seat: SeatDef; ask?: string }
     | { type: "review_verdict"; todo: string; review: string; seat: string; verdict: Verdict; note?: string }
+    // The partner stops anything new from starting, or lets it start again.
+    | { type: "paused"; paused: boolean; reason?: string }
   );
 
 export type EventOf<T extends HEvent["type"]> = Extract<HEvent, { type: T }>;

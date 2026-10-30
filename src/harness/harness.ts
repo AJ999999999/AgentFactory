@@ -23,15 +23,15 @@ import type { TurnAgent } from "./agents.ts";
 import { Claims, Pulse } from "./claims.ts";
 import type { Claim, PulseData } from "./claims.ts";
 import { buildPacket } from "./packet.ts";
-import type { HarnessPolicy, State, TodoState } from "./project.ts";
-import { apply, beliefs, compare, findAssumption, project, seatOf, seatPermissions } from "./project.ts";
+import type { AskState, HarnessPolicy, State, TodoState } from "./project.ts";
+import { apply, beliefs, compare, findAssumption, openAsks, project, seatOf, seatPermissions } from "./project.ts";
 import { settle } from "./rules.ts";
 import type { Answer } from "./answers.ts";
 import { answerEvents } from "./answers.ts";
 import type { Hint, Runner } from "./select.ts";
 import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.ts";
 import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
-import type { EngagementDef, Finding, HEvent, TurnRecord } from "./types.ts";
+import type { Budget, EngagementDef, Finding, HEvent, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 import { criteriaHash, validateTurn } from "./validate.ts";
 import type { Clock, World } from "./world.ts";
@@ -142,6 +142,43 @@ export class Harness {
     const follow = settle(s, this.clock.now());
     await appendEvents(this.control, this.engagement, [...events, ...follow], `answer ${askId}: ${ans.choice}`, { Ask: askId, "Answered-by": ans.by });
     return events;
+  }
+
+  // ---------- the partner's controls ----------
+
+  // Pause: nothing new starts (turns, jobs, waits, people's tasks) until resumed.
+  // Running jobs and waits are still polled, so no result is lost. Returns false when
+  // it was already in that state.
+  async pause(paused: boolean, by = "partner", reason?: string): Promise<boolean> {
+    const s = await this.state();
+    if (!!s.paused === paused) return false;
+    const now = this.clock.now();
+    const e: HEvent = { id: eid(paused ? "pause" : "resume", now), at: now, by, type: "paused", paused, ...(reason ? { reason } : {}) };
+    apply(s, e);
+    const follow = settle(s, now);
+    await appendEvents(this.control, this.engagement, [e, ...follow], `${paused ? "pause" : "resume"} ${this.engagement}`, { "Changed-by": by });
+    return true;
+  }
+
+  // A new budget for a goal. When the harness has already asked about the budget, this
+  // is the answer to that question (so it doesn't stay open); otherwise it's recorded
+  // as a change made by the partner.
+  async setBudget(goalId: string, budget: Budget, by = "partner"): Promise<void> {
+    for (const [k, v] of Object.entries(budget)) if (!(typeof v === "number" && Number.isFinite(v) && v >= 0)) throw new Error(`budget ${k} must be a number of 0 or more`);
+    const s = await this.state();
+    const g = s.goals.get(goalId);
+    if (!g) throw new Error(`no goal ${goalId}`);
+    if (g.status !== "active") throw new Error(`${goalId} is ${g.status}`);
+    const asked = openAsks(s, goalId).find((a) => a.origin.startsWith("rule:budget") && a.options.some((o) => o.id === "raise" && o.effect?.type === "budget"));
+    if (asked) {
+      await this.answer(asked.id, { by, choice: "raise", budget });
+      return;
+    }
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("budget", goalId, g.budgetVersion + 1, now), at: now, by, type: "budget_set", goal: goalId, budget: { ...g.def.budget, ...budget } };
+    apply(s, e);
+    const follow = settle(s, now);
+    await appendEvents(this.control, this.engagement, [e, ...follow], `budget ${goalId}: ${Object.entries(budget).map(([k, v]) => `${k}=${v}`).join(", ")}`, { "Changed-by": by });
   }
 
   // ---------- the tick ----------
@@ -523,11 +560,19 @@ export class Harness {
     const out = [];
     for (const a of s.asks.values()) {
       if (a.status !== "open" || (a.to !== role && role !== "partner")) continue;
-      const blocks = [...s.todos.values()].filter((t) => ["open", "blocked", "review", "running"].includes(t.status) && ((a.blocksGoal && t.goal === a.goal) || (a.lane !== undefined && t.goal === a.goal && t.lane === a.lane && t.kind === "task") || (t.after ?? []).includes(a.id) || t.ask === a.id || a.todo === t.id)).length;
+      const blocks = heldBy(s, a).length;
       out.push({ id: a.id, question: a.question, blocks, urgent: !!a.urgent, goal: a.goal, options: a.options.map((o) => o.id) });
     }
     return out.sort((x, y) => Number(y.urgent) - Number(x.urgent) || y.blocks - x.blocks || x.id.localeCompare(y.id));
   }
+}
+
+// The live work an open question holds up: the whole goal, its lane, the work after
+// it, or the todo it is about. A spent budget holds the goal's agent work until the
+// question about it is answered.
+export function heldBy(s: State, a: AskState): TodoState[] {
+  const budget = a.origin === "rule:budget_exhausted";
+  return [...s.todos.values()].filter((t) => ["open", "blocked", "review", "running"].includes(t.status) && ((a.blocksGoal && t.goal === a.goal) || (a.lane !== undefined && t.goal === a.goal && t.lane === a.lane && t.kind === "task") || (budget && t.goal === a.goal && t.kind === "task" && t.status === "open") || (t.after ?? []).includes(a.id) || t.ask === a.id || a.todo === t.id));
 }
 
 function mergePulse(a: PulseData, b: PulseData): PulseData {

@@ -206,6 +206,10 @@ npm run harness -- loop --runner laptop --caps shell # keep waking; sleeps as to
 npm run harness -- status --packet                   # beliefs, open work, what it's waiting on, questions for you
 npm run harness -- answer ask-spend-ads --choice approve
 npm run harness -- answer ask-action-playtest --choice done --result supports --metrics attempts_to_clear=9 --note "finished on attempt 9"
+npm run harness -- pause --reason "away this week"  # nothing new starts; running jobs still finish
+npm run harness -- resume
+npm run harness -- budget kids turns=300             # answers the budget question if one is open
+npm run panel                                        # all of the above, in a page on this PC
 ```
 
 `open` also takes `--world <module>` (checkers and providers, saved with the engagement) and `--seed <dir>` (files committed into the engagement repo first, such as a brief). An answer is recorded as the role the question was addressed to unless you pass `--by`, because the grade of what you report depends on who you are. Agents see the answers their work depends on, directly or through earlier work, in their handoff packet.
@@ -215,6 +219,10 @@ You can run it in two ways:
 - **One wake per process.** `tick` for cron or a CI schedule. It keeps its quiet-wake memory on disk, so an unchanged engagement still costs one `git ls-remote`.
 
 `doctor` checks a machine end to end: node, git, Copilot CLI, the control repo and remote, the heartbeat and the scheduled task.
+
+The panel (`npm run panel`, `src/panel/`) is a page on this PC over every engagement in a folder. It's another view of the log, like `status`: what's waiting on you, answered in place, and each engagement's beliefs, budget, open work, team, recent turns and last wake, with pause and budget controls. Pausing is an event like any other. While paused, nothing new starts (turns, jobs, waits, people's tasks); running jobs and waits are still polled, so no result is lost. A budget set from the panel or with `budget` answers the harness's open question about the budget, if there is one, so it doesn't linger.
+
+The loop, `answer` and the panel share one checkout. A `reset --hard` from one process between another's event write and its commit would drop an answer without a trace, so the lock around those steps is also a file in the repository's git directory. A lock left by a process that died is taken over at once on the same machine, and after ten minutes otherwise.
 
 Turns run in Copilot CLI, one headless session per turn in the turn's worktree, with the handoff packet and the seat's role as the prompt. The seat picks the custom agent and model; `policy/harness-agents.json` turns its permissions into tool flags. `status` shows each goal's team.
 
@@ -226,7 +234,8 @@ Jobs, metric sources, monitor probes and checkers come from a module you pass as
 - **Copilot CLI hasn't been run.** `CopilotTurnAgent` was tested against a fake `copilot` binary (process, worktree, flags, packet in the prompt, JSON parsing), not the real CLI.
 - **There are no real providers.** Jobs, metrics and probes exist only as interfaces plus simulations. The next step is a GitHub Actions job provider and a webhook-fed metric source.
 - **Pivots don't cancel running jobs.** Their results still arrive as findings.
-- **One engagement per harness instance.** Scheduling across engagements belongs to the firm layer and isn't built.
+- **One engagement per harness instance.** Scheduling across engagements belongs to the firm layer and isn't built. The panel shows several engagements side by side, but each runs on its own.
+- **The panel is local to one PC.** Reaching it from a phone needs a sign-in in front of it; it has none.
 - **People answer everything.** Questions go to people. Workstream leads that are agents answering the questions their decision rights cover isn't wired yet.
 - **Generated roles are templates, not designs.** A generated role's charter is written by deterministic code from the lane and its todos. A model-backed factory would write a better one, behind the same limits (catalog permissions, probation). Probation ends only through independent reviews; checker passes don't count toward it.
 - **Tool and model names are placeholders.** The flags in `policy/harness-agents.json` and the model names in the library have to match your Copilot CLI version and plan.

@@ -8,6 +8,7 @@
 // "tools/opportunity-analyzer" is held, closing the race on overlapping paths.
 import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { Mutex, pathsOverlap } from "./util.ts";
@@ -145,9 +146,33 @@ export function cloneControl(remote: string, dir: string): Git {
 // each other's half-written admin dirs. Agent sessions run in parallel; these short
 // admin operations are serialized per repository.
 
-const repoLocks = new Map<string, Mutex>();
+//
+// The same goes across processes: the scheduled loop, `answer` typed in a terminal and
+// the panel all write through one checkout, and one process's `reset --hard` landing
+// between another's event write and its commit would silently drop an answer. So the
+// lock is also a file in the repository's git directory, held for the same short steps.
+
+export class RepoLock {
+  private mutex = new Mutex();
+  file: string;
+  constructor(file: string) {
+    this.file = file;
+  }
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    return this.mutex.run(async () => {
+      const release = await acquireFileLock(this.file);
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    });
+  }
+}
+
+const repoLocks = new Map<string, RepoLock>();
 const commonDirs = new Map<string, string>();
-export function repoLock(git: Git): Mutex {
+export function repoLock(git: Git): RepoLock {
   // --git-common-dir may be relative to the repo's cwd (".git"), so resolve against it.
   // A directory's common dir never changes while it exists, so it's looked up once.
   // realpath: on Windows the same directory can be spelled with a short 8.3 name
@@ -155,8 +180,81 @@ export function repoLock(git: Git): Mutex {
   let key = commonDirs.get(git.cwd);
   if (!key) commonDirs.set(git.cwd, (key = canonical(path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"])))));
   let m = repoLocks.get(key);
-  if (!m) repoLocks.set(key, (m = new Mutex()));
+  if (!m) repoLocks.set(key, (m = new RepoLock(path.join(key, "agentfactory.lock"))));
   return m;
+}
+
+// A lock left by a process that died is taken over: at once if that process is gone
+// (same machine), otherwise once it is older than any step holds it.
+export const LOCK_STALE_MS = 10 * 60_000;
+type LockInfo = { pid?: number; host?: string; at: number; token?: string };
+
+function readLockInfo(file: string): LockInfo | null {
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    try {
+      return JSON.parse(raw) as LockInfo;
+    } catch {
+      // Created but not written yet: judge it by the file's age.
+      return { at: fs.statSync(file).mtimeMs };
+    }
+  } catch {
+    return null; // gone
+  }
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+export function lockIsStale(info: LockInfo, now = Date.now(), staleMs = LOCK_STALE_MS): boolean {
+  if (now - info.at > staleMs) return true;
+  return info.pid !== undefined && info.host === os.hostname() && info.pid !== process.pid && !alive(info.pid);
+}
+
+export async function acquireFileLock(file: string, staleMs = LOCK_STALE_MS): Promise<() => void> {
+  const token = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  for (let i = 0; ; i++) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now(), token }), { flag: "wx" });
+      return () => {
+        try {
+          if (readLockInfo(file)?.token === token) fs.unlinkSync(file);
+        } catch {
+          /* already gone */
+        }
+      };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const held = readLockInfo(file);
+    if (held && lockIsStale(held, Date.now(), staleMs)) {
+      // Take it over by renaming (atomic: of two processes doing this, one wins). If
+      // what got renamed isn't the stale lock we judged, someone took it over first:
+      // put theirs back.
+      const aside = `${file}.${token}`;
+      try {
+        fs.renameSync(file, aside);
+        if (readLockInfo(aside)?.token !== held.token) {
+          try {
+            fs.linkSync(aside, file);
+          } catch {
+            /* a third holder: theirs stands */
+          }
+        }
+        fs.rmSync(aside, { force: true });
+      } catch {
+        /* someone else took it over */
+      }
+      continue;
+    }
+    await new Promise((r) => setTimeout(r, Math.min(20 * 2 ** Math.min(i, 4), 250)));
+  }
 }
 
 export async function addWorktree(control: Git, dir: string, branch: string, base: string): Promise<Git> {

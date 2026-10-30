@@ -7,6 +7,10 @@
 //   npm run harness -- status [--goal G] [--for partner]                      handoff packets and open questions
 //   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300]
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
+//   npm run harness -- pause [--reason ..] | resume                         stop anything new from starting, or let it start
+//   npm run harness -- budget <goal> turns=300[,usd=50]                     a new budget for a goal
+//
+// npm run panel shows all of this (and answers) in a page on this PC.
 //
 // State lives in git (the control repo); .af/harness/<engagement>/config.json only
 // says where that repo is. The runner (Copilot CLI, by default) and the world (job,
@@ -106,6 +110,15 @@ async function caseDef(name: string): Promise<EngagementDef> {
   };
   if (!cases[name]) throw new Error(`no case ${name} (${Object.keys(cases).join(", ")})`);
   return cases[name]();
+}
+
+// "turns=300,usd=50" -> { turns: 300, usd: 50 }
+function kv(x: string): Record<string, number> {
+  return Object.fromEntries(x.split(",").map((p) => {
+    const [k, v] = p.split("=");
+    if (!k?.trim() || v === undefined || !Number.isFinite(Number(v))) throw new Error(`can't read "${p}" (use name=number)`);
+    return [k.trim(), Number(v)];
+  }));
 }
 
 function runner() {
@@ -249,6 +262,7 @@ async function main(): Promise<void> {
       const h = await harness(currentEngagement());
       const s = await h.state();
       const only = flag("goal");
+      if (s.paused) console.log(`PAUSED since ${new Date(s.paused.at).toISOString()}${s.paused.reason ? `: ${s.paused.reason}` : ""} (npm run harness -- resume)`);
       for (const g of s.goals.values()) {
         if (only && g.id !== only) continue;
         const ph = phase(s, g.id);
@@ -277,7 +291,6 @@ async function main(): Promise<void> {
       const h = await harness(currentEngagement());
       const revFile = flag("revision");
       const budget = flag("budget");
-      const kv = (x: string) => Object.fromEntries(x.split(",").map((p) => { const [k, v] = p.split("="); return [k.trim(), Number(v)]; }));
       // What you observed (a playtest, a review), as evidence on the assumption the
       // action tests. Its grade comes from who you are, never from the answer.
       const result = flag("result") as "supports" | "refutes" | "neutral" | undefined;
@@ -299,8 +312,21 @@ async function main(): Promise<void> {
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
       return;
     }
+    case "pause":
+    case "resume": {
+      const eng = currentEngagement();
+      const changed = await (await harness(eng)).pause(cmd === "pause", flag("by", "partner"), flag("reason"));
+      console.log(changed ? `${eng}: ${cmd === "pause" ? "paused (running jobs still finish)" : "resumed"}` : `${eng} was already ${cmd === "pause" ? "paused" : "running"}`);
+      return;
+    }
+    case "budget": {
+      if (!rest[0] || !rest[1] || rest[0].startsWith("--")) throw new Error("usage: budget <goal> turns=300[,usd=50,gpuHours=10]");
+      await (await harness(currentEngagement())).setBudget(rest[0], kv(rest[1]), flag("by", "partner"));
+      console.log(`${rest[0]}: budget ${rest[1]}`);
+      return;
+    }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | answer <ask> --choice <id> | doctor | agents [install]");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | doctor | agents [install]");
   }
 }
 

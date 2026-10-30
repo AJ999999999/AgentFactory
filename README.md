@@ -78,6 +78,7 @@ It was designed against six engagements, simulated end to end through the real c
 |---|---|---|---|
 | Git substrate | `src/git.ts` | Worktrees, commit trailers (`Agent`, `Basis`, `Config`, `Replay`, `Decision`), leases as refs under `refs/leases/<path>` acquired by one atomic push with `--force-with-lease=<ref>:` | GitHub Enterprise remote; same mechanics |
 | Entries and sealed reveal | `src/foundation/entries.ts`, `seal.ts` | Typed append-only claims; per-angle sealed refs with hash commitments; views scoped by angle and evidence tags; dependents across versions | Same |
+| Partner's panel | `src/panel/` | One local page over every engagement: the questions waiting on you, answered in place; per engagement, its beliefs, budget, open work, team and recent turns, the loop's last wake; pause, resume, a new budget. Reads and writes the same event log as the CLI | Same, plus a sign-in to reach it from a phone |
 | Long-running harness | `src/harness/` | Event log in git, in causal order; beliefs from graded evidence; risk-ordered selection; dependency-scoped gates; claims as refs; jobs, waits, actions, monitors; kill criteria, budgets, spin and turn caps; seats staffed per lane from the library, generated roles on probation; deterministic handoff packet; tick/loop CLI; Copilot CLI turn agent run as the seat; six simulated cases | Real job/metric providers (GitHub Actions, analytics) behind the same interfaces; a model-backed role generator behind the same limits |
 | Challenge process | `src/foundation/process.ts`, `runners.ts`, `cli.ts` | Frame → diverge → reveal → critique → score → converge → plan MVP → build → experiment, with the gates above; scripted and Copilot CLI angle runners | Same, with the Copilot SDK |
 | Shared context layer | `src/context.ts` | Versioned task basis, content-addressed source snapshots, per-role context bundles, `context.lock.json` per artifact | Same files; snapshot importers per source system |
@@ -178,6 +179,27 @@ What the task does:
 - **It rides out network drops.** Offline or off the VPN, it backs off and retries instead of exiting.
 
 `open` takes the engagement's world module (its checkers, saved so the scheduled loop uses them too) and a folder of files to seed into the engagement repo, such as a brief the agents read. Without `--remote`, state lives in a local git repo under `.af\harness\`. Set `"models"` in `policy/harness-agents.json` to model ids your Copilot plan offers; unmapped placeholders are left out, so Copilot uses its default model. You answer questions with `answer <ask> --choice <id>`, as the role the question is for, adding `--result supports|refutes --metrics name=value` when you're reporting what you observed.
+
+### The panel
+
+```powershell
+cd C:\workspace\engagements
+node C:\workspace\AgentFactory\src\panel\cli.ts       # or, from the AgentFactory folder: npm run panel -- --dir C:\workspace\engagements
+```
+
+It opens a page on this PC (`http://127.0.0.1:4700`) with every engagement in that folder:
+- **The left column is what's waiting on you**, most urgent and most blocking first. Open a question to answer it. An option that needs something from you (a number, the revised goal, what you observed) or can't be undone asks for it first. You answer as the role the question is for, the same as `answer`.
+- **The right column is each engagement**:
+  - when its loop last woke, and a pause button: paused, nothing new starts and running jobs still finish
+  - per goal, turns spent against the budget (click the total to change it)
+  - one mark per assumption, with the riskiest open one spelled out
+  - open work, running first
+  - the team, with roles on probation dashed
+  - the last turns, with failed and thrown-out ones in red
+
+It reads the same event log as `status` and writes through the same code as `answer`, so it never holds state of its own. Writes from the loop, the command line and the panel go through one checkout under a lock shared across processes. It listens on 127.0.0.1 only, refuses requests addressed to any other host, and every call carries a token only the page it served knows. `npm run panel -- --demo` opens it on three simulated engagements.
+
+The same controls are on the command line: `pause [--reason ..]`, `resume`, and `budget <goal> turns=300`.
 
 `doctor` checks node, git, Copilot CLI, the agent profiles, the engagement's repo and remote, when the loop last woke, and the task. Each seat runs Copilot as the profile `af-<role>` (`integrations/copilot/harness-agents/`); a profile that isn't installed is skipped rather than failing the turn, with the role in the prompt instead. To stop: `scripts\windows\uninstall-harness-task.ps1 -Engagement my-engagement`; the state stays in git and a reinstall carries on.
 

@@ -1,0 +1,10 @@
+# What the first real runs showed (Windows, Copilot CLI 1.0.105, Claude Code 2.1.314, Codex CLI 0.166.0, pi 1.4.0)
+
+- **Copilot has one model on this plan.** Its router reports only `gpt-6-luna`, and `--model` refuses every name, that one included. So `model-a` and `model-c` stay empty (Copilot's default), and `model-b`, the judges, is `claude:opus`.
+- **`copilot -p --output-format json` streams events.** The harness reads them for the log, the reply, the model and premium requests. The GitHub MCP server's instructions are in that stream, so capacity is read only from error events and stderr.
+- **Copilot's npm loader starts a native `copilot.exe` as a child.** Stopping a turn kills the tree (taskkill /T).
+- **Claude Code streams `rate_limit_event` with an exact reset time.** It also warns when the plan is near its weekly limit; the turn log shows that.
+- **Codex's sandbox needs `windows.sandbox="elevated"` passed back in.** `--ignore-user-config` drops it, and without it `workspace-write` silently acts as read-only on Windows. Its sandbox keeps `.git` read-only, so commits fail, and stopping a turn kills the sandboxed commands too.
+- **The owner's Codex and pi default to a custom provider** (`magpie`, `workbuddy-ai/deepseek-v4.1-flash`, a local gateway). pi keeps it. Codex turns ignore the user's config, so `cli.codex.userProvider` reads just the provider section and default model from it, with an inline token handed over in `AF_CODEX_PROVIDER_TOKEN`. Without that, Codex fell back to OpenAI on a ChatGPT plan whose Codex allowance was spent until November 17.
+- **pi turns load the gate, and it holds.** It refused an out-of-scope write, `git push`, `git status; echo hi` and a read of `C:\Windows\win.ini`, and the model carried on within its grant.
+- **The owner's personal Copilot skills took over turns.** 14 of 17 eval turns loaded one; `poteto-core` demanded "ownership confirmation" and refused to edit. Copilot turns now run with `--no-custom-instructions --excluded-tools skill`. A probe confirmed it can't load a skill then. Don't use `--dynamic-retrieval skills=off`: it persists into the owner's settings.

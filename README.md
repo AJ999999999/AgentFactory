@@ -97,7 +97,7 @@ It was designed against six engagements, simulated end to end through the real c
 | Escalation log | `src/escalation-log.ts` | One event file per triage and per brief delivery under `.agents/escalations/<proposal>/`, with a feature snapshot for offline replay and the brief's position in the day; indexed by `store.ts`. Records only, never changes routing. `pickBlind` sends 20% of briefs without the recommendation; `pickAudit` sends one auto-resolved proposal a day back as a blind question, favouring ones near a threshold; outcome events with cause `input_misreport` count as the agent's missed escalations in the trust ledger. `escalation_quality.miss_cost_ratio` (k = 10) sets the calibration line: escalate when the chance the human changes the outcome is above 1/k | Same |
 | Briefs | `src/brief.ts` | One-screen brief, blind variant | Same |
 | Trust ledger | `src/ledger.ts` | Per-agent commits, revert rate, line survival (git blame), demotion | Same, plus missed-escalation counts |
-| Coordinator | `src/orchestrator.ts` | Concurrency cap, lease → worktree → agent → lockfile → commit → merge queue → release | Temporal workflows (durable waits, retries) |
+| Coordinator | `src/orchestrator.ts` | Concurrency cap, lease → worktree → agent → lockfile → commit → merge queue → release. The merge queue runs the checks again when it rebases a change onto work that landed meanwhile, and lands a failure record instead of a combination that fails | Temporal workflows (durable waits, retries) |
 | Agent runners | `src/agents/` | `MockAgent` (deterministic, tests) and `CopilotCliRunner` (`copilot -p --agent --model --allow-tool --deny-tool`) | Copilot SDK |
 | MCP servers | `src/mcp-server.ts`, `src/harness/mcp.ts`, `src/mcp-rpc.ts` | Context layer as MCP tools over stdio, role-scoped, for agents; the partner's harness tools for their own session, refused inside turns; hand-written JSON-RPC | Same, or the official SDK |
 | Copilot CLI integration | `integrations/copilot/` | Custom agents, hooks (`preToolUse` lease enforcement, `sessionEnd` lockfile), MCP config | Copy into your repo |
@@ -125,144 +125,19 @@ Plus a load test (12 agents, 4 slots, overlapping paths: no overlapping holders,
 
 An engagement that holds client-confidential material keeps its code in `src/<name>/`, its SOW and client files in `engagements/<name>/`, and its tests in `test/<name>.test.ts`. List those paths in `.git/info/exclude`, git's local-only ignore file, so they stay in your copy and the public repo never even names them. `npm test` runs their tests whenever they're present.
 
-## What testing found
+## Guides
 
-- **Worktree race:** parallel `git worktree add` in one repo can read another's half-written admin directory. Worktree add/remove is now serialized per repo; agent runs stay parallel.
-- **Tracking-ref race:** `git push` rewrites the local `origin/main` tracking ref, which races with concurrent fetches. Push and fetch share the per-repo lock. This failed about 1 in 12 runs before the fix; it passed 25 of 25 after.
-- **Tamper check miss:** trimming `git status --porcelain` output dropped the first file's status column, so the tamper check missed the edit. It now parses `-z` output untrimmed.
-- **Replay noise is real:** a flaky candidate passed with 1 run per side and failed with 5 runs per side (40%). Use several runs per side, or let deterministic checks decide.
-- **Returns are the wrong test for rule-following work:** in a private engagement, a config that ignored a rule earned 43% more on the backtest. A returns-based evaluator would have adopted it; the rule-fidelity checker refused it.
+Each guide is its own file, so a change to one feature touches only its own page. Add a new page for a new feature and a line here; don't grow this README.
 
-## Memory about the people you serve
-
-Remembering more isn't understanding more. "I like red-eye flights" (said three months ago) and "maybe Tokyo this weekend" (said yesterday) differ in how long they hold, how sure we are, and what they let an agent do. `src/memory/` keeps what a principal (you, a client) has said and done as a log of evidence. What we currently believe about them is computed when it's read, the way the harness computes beliefs from graded evidence.
-
-Each entry records five things:
-- **What kind of thing it is:** a preference, an intention, a fact or a constraint.
-- **How we know it:** stated or chosen by them, or, recorded by an agent, inferred or accepted.
-- **When it holds:** a condition, such as "on short business trips".
-- **Why,** when known.
-- **Until when.**
-
-The rules:
-- **Memory never grants permission.** An item's use is `default` (fill in or rank what you were asked to do), `mention` (worth a question when relevant) or `ask` (check first). There's no "act". Text that reads like a permission ("always book the cheapest without asking") is kept as a default and flagged.
-- **Agents can't make things true about you.** They record guesses ("inferred") and acceptances of their suggestions ("accepted"). Only you state or choose.
-- **Our own influence isn't evidence.** Accepting a suggestion we made adds nothing to the preference behind it, so recommendations can't feed on themselves.
-- **Things expire.** Intentions lapse at their date (14 days if none is given), preferences fade unless repeated (half-life 180 days, `policy/memory.json`), and an old guess goes stale.
-- **A condition narrows a preference instead of overwriting it.** "Red-eye on business trips" and "daytime with the kids" are two answers.
-- **Two things that disagree become a question, not an average.** Saying that one replaces the other settles it, and forgetting the replacement brings the old one back.
-
-```bash
-npm run memory -- add --as principal --kind preference --subject travel.flight-time --value red-eye --text "I like red-eye flights" --condition "short business trips" --because "it saves a hotel night"
-npm run memory -- add --as principal --kind intention --subject travel.trip --text "Maybe Tokyo this weekend" --until 2026-11-01
-npm run memory -- view                                   # what we believe now, how we know it, what it may be used for
-npm run memory -- render --subjects "work.*" --out profile.md   # a self-profile for your coding agents, regenerated, never stale
-```
-
-An engagement opts in with `"memory": { "principal": "partner", "subjects": ["work.*"] }` and `open --memory <dir>`. Its agents then get, in their packet, the defaults that apply on those subjects and what to check with you first. Lapsed plans and other subjects are left out.
-
-## Running the harness on Windows
-
-The harness runs as you, on your machine, through Task Scheduler: your Copilot CLI sign-in, your git credentials, and the engagement's code never leave it. Needs Node 22.18 or later, Git for Windows, and Copilot CLI (`npm install -g @github/copilot` or WinGet) signed in once with `copilot`.
-
-```powershell
-git clone https://github.com/AJ999999999/AgentFactory C:\workspace\AgentFactory
-cd C:\workspace\AgentFactory; npm test          # the suite runs on Windows in CI too
-npm run harness -- agents install                 # Copilot agent profiles for the library roles, in %USERPROFILE%\.copilot\agents
-
-# A folder for engagements (state lives in each engagement's own git repo)
-mkdir C:\workspace\engagements; cd C:\workspace\engagements
-node C:\workspace\AgentFactory\src\harness\cli.ts open my-engagement\engagement.json --world my-engagement\world.mjs --seed my-engagement\seed
-node C:\workspace\AgentFactory\src\harness\cli.ts doctor
-powershell -ExecutionPolicy Bypass -File C:\workspace\AgentFactory\scripts\windows\install-harness-task.ps1 -Engagement my-engagement
-```
-
-What the task does:
-- **It keeps one `harness loop` alive.** It starts at logon and is retried every 15 minutes. A retry while the loop is running is ignored, so a crashed loop is back within 15 minutes.
-- **It runs only while you're logged on** (a locked screen is fine). That's what lets it use your stored credentials. Nothing runs while the machine sleeps; the loop sleeps by the wall clock and catches up on wake.
-- **Quiet rechecks are cheap.** The loop rechecks every 10 minutes (`-PollMinutes`) so your answers are picked up, and a recheck with nothing new is one `git ls-remote`. It runs on battery, hidden, and logs to `.af\harness\<engagement>\loop.log`.
-- **It rides out network drops.** Offline or off the VPN, it backs off and retries instead of exiting.
-
-`open` takes the engagement's world module (its checkers, saved so the scheduled loop uses them too) and a folder of files to seed into the engagement repo, such as a brief the agents read. Without `--remote`, state lives in a local git repo under `.af\harness\`. You answer questions with `answer <ask> --choice <id>`, adding `--result supports|refutes --metrics name=value` when you're reporting what you observed. An answer counts as yours; add `--by <role>` only when you're passing on what that person (the parent, the lawyer) told you, so it counts as theirs.
-
-### Which CLI and model run a seat
-
-The library gives each role a model placeholder, and `"models"` in `policy/harness-agents.json` says what runs it:
-- **Empty:** Copilot CLI with its default model.
-- **A Copilot model id:** that model. Some Copilot plans offer a single model and refuse `--model`.
-- **`claude:<model>`**, such as `claude:opus`: Claude Code.
-- **`codex:<model>`:** Codex CLI.
-- **`pi:<provider/model>`:** pi.
-- **`omp:<model>`:** omp.
-
-`<cli>:` alone uses that CLI's default model. By default the judges' placeholder, `model-b`, is `claude:opus`, because judges must not run on the same model as the work they judge. `doctor` shows what each placeholder runs on and checks each CLI is installed. To try another CLI for one run without editing the policy, pass `--models model-a=pi:` to `tick`.
-
-Every CLI gets the same prompt and the role's profile as its standing instructions. None of them loads your own settings, MCP servers, plugins, skills or saved sessions, where the CLI lets those be switched off. The `"cli"` section maps the permission catalog onto each one, as strictly as that CLI allows:
-
-| CLI | How a seat is held to what the catalog grants |
-|---|---|
-| Copilot | `--allow-tool` and `--deny-tool` for each permission |
-| Claude Code | allowed and disallowed tools; anything else is refused, never asked about |
-| Codex | its sandbox: read-only for a seat that can't write, otherwise writes only inside the worktree with `.git` protected, and no network unless the seat may read the web. It runs any command inside that sandbox, so `doctor` warns that the catalog's command list isn't enforced. |
-| pi, omp | a gate the harness loads into every turn (`integrations/pi/turn-gate.ts`). It allows the seat's tools only, and shell commands only from the seat's list, one at a time: no chaining, pipes or redirection. Writes stay inside the write scope and nothing outside the worktree can be touched. A broken or missing grant blocks everything. |
-
-Whatever the CLI, a turn can't push: `git push` to the engagement's remote goes nowhere from inside a turn, and only the harness merges a turn's work, after checking it. Each CLI must be installed and signed in on the same PC.
-
-### Usage limits
-
-A usage or rate limit isn't a failure of the work. When a CLI refuses for capacity:
-- the turn is thrown away and isn't counted against the work or the budget
-- only the seats on that vendor wait, until the reset time it gives (or 30 minutes, doubling while it keeps refusing)
-- the loop wakes at the reset
-
-The other vendor's seats, jobs and people's tasks carry on. The panel shows the wait.
-
-### The panel
-
-```powershell
-cd C:\workspace\engagements
-node C:\workspace\AgentFactory\src\panel\cli.ts       # or, from the AgentFactory folder: npm run panel -- --dir C:\workspace\engagements
-```
-
-It opens a page on this PC (`http://127.0.0.1:4700`) with every engagement in that folder, and in every other folder you've run `harness open` in (the list is kept in `~/.af/panel-folders.json`), so three projects opened in three folders share one page. `--dir <folder>`, repeated as needed, shows only the folders you name. If two folders hold engagements with the same id, each is shown with its folder's name after it.
-- **The left column is what's waiting on you**, most urgent and most blocking first. Open a question to answer it. An agent's question carries its recommendation, what follows from each option and which options can't be undone, so most can be answered from the card. When the recommended option can't be undone or the evidence points both ways, the card says to look first and no option answers in one click. An option that needs something from you (a number, the revised goal, what you observed) or can't be undone asks for it first. Your answer counts as yours unless you tick "I'm passing on what they told me", the same as `answer --by <role>`.
-- **The right column is each engagement**:
-  - when its loop last woke, and a pause button: paused, nothing new starts and running jobs still finish
-  - a usage limit it's waiting out, and until when
-  - each turn running on this PC: who's on what, the end of its log as it happens, and a Stop button. Stopping kills the agent and throws its changes away, then asks you whether to try that work again or drop it. Every turn's log is kept in `.af\harness\<engagement>\turns\`.
-  - per goal, turns spent against the budget (click the total to change it)
-  - one mark per assumption, with the riskiest open one spelled out
-  - open work, running first
-  - the team, with roles on probation dashed
-  - the last turns, with failed and thrown-out ones in red
-
-It reads the same event log as `status` and writes through the same code as `answer`, so it never holds state of its own. Writes from the loop, the command line and the panel go through one checkout under a lock shared across processes. It listens on 127.0.0.1 only, refuses requests addressed to any other host, and every call carries a token only the page it served knows. `npm run panel -- --demo` opens it on three simulated engagements.
-
-The same controls are on the command line: `pause [--reason ..]`, `resume`, and `budget <goal> turns=300`.
-
-### From your own Copilot or Claude Code session
-
-The harness's tools are also an MCP server, so you can work the firm from the session you already have open. Its tools are `status`, `open_questions`, `answer`, `add_work`, `pause` and `stop_turn`. It reads and writes the same way the panel does, and covers the same engagements: every folder you've run `harness open` in, or only the folders you name with `--dir`.
-
-```powershell
-claude mcp add agentfactory --scope user -- node --no-warnings C:\workspace\AgentFactory\src\harness\mcp.ts
-```
-
-For Copilot, add the same command as a `local` server named `agentfactory` in `%USERPROFILE%\.copilot\mcp-config.json`.
-
-These are the partner's tools, never an agent's: an agent that could answer your questions would be grading its own work. So:
-- the server offers nothing inside a harness turn
-- every Copilot turn switches it off by name
-- Claude, Codex and pi turns load none of your MCP servers
-- the gate refuses omp turns any tool outside the seat's list
-
-`doctor` checks node, git, Copilot CLI, the agent profiles, the engagement's repo and remote, when the loop last woke, and the task. Each seat runs Copilot as the profile `af-<role>` (`integrations/copilot/harness-agents/`); a profile that isn't installed is skipped rather than failing the turn, with the role in the prompt instead. To stop: `scripts\windows\uninstall-harness-task.ps1 -Engagement my-engagement`; the state stays in git and a reinstall carries on.
-
-Windows-specific handling, each found by reading the code and checked on a Windows CI runner:
-- **Copilot's `.cmd` shim is never run through `cmd.exe`.** Prompts carry text from web pages and agents, and `&`, `|` or `%` in them would run commands there. The shim's JavaScript entry is run with node instead.
-- **Clones turn off line-ending conversion and turn on long paths.**
-- **Worktree removal retries while antivirus or the indexer holds a file.**
-- **The Copilot hooks have `powershell` entries, and guard PowerShell's recursive deletes too.**
+- [Running the harness on Windows](docs/windows.md): Task Scheduler, `doctor`, and what's handled for Windows
+- [Which CLI and model run a seat](docs/models.md): Copilot, Claude Code, Codex, pi or omp, and how each is held to its grant
+- [Usage limits](docs/usage-limits.md): a limit is a wait, not a failure
+- [The panel](docs/panel.md): the partner's page over every engagement
+- [From your own Copilot or Claude Code session](docs/partner-tools.md): the partner's MCP tools
+- [Memory about the people you serve](docs/memory.md): typed memory, what it may be used for, and how it expires
+- [What testing found](docs/testing-findings.md)
+- [Not real yet](docs/not-real-yet.md)
+- [Harness design](docs/harness.md), against the six cases
 
 ## Plugging into Copilot CLI
 
@@ -275,26 +150,3 @@ Check these against your CLI version before relying on them:
 - **Hook output:** the hook prints `{"permissionDecision":"allow"|"deny"}`.
 - **`model:` in agent frontmatter:** model IDs depend on what your org enables.
 - **Programmatic flags:** `--output-format json` and `--no-ask-user`.
-
-## Not real yet
-
-- **Turn agents have run for real only in smoke tests.** These ran on Windows: Copilot CLI 1.0.105, Claude Code 2.1.314, Codex CLI 0.166.0 and pi 1.4.0. The runs covered:
-  - writing files in scope
-  - a read-only judge turn
-  - stopping a turn mid-run, for Copilot and Codex
-  - the gate refusing out-of-scope writes, pushes, chained commands and reads outside the worktree inside pi
-
-  They haven't run a real engagement yet.
-- **Unverified pieces:**
-  - omp has been tested only against a fake binary: its flags come from its help text
-  - the wording of real usage-limit errors (the classifier reads the common forms)
-  - Copilot's tool name for web reads, and Codex's web search setting
-  - the challenge process's `CopilotCliRunner`
-- The harness's jobs, metric sources and probes are interfaces with simulated implementations; the cases' agents and people are scripted.
-- CI runs the tests on Ubuntu and Windows (`.github/workflows/tests.yml`), but replay checks stand in for an engagement's own CI.
-- The coordinator is in-process and not durable.
-- The remote is a local bare repo standing in for GitHub.
-- Firm-level pieces from the design are not built yet: the control repo with client walls, nested leases for spawned teams, the client channel, staffing and cost ledgers.
-- Config is JSON rather than YAML, because there are no dependencies.
-- The index runs one git process per file, which is fine for an MVP but slow for a large repo.
-- Line survival via blame is O(repo size).

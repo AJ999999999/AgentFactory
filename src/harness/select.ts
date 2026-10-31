@@ -48,6 +48,9 @@ export function goalBlocks(s: State, goalId: string): string[] {
 export function blockers(s: State, t: TodoState, now: number, runner?: Runner): string[] {
   const why: string[] = [];
   if (t.status !== "open") return [`status ${t.status}`];
+  // Paused: nothing new starts (turns, jobs, waits, people's tasks). What is already
+  // running is still polled, so no result is lost.
+  if (s.paused) why.push("paused");
   why.push(...goalBlocks(s, t.goal));
   const chain = goalChain(s, t.goal);
   const g = chain[0];

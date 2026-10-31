@@ -15,6 +15,7 @@
     "mcp": "node --no-warnings src/mcp-server.ts",
     "demo:harness": "node --no-warnings src/harness/demo.ts",
     "harness": "node --no-warnings src/harness/cli.ts",
-    "memory": "node --no-warnings src/memory/cli.ts"
+    "memory": "node --no-warnings src/memory/cli.ts",
+    "panel": "node --no-warnings src/panel/cli.ts"
   }
 }

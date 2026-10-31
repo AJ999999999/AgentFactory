@@ -115,6 +115,7 @@ export type State = {
   turns: TurnAt[];
   sources: Map<string, { fingerprint: string; at: number }>; // "<goal>/<monitor>"
   seats: Map<string, SeatState>; // "<goal>/<lane>"
+  paused: { at: number; by: string; reason?: string } | null;
   eventIds: Set<string>;
   lastAt: number;
   policy: HarnessPolicy;
@@ -132,6 +133,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     turns: [],
     sources: new Map(),
     seats: new Map(),
+    paused: null,
     eventIds: new Set(),
     lastAt: 0,
     policy,
@@ -290,6 +292,9 @@ export function apply(s: State, e: HEvent): void {
       if (!s.seats.has(key)) s.seats.set(key, { ...e.seat, key, staffedAt: e.at, ask: e.ask, probation: e.seat.generated, accepted: 0, acceptStreak: 0, rejectStreak: 0, rejected: 0 });
       break;
     }
+    case "paused":
+      s.paused = e.paused ? { at: e.at, by: e.by, reason: e.reason } : null;
+      break;
     case "review_verdict": {
       const seat = s.seats.get(e.seat);
       if (!seat) break;

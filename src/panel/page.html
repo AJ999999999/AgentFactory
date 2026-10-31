@@ -163,6 +163,16 @@ main {
   line-height: 1.25;
 }
 .opt:hover { border-color: var(--ink); }
+.opt.rec { border-width: 2px; font-weight: 600; }
+.q .rec { display: block; margin-top: 3px; font-size: 13.5px; color: var(--ink-2); font-weight: 400; }
+.q .rec b { color: var(--ink); font-weight: 600; }
+.look { border-left: 3px solid var(--bad); padding: 4px 10px; font-size: 14px; max-width: 70ch; }
+.why { max-width: 70ch; font-size: 14.5px; }
+.why .by { color: var(--ink-2); font-size: 13px; }
+.conseq { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; max-width: 76ch; }
+.conseq li { display: grid; grid-template-columns: minmax(90px, max-content) 1fr; gap: 10px; }
+.conseq b { font-weight: 600; }
+.conseq .final { color: var(--bad); font-weight: 600; white-space: nowrap; }
 
 .form { display: grid; gap: 10px; max-width: 640px; margin-top: 14px; }
 .form textarea, .form input[type=text], .form input[type=number] {
@@ -207,6 +217,7 @@ main {
 .eng-head { display: flex; align-items: center; gap: 12px; }
 .eng-head h2 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 400; flex: 1; min-width: 0; display: flex; gap: 10px; align-items: baseline; }
 .eng-head h2 .call { font-size: 20px; white-space: nowrap; flex: none; }
+.eng-head .folder { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .eng-head h2 .title { font-size: 14px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .beat { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); font-stretch: 87%; white-space: nowrap; }
 .beat i { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
@@ -453,7 +464,8 @@ function strip(a, now, fresh) {
       h("span", { class: "call" }, a.engagement),
       a.goal !== a.engagement ? h("span", { class: "gid" }, a.goal) : null,
       a.to !== "partner" ? h("span", { class: "to" }, PERSON(), a.to) : null),
-    h("span", { class: "q" }, a.question),
+    h("span", { class: "q" }, a.question,
+      a.recommend ? h("span", { class: "rec" }, "Recommends ", h("b", null, a.recommend.label)) : null),
     h("span", { class: "holds", title: a.holds.length ? `Holds up ${a.holds.length} piece${a.holds.length > 1 ? "s" : ""} of work` : null }, ticks),
     h("span", { class: "age", title: `Asked ${day(a.openedAt)}` }, ago(a.openedAt, now)));
   return h("article", { class: `strip k-${a.kind}${a.urgent ? " urgent" : ""}${isOpen ? " open" : ""}${fresh ? " fresh" : ""}`, "data-key": k },
@@ -464,14 +476,20 @@ function body(a) {
   const k = key(a);
   const choice = ui.choice ? a.options.find((o) => o.id === ui.choice) : null;
   const err = h("div", { class: "err", role: "alert" });
+  const told = a.options.filter((o) => o.consequence || o.irreversible);
   return h("div", { class: "body" },
     a.about ? h("div", { class: "about" }, a.about) : null,
+    // The card says when it isn't enough to answer from.
+    a.lookFirst.length ? h("div", { class: "look", role: "note" }, "Look before you answer: ", a.lookFirst.join("; "), ".") : null,
+    a.recommend ? h("div", { class: "why" }, h("b", null, a.recommend.label), ": ", a.recommend.why, " ", h("span", { class: "by" }, `(${a.recommend.by}'s opinion)`)) : null,
+    told.length ? h("ul", { class: "conseq" }, told.map((o) => h("li", null, h("b", null, o.label),
+      h("span", null, o.consequence || "", o.irreversible ? h("span", { class: "final" }, `${o.consequence ? " · " : ""}can't be undone`) : null)))) : null,
     a.evidence.length ? h("ul", { class: "evidence" }, a.evidence.map((f) => h("li", { class: f.direction }, h("span", { class: "grade" }, f.grade), h("span", null, f.text)))) : null,
     a.holds.length ? h("ul", { class: "holding" }, a.holds.slice(0, 8).map((t) => h("li", null, t)), a.holds.length > 8 ? h("li", null, `${a.holds.length - 8} more`) : null) : null,
     // A plain option answers at once. One that needs something from you, or can't be
     // undone, opens a short form whose button says what happens.
     choice ? form(a, choice) : h("div", { class: "options", role: "group" }, a.options.map((o) => {
-      const b = h("button", { class: "opt", onclick: () => (o.needs || o.hint || o.confirm ? choose(k, o.id) : send(a, o, b, err)) }, o.label);
+      const b = h("button", { class: `opt${a.recommend && a.recommend.option === o.id ? " rec" : ""}`, onclick: () => (o.needs || o.hint || o.confirm ? choose(k, o.id) : send(a, o, b, err)) }, o.label);
       return b;
     }), err));
 }
@@ -729,11 +747,15 @@ function pinned(el) {
   return el;
 }
 
+const baseName = (p) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+
 function engBlock(e, now) {
   const btn = h("button", { class: "toggle", onclick: () => setPaused(e, !e.paused, btn) }, e.paused ? "Resume" : "Pause");
   return h("section", { class: `eng${e.paused ? " paused" : ""}`, "data-eng": e.id },
     h("div", { class: "eng-head" },
       h("h2", null, h("span", { class: "call" }, e.id), h("span", { class: "title", title: e.title }, e.title)),
+      // Which project folder it's from, once there's more than one (unless its name says so).
+      e.folder && ui.data.dirs && ui.data.dirs.length > 1 && !e.id.endsWith(`@${baseName(e.folder)}`) ? h("span", { class: "folder", title: e.folder }, baseName(e.folder)) : null,
       beat(e, now), btn),
     e.error ? h("div", { class: "eng-err", role: "alert" }, e.error) : null,
     (e.capacity || []).map((c) => h("div", { class: "eng-wait", title: c.reason }, `${({ claude: "Claude", copilot: "Copilot", codex: "Codex", pi: "pi", omp: "omp" })[c.vendor] || "Model"} usage limit. Its turns resume ${day(c.until)}.`)),
@@ -755,8 +777,8 @@ function render() {
   // No engagements at all: say where the panel looked and how to start, in the space
   // the questions would take.
   const none = !d.engagements.length && h("div", { class: "empty" },
-    h("p", null, "No engagements in ", h("code", { class: "path" }, d.dir), "."),
-    h("p", null, "Open one with ", h("code", null, "npm run harness -- open <engagement.json>"), ", or start the panel where your engagements are: ", h("code", null, "npm run panel -- --dir <folder>"), "."),
+    h("p", null, "No engagements in ", ...(d.dirs || [d.dir]).flatMap((x, i) => [i ? ", " : null, h("code", { class: "path" }, x)]), "."),
+    h("p", null, "Open one with ", h("code", null, "npm run harness -- open <engagement.json>"), "; the panel finds it next time it starts. Or name the folders: ", h("code", null, "npm run panel -- --dir <folder> --dir <another>"), "."),
     h("p", null, "To look around first: ", h("code", null, "npm run panel -- --demo"), "."));
   const rack = document.getElementById("rack");
   rack.replaceChildren(...(none ? [none] : asks.length

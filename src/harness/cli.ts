@@ -33,6 +33,7 @@ import { checkLibrary } from "./team.ts";
 import type { EngagementDef, GoalRevision } from "./types.ts";
 import type { World } from "./world.ts";
 import { SystemClock } from "./world.ts";
+import { rememberFolder } from "../panel/folders.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
@@ -174,6 +175,8 @@ async function main(): Promise<void> {
       const mem = flag("memory") ? path.resolve(flag("memory")!) : undefined;
       fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}), ...(mem ? { memory: mem } : {}) }, null, 2));
       await (await harness(def.id)).open(def);
+      // So `npm run panel` from anywhere shows it next to the other projects' work.
+      rememberFolder(process.cwd());
       console.log(`opened ${def.id}: ${def.goals.length} goal(s), state in ${remote}`);
       return;
     }

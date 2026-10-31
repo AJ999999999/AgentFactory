@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1000 560" width="1000" height="560" role="img" aria-labelledby="t d">
+  <title id="t">AgentFactory architecture</title>
+  <desc id="d">The foundation takes a hard problem from frame to a tested MVP plan and opens an engagement. The harness then loops: each wake reads state from git, applies its rules, picks the riskiest open work, claims it and leases its paths, runs one Copilot CLI turn as the seat's role in a git worktree, validates the output and appends events to the log in git. Jobs, metric sources and people add graded evidence. Questions only the partner can decide go to the local panel; answers come back as events. Typed memory about the people served feeds each turn's packet as defaults, never as permission.</desc>
+  <style>
+    svg { --bg:#ffffff; --ink:#1f2328; --muted:#59636e; --line:#c8d1da; --box:#f6f8fa; --edge:#d1d9e0;
+          --found:#8250df; --loop:#0969da; --world:#1a7f37; --ask:#bf5700; --mem:#9a6700; }
+    @media (prefers-color-scheme: dark) {
+      svg { --bg:#0d1117; --ink:#e6edf3; --muted:#9198a1; --line:#3d444d; --box:#151b23; --edge:#3d444d;
+            --found:#ab7df8; --loop:#4493f8; --world:#3fb950; --ask:#f0883e; --mem:#d29922; }
+    }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: var(--ink); }
+    .bg { fill: var(--bg); }
+    .h { font-size: 13px; font-weight: 600; }
+    .s { font-size: 11px; fill: var(--muted); }
+    .band { font-size: 11px; font-weight: 600; letter-spacing: .08em; fill: var(--muted); }
+    .box { fill: var(--box); stroke: var(--edge); stroke-width: 1; }
+    .found { stroke: var(--found); } .loop { stroke: var(--loop); } .world { stroke: var(--world); }
+    .askb { stroke: var(--ask); } .memb { stroke: var(--mem); }
+    .wire { fill: none; stroke: var(--line); stroke-width: 2; }
+    .wire.l { stroke: var(--loop); stroke-opacity: .35; }
+    .wire.a { stroke: var(--ask); stroke-opacity: .45; stroke-dasharray: 5 4; }
+    .wire.w { stroke: var(--world); stroke-opacity: .5; }
+    .wire.m { stroke: var(--mem); stroke-opacity: .5; }
+    .wire.f { stroke: var(--found); stroke-opacity: .5; }
+    .dot-l { fill: var(--loop); } .dot-a { fill: var(--ask); } .dot-w { fill: var(--world); }
+    .dot-m { fill: var(--mem); } .dot-f { fill: var(--found); }
+    .glow-f { fill: var(--found); }
+    .arrow { fill: var(--muted); }
+  </style>
+
+  <rect class="bg" width="1000" height="560" rx="12"/>
+
+  <!-- ========== Foundation band ========== -->
+  <text class="band" x="24" y="30">FOUNDATION · A HARD PROBLEM TO A TESTED MVP</text>
+  <g id="stages">
+    <!-- six stages, each lights up in turn -->
+    <g>
+      <rect class="box found" x="24" y="42" width="104" height="52" rx="8"/>
+      <rect class="glow-f" x="24" y="42" width="104" height="52" rx="8" opacity="0">
+        <animate attributeName="opacity" values="0;.18;0;0" keyTimes="0;.08;.16;1" dur="6s" begin="0s" repeatCount="indefinite"/>
+      </rect>
+      <text class="h" x="76" y="64" text-anchor="middle">Frame</text>
+      <text class="s" x="76" y="81" text-anchor="middle">owner confirms</text>
+    </g>
+    <g>
+      <rect class="box found" x="146" y="42" width="104" height="52" rx="8"/>
+      <rect class="glow-f" x="146" y="42" width="104" height="52" rx="8" opacity="0">
+        <animate attributeName="opacity" values="0;.18;0;0" keyTimes="0;.08;.16;1" dur="6s" begin="1s" repeatCount="indefinite"/>
+      </rect>
+      <text class="h" x="198" y="64" text-anchor="middle">Diverge</text>
+      <text class="s" x="198" y="81" text-anchor="middle">sealed per angle</text>
+    </g>
+    <g>
+      <rect class="box found" x="268" y="42" width="104" height="52" rx="8"/>
+      <rect class="glow-f" x="268" y="42" width="104" height="52" rx="8" opacity="0">
+        <animate attributeName="opacity" values="0;.18;0;0" keyTimes="0;.08;.16;1" dur="6s" begin="2s" repeatCount="indefinite"/>
+      </rect>
+      <text class="h" x="320" y="64" text-anchor="middle">Critique</text>
+      <text class="s" x="320" y="81" text-anchor="middle">never your own</text>
+    </g>
+    <g>
+      <rect class="box found" x="390" y="42" width="104" height="52" rx="8"/>
+      <rect class="glow-f" x="390" y="42" width="104" height="52" rx="8" opacity="0">
+        <animate attributeName="opacity" values="0;.18;0;0" keyTimes="0;.08;.16;1" dur="6s" begin="3s" repeatCount="indefinite"/>
+      </rect>
+      <text class="h" x="442" y="64" text-anchor="middle">Score</text>
+      <text class="s" x="442" y="81" text-anchor="middle">frozen criteria</text>
+    </g>
+    <g>
+      <rect class="box found" x="512" y="42" width="104" height="52" rx="8"/>
+      <rect class="glow-f" x="512" y="42" width="104" height="52" rx="8" opacity="0">
+        <animate attributeName="opacity" values="0;.18;0;0" keyTimes="0;.08;.16;1" dur="6s" begin="4s" repeatCount="indefinite"/>
+      </rect>
+      <text class="h" x="564" y="64" text-anchor="middle">Converge</text>
+      <text class="s" x="564" y="81" text-anchor="middle">only the owner</text>
+    </g>
+    <g>
+      <rect class="box found" x="634" y="42" width="104" height="52" rx="8"/>
+      <rect class="glow-f" x="634" y="42" width="104" height="52" rx="8" opacity="0">
+        <animate attributeName="opacity" values="0;.18;0;0" keyTimes="0;.08;.16;1" dur="6s" begin="5s" repeatCount="indefinite"/>
+      </rect>
+      <text class="h" x="686" y="64" text-anchor="middle">MVP plan</text>
+      <text class="s" x="686" y="81" text-anchor="middle">build, then test</text>
+    </g>
+  </g>
+  <!-- chevrons between stages -->
+  <g class="arrow">
+    <path d="M132,64 l8,4 -8,4z"/><path d="M254,64 l8,4 -8,4z"/><path d="M376,64 l8,4 -8,4z"/>
+    <path d="M498,64 l8,4 -8,4z"/><path d="M620,64 l8,4 -8,4z"/>
+  </g>
+
+  <!-- MVP plan opens the engagement: down the left into Wake -->
+  <path id="p-open" class="wire f" d="M686,94 V112 H110 V186"/>
+  <text class="s" x="300" y="128">opens the engagement: goals, assumptions, kill criteria</text>
+  <circle class="dot-f" r="4">
+    <animateMotion dur="6s" begin="5s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.3;1" calcMode="linear"><mpath xlink:href="#p-open"/></animateMotion>
+  </circle>
+
+  <!-- ========== Harness loop ========== -->
+  <rect x="16" y="146" width="732" height="330" rx="12" fill="none" stroke="var(--line)" stroke-dasharray="2 4"/>
+  <text class="band" x="30" y="166">HARNESS · ONE WAKE, MONTHS ON END</text>
+
+  <!-- the loop wire; boxes sit on top so dots show in the gaps -->
+  <path id="p-loop" class="wire l" d="M110,220 H650 V410 H110 Z"/>
+  <g class="arrow">
+    <path d="M194,216 l8,4 -8,4z"/><path d="M380,216 l8,4 -8,4z"/><path d="M558,216 l8,4 -8,4z"/>
+    <path d="M646,346 l4,8 4,-8z"/>
+    <path d="M556,406 l-8,4 8,4z"/><path d="M380,406 l-8,4 8,4z"/>
+    <path d="M106,340 l4,-8 4,8z"/>
+  </g>
+  <circle class="dot-l" r="5"><animateMotion dur="9s" repeatCount="indefinite"><mpath xlink:href="#p-loop"/></animateMotion></circle>
+  <circle class="dot-l" r="5"><animateMotion dur="9s" begin="-3s" repeatCount="indefinite"><mpath xlink:href="#p-loop"/></animateMotion></circle>
+  <circle class="dot-l" r="5"><animateMotion dur="9s" begin="-6s" repeatCount="indefinite"><mpath xlink:href="#p-loop"/></animateMotion></circle>
+
+  <g>
+    <rect class="box loop" x="40" y="190" width="140" height="60" rx="8"/>
+    <text class="h" x="110" y="214" text-anchor="middle">Wake</text>
+    <text class="s" x="110" y="231" text-anchor="middle">starts from git,</text>
+    <text class="s" x="110" y="244" text-anchor="middle">never from a transcript</text>
+  </g>
+  <g>
+    <rect class="box loop" x="218" y="190" width="150" height="60" rx="8"/>
+    <text class="h" x="293" y="214" text-anchor="middle">Rules</text>
+    <text class="s" x="293" y="231" text-anchor="middle">spin, caps, budgets,</text>
+    <text class="s" x="293" y="244" text-anchor="middle">gates, probation</text>
+  </g>
+  <g>
+    <rect class="box loop" x="398" y="190" width="150" height="60" rx="8"/>
+    <text class="h" x="473" y="214" text-anchor="middle">Pick the work</text>
+    <text class="s" x="473" y="231" text-anchor="middle">riskiest open</text>
+    <text class="s" x="473" y="244" text-anchor="middle">assumption first</text>
+  </g>
+  <g>
+    <rect class="box loop" x="578" y="190" width="150" height="60" rx="8"/>
+    <text class="h" x="653" y="214" text-anchor="middle">Claim + lease</text>
+    <text class="s" x="653" y="231" text-anchor="middle">atomic ref push;</text>
+    <text class="s" x="653" y="244" text-anchor="middle">a seat per lane</text>
+  </g>
+  <g>
+    <rect class="box loop" x="578" y="378" width="150" height="66" rx="8"/>
+    <text class="h" x="653" y="400" text-anchor="middle">Copilot CLI turn</text>
+    <text class="s" x="653" y="417" text-anchor="middle">copilot -p --agent af-&lt;role&gt;</text>
+    <text class="s" x="653" y="431" text-anchor="middle">in its own git worktree</text>
+  </g>
+  <g>
+    <rect class="box loop" x="398" y="378" width="150" height="66" rx="8"/>
+    <text class="h" x="473" y="400" text-anchor="middle">Validate</text>
+    <text class="s" x="473" y="417" text-anchor="middle">stale claim or frozen</text>
+    <text class="s" x="473" y="431" text-anchor="middle">path: thrown out</text>
+  </g>
+  <g>
+    <rect class="box loop" x="40" y="378" width="328" height="66" rx="8"/>
+    <text class="h" x="204" y="400" text-anchor="middle">Event log in git</text>
+    <text class="s" x="204" y="417" text-anchor="middle">append-only, one file per event; state = project(log)</text>
+    <text class="s" x="204" y="431" text-anchor="middle">beliefs only from graded evidence</text>
+  </g>
+
+  <!-- world evidence into the log -->
+  <g>
+    <rect class="box world" x="150" y="286" width="230" height="52" rx="8"/>
+    <text class="h" x="265" y="307" text-anchor="middle">The world</text>
+    <text class="s" x="265" y="324" text-anchor="middle">jobs, metric sources, experts</text>
+  </g>
+  <path id="p-world" class="wire w" d="M265,338 V376"/>
+  <text class="s" x="272" y="362">measured, behavioral</text>
+  <circle class="dot-w" r="4"><animateMotion dur="3s" repeatCount="indefinite"><mpath xlink:href="#p-world"/></animateMotion></circle>
+
+  <!-- judges note -->
+  <text class="s" x="398" y="300">judges (replan, synthesis, review)</text>
+  <text class="s" x="398" y="314">run on a different model</text>
+  <text class="s" x="398" y="328">from the workers they judge</text>
+
+  <!-- ========== Partner column ========== -->
+  <text class="band" x="776" y="30">THE PARTNER</text>
+  <g>
+    <rect class="box askb" x="776" y="42" width="200" height="84" rx="8"/>
+    <circle cx="806" cy="70" r="9" fill="none" stroke="var(--ask)" stroke-width="2"/>
+    <path d="M790,100 a16,14 0 0 1 32,0" fill="none" stroke="var(--ask)" stroke-width="2"/>
+    <text class="h" x="834" y="70">One human</text>
+    <text class="s" x="834" y="87">decides direction,</text>
+    <text class="s" x="834" y="101">money, and what only</text>
+    <text class="s" x="834" y="115">a person can do</text>
+  </g>
+  <g>
+    <rect class="box askb" x="776" y="190" width="200" height="104" rx="8"/>
+    <text class="h" x="876" y="213" text-anchor="middle">Local panel</text>
+    <text class="s" x="876" y="231" text-anchor="middle">questions waiting on you,</text>
+    <text class="s" x="876" y="245" text-anchor="middle">beliefs, budget, team, turns</text>
+    <text class="s" x="876" y="263" text-anchor="middle">a view of the log,</text>
+    <text class="s" x="876" y="277" text-anchor="middle">no state of its own</text>
+  </g>
+  <path class="wire a" d="M876,128 V188"/>
+
+  <!-- asks: Rules -> panel -->
+  <path id="p-ask" class="wire a" d="M293,190 V176 H760 V230 H774"/>
+  <text class="s" x="560" y="171">a question only you can decide</text>
+  <circle class="dot-a" r="4.5"><animateMotion dur="7s" begin="1s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.4;1" calcMode="linear"><mpath xlink:href="#p-ask"/></animateMotion></circle>
+
+  <!-- answers: panel -> log -->
+  <path id="p-ans" class="wire a" d="M774,272 H756 V500 H204 V446"/>
+  <text class="s" x="560" y="518">your answer, graded by who answered, back into the log</text>
+  <circle class="dot-a" r="4.5"><animateMotion dur="7s" begin="4s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.45;1" calcMode="linear"><mpath xlink:href="#p-ans"/></animateMotion></circle>
+
+  <!-- memory -->
+  <g>
+    <rect class="box memb" x="776" y="360" width="200" height="88" rx="8"/>
+    <text class="h" x="876" y="383" text-anchor="middle">Memory about you</text>
+    <text class="s" x="876" y="401" text-anchor="middle">typed, sourced, decays;</text>
+    <text class="s" x="876" y="415" text-anchor="middle">feeds each turn's packet</text>
+    <text class="s" x="876" y="429" text-anchor="middle">as defaults, never permission</text>
+  </g>
+  <path id="p-mem" class="wire m" d="M774,404 H730"/>
+  <circle class="dot-m" r="4"><animateMotion dur="2.5s" repeatCount="indefinite"><mpath xlink:href="#p-mem"/></animateMotion></circle>
+
+  <text class="s" x="24" y="546">Everything runs on plain git: no database, no server. State lives under .af/harness/&lt;id&gt;/ in the engagement's own repo.</text>
+</svg>

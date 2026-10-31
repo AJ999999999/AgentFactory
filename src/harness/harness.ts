@@ -45,7 +45,8 @@ export type TickResult = {
   runner: string;
   at: number;
   maintenance: HEvent[];
-  turns: Array<{ todo: string; result: string; granularity: string; reasons: string[] }>;
+  // wait: set when the turn ended in a wait for capacity, and what kind.
+  turns: Array<{ todo: string; result: string; granularity: string; reasons: string[]; wait?: { kind: "limit" | "unreachable" | "setup"; until: number; vendor: string } }>;
   started: string[];
   hint: Hint;
   quiet?: boolean;
@@ -213,6 +214,21 @@ export class Harness {
     apply(s, e);
     const follow = settle(s, now);
     await appendEvents(this.control, this.engagement, [e, ...follow], `budget ${goalId}: ${Object.entries(budget).map(([k, v]) => `${k}=${v}`).join(", ")}`, { "Changed-by": by });
+  }
+
+  // A setup problem found before any turn ran (preflight): that vendor's turns wait for
+  // `minutes`, the same way they would after a turn hit it, so no todo spends a retry on
+  // it. Nothing is written when a wait at least that long already holds that vendor.
+  async hold(vendor: string, kind: "setup" | "unreachable", reason: string, minutes: number, models?: string[], by = "preflight"): Promise<boolean> {
+    const s = await this.state();
+    const now = this.clock.now();
+    const until = now + minutes * MIN;
+    const was = s.capacity.get(vendor);
+    if (was && was.until >= until) return false;
+    const streak = (was && was.kind === kind ? was.streak : 0) + 1;
+    const e: HEvent = { id: eid("hold", vendor, kind, now), at: now, by, type: "capacity", until, reason: reason.slice(0, 300), streak, vendor, kind, ...(models?.length ? { models } : {}) };
+    await appendEvents(this.control, this.engagement, [e], `${vendor} ${kind === "setup" ? "setup problem" : "unreachable"}: waiting until ${new Date(until).toISOString()}`);
+    return true;
   }
 
   // ---------- the tick ----------
@@ -553,13 +569,18 @@ export class Harness {
             // The todo stays as it was, and the seats on that vendor wait for the reset.
             await discard(wt);
             const cap = this.policy.capacity ?? { defaultBackoffMinutes: 30, minBackoffMinutes: 1, maxBackoffHours: 24 };
-            const streak = (s.capacity.get(capacity.vendor)?.streak ?? 0) + 1;
+            const kind = capacity.kind;
+            const was = s.capacity.get(capacity.vendor);
+            const streak = (was && was.kind === kind ? was.streak : 0) + 1;
+            // A dead connection is retried soon and then less often; a broken setup waits
+            // a fixed while (someone has to fix it); a limit waits for its reset.
+            const base = kind === "unreachable" ? cap.unreachableBackoffMinutes ?? 5 : kind === "setup" ? cap.setupBackoffMinutes ?? 60 : cap.defaultBackoffMinutes;
             const wait = capacity.resetAt !== undefined
               ? capacity.resetAt - now
-              : cap.defaultBackoffMinutes * MIN * 2 ** Math.min(streak - 1, 10);
+              : base * MIN * (kind === "setup" ? 1 : 2 ** Math.min(streak - 1, 10));
             const until = now + Math.min(Math.max(wait, cap.minBackoffMinutes * MIN), cap.maxBackoffHours * 60 * MIN);
-            events = [{ id: eid("capacity", turnId), at: now, by: runner.id, type: "capacity", until, reason: capacity.message, streak, vendor: capacity.vendor, ...(capacity.models ? { models: capacity.models } : {}) }];
-            this.log("capacity", { todo: t.id, vendor: capacity.vendor, until: new Date(until).toISOString(), reason: capacity.message });
+            events = [{ id: eid("capacity", turnId), at: now, by: runner.id, type: "capacity", until, reason: capacity.message, streak, vendor: capacity.vendor, ...(capacity.models ? { models: capacity.models } : {}), ...(kind !== "limit" ? { kind } : {}) }];
+            this.log("capacity", { todo: t.id, vendor: capacity.vendor, kind, until: new Date(until).toISOString(), reason: capacity.message });
           } else if (!output) {
             await discard(wt);
             events = [turnEvent(turnId, t, runner.id, now, why, "host_failure", [hostError || "no output"], files, seat?.key)];
@@ -586,8 +607,8 @@ export class Harness {
           writeEventFiles(wtDir, this.engagement, events);
           const capEvent = events.find((e) => e.type === "capacity") as Extract<HEvent, { type: "capacity" }> | undefined;
           if (capEvent) {
-            summary = { todo: t.id, result: "capacity", granularity: "none", reasons: [`${capEvent.reason}; ${capEvent.vendor} turns wait until ${new Date(capEvent.until).toISOString()}`] };
-            return { message: `${capEvent.vendor} usage limit: waiting until ${new Date(capEvent.until).toISOString()}`, trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, Result: "capacity" } };
+            summary = { todo: t.id, result: "capacity", granularity: "none", reasons: [`${capEvent.reason}; ${capEvent.vendor} turns wait until ${new Date(capEvent.until).toISOString()}`], wait: { kind: capEvent.kind ?? "limit", until: capEvent.until, vendor: capEvent.vendor ?? "model" } };
+            return { message: `${capEvent.vendor} ${capEvent.kind === "unreachable" ? "unreachable" : capEvent.kind === "setup" ? "setup problem" : "usage limit"}: waiting until ${new Date(capEvent.until).toISOString()}`, trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, Result: "capacity" } };
           }
           const rec = (events.find((e) => e.type === "turn") as Extract<HEvent, { type: "turn" }>).turn;
           summary = { todo: t.id, result: rec.result, granularity: rec.granularity, reasons: rec.reasons };

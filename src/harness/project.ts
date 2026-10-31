@@ -30,7 +30,9 @@ export type HarnessPolicy = {
   probation?: { promoteAfter: number; rejectStreak: number };
   // When the model service refuses for capacity: wait for the reset it names, clamped to
   // [min, max]; with no reset given, defaultBackoff doubled for each hit in a row.
-  capacity?: { defaultBackoffMinutes: number; minBackoffMinutes: number; maxBackoffHours: number };
+  // A service that can't be reached is retried sooner (unreachableBackoffMinutes, doubled
+  // for each hit in a row); a CLI that can't start as configured waits setupBackoffMinutes.
+  capacity?: { defaultBackoffMinutes: number; minBackoffMinutes: number; maxBackoffHours: number; unreachableBackoffMinutes?: number; setupBackoffMinutes?: number };
   // The firm library and permission catalog, loaded from the files the policy names.
   // Without them, nothing is staffed and every lane runs as the fallback agent.
   team?: { library: Library; catalog: Catalog };
@@ -101,8 +103,10 @@ export type SeatState = SeatDef & {
 export const seatKey = (goal: string, lane: string) => `${goal}/${lane}`;
 
 export type AskState = Ask & {
-  status: "open" | "answered";
+  status: "open" | "answered" | "auto_closed";
   openedAt: number;
+  autoReason?: "criteria_met" | "precedent"; // auto_closed: why the harness settled it
+  precedentAsk?: string; // auto_closed by precedent: the earlier ask whose answer was reused
   answeredAt?: number;
   answeredBy?: string;
   choice?: string;
@@ -266,6 +270,11 @@ export function apply(s: State, e: HEvent): void {
       if (a && a.status === "open") Object.assign(a, { status: "answered", answeredAt: e.at, answeredBy: e.answeredBy, choice: e.choice, note: e.note, revision: e.revision });
       break;
     }
+    case "ask_auto_closed": {
+      const a = s.asks.get(e.ask);
+      if (a && a.status === "open") Object.assign(a, { status: "auto_closed", answeredAt: e.at, answeredBy: "harness", autoReason: e.reason, ...(e.precedentAsk ? { precedentAsk: e.precedentAsk } : {}), ...(e.choice ? { choice: e.choice } : {}), ...(e.note ? { note: e.note } : {}) });
+      break;
+    }
     case "finding":
       if (!s.findings.has(e.finding.id)) s.findings.set(e.finding.id, { ...e.finding, at: e.at });
       break;
@@ -336,7 +345,7 @@ export function apply(s: State, e: HEvent): void {
       // Never move the wait earlier: two runners hitting the same limit keep the later reset.
       const vendor = e.vendor ?? "model";
       const was = s.capacity.get(vendor);
-      s.capacity.set(vendor, { vendor, until: Math.max(e.until, was?.until ?? 0), reason: e.reason, streak: Math.max(e.streak, was?.streak ?? 0), ...(e.models ? { models: e.models } : {}) });
+      s.capacity.set(vendor, { vendor, until: Math.max(e.until, was?.until ?? 0), reason: e.reason, streak: Math.max(e.streak, was && was.kind === (e.kind ?? "limit") ? was.streak : 0), kind: e.kind ?? "limit", ...(e.models ? { models: e.models } : {}) });
       break;
     case "paused":
       s.paused = e.paused ? { at: e.at, by: e.by, reason: e.reason } : null;
@@ -368,7 +377,7 @@ export function seatPermissions(s: State, seat: SeatState): string[] {
   return granted ? [...seat.permissions, ...seat.pending.map((p) => p.permission)] : [...seat.permissions];
 }
 
-export type CapacityState = { vendor: string; until: number; reason: string; streak: number; models?: string[] };
+export type CapacityState = { vendor: string; until: number; reason: string; streak: number; models?: string[]; kind: "limit" | "unreachable" | "setup" };
 
 // Does a vendor's limit hold up a seat on this model? Unknown either way: yes.
 function covers(c: CapacityState, model: string | undefined): boolean {

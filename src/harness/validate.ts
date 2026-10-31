@@ -17,7 +17,7 @@ import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
 import type { AskOption, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
-import type { Belief, SeatState, State, TodoState } from "./project.ts";
+import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
 import { activeFreezes } from "./select.ts";
 import { eid, safeId } from "./store.ts";
@@ -126,6 +126,7 @@ export function validateTurn(input: {
   }
 
   // ---- asks ----
+  const autoClosed = new Set<string>(); // asks the harness settled itself in this turn
   const principals = s.engagement?.principals ?? {};
   for (const [i, d] of (o.asks ?? []).entries()) {
     if (i >= p.proposals.maxAsksPerTurn) { reasons.push(`ask ${i}: over the per-turn limit`); continue; }
@@ -135,6 +136,18 @@ export function validateTurn(input: {
     const bad = d.options.find((op) => op.effect && !AGENT_EFFECTS.includes(op.effect.type));
     if (bad) { reasons.push(`ask ${i}: agents can't propose a "${bad.effect!.type}" option`); continue; }
     const id = eid("ask", t.goal, sha256(d.question).slice(0, 12));
+    // The same question, with the same options, already answered in this engagement: its
+    // answer stands, unless choosing it changes something (then the person decides again).
+    const prior = precedent(s, d.question, d.options);
+    if (prior) {
+      const again = s.asks.has(id) ? eid(id, "again", turn) : id;
+      events.push({ id: again, at, by, type: "ask_opened", ask: { id: again, goal: t.goal, to, kind: "decision", question: d.question.slice(0, 600), options: d.options, origin: `turn:${turn}`, todo: t.id } });
+      events.push({ id: eid(again, "auto"), at, by: "harness", type: "ask_auto_closed", ask: again, reason: "precedent", precedentAsk: prior.id, choice: prior.choice, ...(prior.note ? { note: prior.note } : {}) });
+      events.push({ id: eid(again, "auto", "note"), at, by: "harness", type: "note", goal: t.goal, turn, text: `Asked before (${prior.id}), and ${prior.answeredBy} chose "${prior.choice}"${prior.note ? `: ${prior.note}` : ""}. That answer stands for "${d.question.slice(0, 120)}".`.slice(0, p.proposals.noteChars) });
+      autoClosed.add(again);
+      reasons.push(`ask ${i}: answered before (${prior.id}): ${prior.choice}`);
+      continue;
+    }
     if (s.asks.has(id)) { reasons.push(`ask ${i}: already asked (${id})`); continue; }
     // Only the fields the page knows, each bounded: an agent's JSON is not trusted to be small.
     const options: AskOption[] = d.options.map((op) => ({
@@ -187,6 +200,7 @@ export function validateTurn(input: {
 
   // ---- outcome ----
   let result: TurnResult = "progress";
+  let done = !!o.done;
   if (o.blocker) {
     const id = eid("ask-blocked", t.id, t.turns + 1);
     events.push({
@@ -196,9 +210,22 @@ export function validateTurn(input: {
         options: [{ id: "unblock", label: "Unblocked (answer with guidance)", effect: { type: "reopen", todo: t.id } }, { id: "drop", label: "Drop it", effect: { type: "supersede", todos: [t.id] } }],
       },
     });
-    events.push({ id: eid("block", t.id, t.turns + 1), at, by, type: "todo_blocked", todo: t.id, reason: String(o.blocker).slice(0, 200), ask: id });
-    result = "blocked";
-  } else if (o.done && t.reviews) {
+    if (input.checked) {
+      // The todo's own checker passed on this output: the work is done by the measure set
+      // before it started, so the doubt goes on record and nobody is asked. In the eval a
+      // turn fixed a bug completely and then asked whether it could close the todo.
+      events.push({ id: eid(id, "auto"), at, by: "harness", type: "ask_auto_closed", ask: id, reason: "criteria_met", note: `${t.check} passed on ${files.join(", ") || "the output"}` });
+      autoClosed.add(id);
+      reasons.push(`blocker set aside: ${t.check} passed (${String(o.blocker).slice(0, 120)})`);
+      done = true;
+    } else {
+      events.push({ id: eid("block", t.id, t.turns + 1), at, by, type: "todo_blocked", todo: t.id, reason: String(o.blocker).slice(0, 200), ask: id });
+      result = "blocked";
+    }
+  }
+  if (result === "blocked") {
+    // held above
+  } else if (done && t.reviews) {
     // A probation review is finished only with a verdict on the work it reviews.
     if (o.verdict !== "accept" && o.verdict !== "reject") reasons.push(`a probation review needs a verdict: "accept" or "reject"`);
     else {
@@ -212,8 +239,8 @@ export function validateTurn(input: {
       events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
       result = "completed";
     }
-  } else if (o.done) {
-    const firstAsk = events.find((e) => e.type === "ask_opened" && e.ask.origin === `turn:${turn}`);
+  } else if (done) {
+    const firstAsk = events.find((e) => e.type === "ask_opened" && e.ask.origin === `turn:${turn}` && !autoClosed.has(e.ask.id));
     if (firstAsk && firstAsk.type === "ask_opened" && !t.review) {
       // The todo's product is a decision: it's done when the person answers.
       events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, ask: firstAsk.ask.id });
@@ -403,4 +430,23 @@ export function spawnEvents(s: State, parentId: string, goals: GoalDef[]): Array
 
 export function criteriaHash(g: Pick<GoalDef, "assumptions" | "kill" | "success">): string {
   return sha256(JSON.stringify({ a: g.assumptions.map((a) => [a.id, a.threshold ?? null]), k: g.kill ?? [], s: g.success ?? [] })).slice(0, 16);
+}
+
+// An earlier answer to the same question with the same options, if reusing it changes
+// nothing by itself: no effect, or only an approval or acknowledgement. Answers the harness
+// gave itself (moot, auto-closed) are never precedent; only a person's are.
+const SAFE_PRECEDENT = new Set(["approve", "ack"]);
+const norm = (q: string) => q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+export function precedent(s: State, question: string, options: AskOption[]): AskState | undefined {
+  const q = norm(question);
+  const ids = options.map((o) => o.id).sort().join("|");
+  let best: AskState | undefined;
+  for (const a of s.asks.values()) {
+    if (a.status !== "answered" || !a.choice || a.choice === "moot" || a.answeredBy === "harness") continue;
+    if (norm(a.question) !== q || a.options.map((o) => o.id).sort().join("|") !== ids) continue;
+    const opt = a.options.find((o) => o.id === a.choice);
+    if (!opt || (opt.effect && !SAFE_PRECEDENT.has(opt.effect.type))) continue;
+    if (!best || (a.answeredAt ?? 0) > (best.answeredAt ?? 0)) best = a;
+  }
+  return best;
 }

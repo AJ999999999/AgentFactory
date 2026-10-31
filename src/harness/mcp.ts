@@ -21,6 +21,7 @@ import { Workspace, answerFromBody } from "../panel/server.ts";
 import type { AskView, EngagementView } from "../panel/view.ts";
 import { PARTNER_SERVER } from "./agents.ts";
 import { loadPolicy } from "./project.ts";
+import { waitLabel } from "./select.ts";
 
 export { PARTNER_SERVER } from "./agents.ts";
 
@@ -45,7 +46,7 @@ export function statusText(engs: EngagementView[], now: number): string {
     if (e.error) out.push(`can't read it now: ${e.error}`);
     const r = e.runners[0];
     out.push(r ? `loop ${r.id} woke ${minutes(now - r.at)} ago${r.next ? `; next ${when(r.next.at)} (${r.next.why})` : ""}` : "no loop has run for it on this PC");
-    for (const c of e.capacity) out.push(`${c.vendor} usage limit: its turns wait until ${when(c.until)} (${c.reason})`);
+    for (const c of e.capacity) out.push(`${c.vendor} ${waitLabel(c.kind)}: its turns wait until ${when(c.until)} (${c.reason})`);
     for (const t of e.running ?? []) out.push(`running ${t.turn}: ${t.text} (${t.role ?? t.runner}, ${minutes(now - t.startedAt)}${t.stopping ? ", stopping" : ""}); last: ${t.tail.at(-1)?.replace(/^\d\d:\d\d:\d\d /, "") ?? "-"}`);
     for (const g of e.goals) {
       if (g.status !== "active") {

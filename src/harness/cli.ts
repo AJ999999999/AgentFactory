@@ -26,6 +26,8 @@ import { userAgentsDir, vendorOfModel } from "./agents.ts";
 import type { TurnAgent } from "./agents.ts";
 import { buildTurnAgent, loadAgentsConfig, usedVendors } from "./setup.ts";
 import { VENDOR_DEFAULTS } from "./vendors.ts";
+import type { Problem } from "./preflight.ts";
+import { holds, modelsOf, preflight } from "./preflight.ts";
 import { Harness } from "./harness.ts";
 import { escalationReport, worthAsking } from "./escalation.ts";
 import { buildPacket } from "./packet.ts";
@@ -92,6 +94,21 @@ async function harness(engagement: string): Promise<Harness> {
 // --models model-a=pi:,model-b=codex: tries other CLIs for one run without editing the
 // policy (the scheduled loop goes by the policy file).
 const agentsConfig = () => loadAgentsConfig(ROOT, flag("models"));
+
+const checkSetup = () => preflight({ agents: agentsConfig(), installedDir: userAgentsDir(), repoDir: path.join(ROOT, "integrations", "copilot", "harness-agents") });
+
+// What preflight found becomes a wait for that vendor's turns, so no todo spends a retry
+// on a problem no agent can fix. A dead gateway is checked again soon; a broken setup
+// waits until the next preflight.
+async function holdFor(h: Harness, problems: Problem[], say: (l: string) => void): Promise<void> {
+  const cap = policy.capacity;
+  for (const p of problems.filter(holds)) {
+    const minutes = p.kind === "unreachable" ? cap?.unreachableBackoffMinutes ?? 5 : PREFLIGHT_MINUTES;
+    if (await h.hold(p.vendor, p.kind, p.what, minutes, modelsOf(agentsConfig(), p.vendor))) say(`${p.vendor} turns wait ${minutes} min: ${p.what} (fix: ${p.fix})`);
+  }
+  for (const p of problems.filter((x) => !holds(x))) say(`note: ${p.what} (fix: ${p.fix})`);
+}
+const PREFLIGHT_MINUTES = 30;
 
 async function caseWorld(name: string): Promise<World> {
   const setups: Record<string, () => Promise<{ world: World }>> = {
@@ -194,6 +211,7 @@ async function main(): Promise<void> {
       } catch {
         /* first wake on this machine */
       }
+      await holdFor(h, await checkSetup(), (l) => console.error(l));
       const r = await h.tick(rn, { slots: Number(flag("slots", "1")) });
       const m = h.memory(rn.id);
       if (m) fs.writeFileSync(mem, JSON.stringify(m));
@@ -217,9 +235,15 @@ async function main(): Promise<void> {
       };
       say(`loop started: ${eng}, runner ${rn.id}, pid ${process.pid}`);
       let backoff = 60_000;
+      let checkedAt = -Infinity;
       for (;;) {
         let next: number;
         try {
+          // Preflight before the first wake and every half hour after.
+          if (Date.now() - checkedAt >= PREFLIGHT_MINUTES * 60_000) {
+            await holdFor(h, await checkSetup(), say);
+            checkedAt = Date.now();
+          }
           const r = await h.tick(rn, { slots: Number(flag("slots", "1")) });
           heartbeat(eng, rn.id, r.hint, !!r.quiet);
           for (const t of r.turns) say(`${t.todo}: ${t.result}/${t.granularity}${t.reasons.length ? ` (${t.reasons.join("; ").slice(0, 200)})` : ""}`);
@@ -447,6 +471,9 @@ async function doctor(): Promise<boolean> {
       }
     }
   }
+  const problems = await checkSetup();
+  line(!problems.some(holds), `preflight: ${problems.length ? `${problems.length} problem${problems.length === 1 ? "" : "s"}` : "agent profiles load, gateways answer"}`);
+  for (const p of problems) line(false, `  ${p.what}`, p.fix, !holds(p));
   const dir = path.join(process.cwd(), ".af", "harness");
   const engs = flag("engagement") ? [flag("engagement")!] : fs.existsSync(dir) ? fs.readdirSync(dir) : [];
   if (!engs.length) console.log("     (no engagement opened in this directory yet: npm run harness -- open <engagement.json> --remote <url>)");

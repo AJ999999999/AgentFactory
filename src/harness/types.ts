@@ -281,6 +281,11 @@ export type HEvent = Base &
     | { type: "todo_blocked"; todo: string; reason: string; ask?: string }
     | { type: "ask_opened"; ask: Ask }
     | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision }
+    // The harness settled an ask without the person: the todo's own checker already
+    // passed (criteria_met), or the same question was answered before (precedent). Always
+    // follows the ask's ask_opened, and is never dressed up as a person's answer, so audits
+    // can sample these decisions and the escalation numbers stay honest.
+    | { type: "ask_auto_closed"; ask: string; reason: "criteria_met" | "precedent"; precedentAsk?: string; choice?: string; note?: string }
     | { type: "finding"; finding: Finding }
     | { type: "finding_discounted"; finding: string; reason: string }
     | { type: "assumption_reset"; goal: string; assumption: string; reason: string }
@@ -296,7 +301,7 @@ export type HEvent = Base &
     | { type: "paused"; paused: boolean; reason?: string }
     // The model service said "not now" (a usage limit, a rate limit). Model turns wait
     // until `until`; it is no failure of the work, so no turn is counted.
-    | { type: "capacity"; until: number; reason: string; streak: number; vendor?: string; models?: string[] } // models: the seats' placeholders that wait; unset = all
+    | { type: "capacity"; until: number; reason: string; streak: number; vendor?: string; models?: string[]; kind?: "limit" | "unreachable" | "setup" } // models: the seats' placeholders that wait; unset = all. kind: unset = limit
   );
 
 export type EventOf<T extends HEvent["type"]> = Extract<HEvent, { type: T }>;

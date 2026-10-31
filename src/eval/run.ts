@@ -3,6 +3,7 @@
 //   npm run eval -- --check                         the checks themselves: each case's start fails them, its solution passes
 //   npm run eval -- --list                          the cases
 //   npm run eval -- [--arms A,B,C] [--cases a,b] [--runs 2] [--models model-a=pi:] [--run-id <id>] [--max-ticks 10]
+//                   [--wait-hours 12] [--no-wait] [--skip-preflight]
 //
 // Arms:
 //   A  a role per lane, a fresh session every turn (the harness today)
@@ -14,14 +15,25 @@
 // Each case runs as a real engagement in its own folder under .af/eval/<run id>/, ticked
 // until its work is done or stuck. Its merged result is graded by hidden checks. Results
 // go to results.jsonl as they finish, so a run that stops (a usage limit, Ctrl+C) picks
-// up where it left off with --run-id. A usage limit stops the run instead of being
-// waited out inside it, so a wait never counts against an arm.
+// up where it left off with --run-id.
+//
+// The run looks after itself, so nobody has to watch it:
+//   - before it starts, preflight checks the agent profiles and any model gateway; a
+//     profile Copilot can't load stops it at once, before a single turn is wasted
+//   - a usage limit, or a gateway that stops answering, ends the case run in progress
+//     without recording it; the run waits (for the reset, or until the gateway answers
+//     again), then does that case run again from the start, so a wait never counts
+//     against an arm. --wait-hours (default 12) caps a wait; past it, the run stops and
+//     prints how to continue. --no-wait stops at the first limit, as before.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cloneControl, initBare } from "../git.ts";
 import { userAgentsDir, vendorOfModel } from "../harness/agents.ts";
 import { Harness } from "../harness/harness.ts";
+import { holds, preflight } from "../harness/preflight.ts";
+import type { Problem } from "../harness/preflight.ts";
 import { loadPolicy } from "../harness/project.ts";
+import { sleepUntil } from "../proc.ts";
 import { buildTurnAgent, loadAgentsConfig } from "../harness/setup.ts";
 import { SystemClock } from "../harness/world.ts";
 import type { EvalCase } from "./cases.ts";
@@ -58,7 +70,14 @@ export type Result = {
   dir: string;
 };
 
-class LimitHit extends Error {}
+type Wait = { kind: "limit" | "unreachable" | "setup"; until: number; vendor: string };
+class WaitHit extends Error {
+  wait: Wait;
+  constructor(message: string, wait: Wait) {
+    super(message);
+    this.wait = wait;
+  }
+}
 
 const args = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -122,7 +141,8 @@ export async function runCase(c: EvalCase, arm: string, run: number, o: { out: s
     await settleStaffing();
     const r = await h.tick({ id: "eval", capabilities: ["shell"] }, { slots: 1 });
     for (const t of r.turns) o.log(`    ${t.todo}: ${t.result}${t.granularity !== "none" ? ` (${t.granularity})` : ""}${t.reasons.length ? ` ${t.reasons.join("; ").slice(0, 160)}` : ""}`);
-    if (r.turns.some((t) => t.result === "capacity")) throw new LimitHit(r.turns.find((t) => t.result === "capacity")!.reasons.join("; "));
+    const cap = r.turns.find((t) => t.result === "capacity");
+    if (cap) throw new WaitHit(cap.reasons.join("; "), cap.wait ?? { kind: "limit", until: Date.now() + 30 * 60_000, vendor: "model" });
     if (!r.turns.length && !r.started.length) {
       const s = await h.state();
       stoppedBy = [...s.todos.values()].every((t) => t.status === "done" || t.status === "superseded") ? "done" : "stuck";
@@ -247,15 +267,61 @@ async function main(): Promise<void> {
   const about = `Work done in: ${["model-a", "model-c"].map((m) => `${m} = ${vendorOfModel(cfg.models?.[m])}${cfg.models?.[m]?.includes(":") && cfg.models[m].split(":")[1] ? ` (${cfg.models[m].split(":").slice(1).join(":")})` : cfg.models?.[m] && !cfg.models[m].includes(":") ? ` (${cfg.models[m]})` : " (its default model)"}`).join(", ")}. Judges: model-b = ${cfg.models?.["model-b"] || "Copilot's default"}.`;
   log(`eval ${runId}: arms ${arms.join(", ")}, ${cases.length} cases, ${runs} run(s), in ${out}`);
   log(about);
+  const waitMs = Number(flag("wait-hours", "12")) * 3_600_000;
+  const noWait = args.includes("--no-wait");
+  const setupCheck = () => preflight({ agents: cfg, installedDir: userAgentsDir(), repoDir: path.join(ROOT, "integrations", "copilot", "harness-agents") });
+  // Until the gateways answer again, checking every minute, for at most the wait cap.
+  const untilReachable = async (problems: Problem[]): Promise<boolean> => {
+    const deadline = Date.now() + waitMs;
+    let p = problems;
+    for (let i = 0; p.some((x) => x.kind === "unreachable"); i++) {
+      if (noWait || Date.now() >= deadline) return false;
+      if (i % 15 === 0) log(`  waiting: ${p.filter((x) => x.kind === "unreachable").map((x) => x.what).join("; ")}`);
+      await sleepUntil(Math.min(Date.now() + 60_000, deadline));
+      p = await setupCheck();
+    }
+    return true;
+  };
+  // Wait out what stopped a case run; false when the run should stop instead.
+  const waitOut = async (w: Wait): Promise<boolean> => {
+    if (noWait || w.kind === "setup") return false;
+    if (w.kind === "unreachable") {
+      // A gateway preflight knows about is polled until it answers; anything else is
+      // simply tried again after the harness's backoff.
+      log(`  waiting until ${new Date(w.until).toISOString()}, then this case run starts again`);
+      await sleepUntil(w.until);
+      return untilReachable(await setupCheck());
+    }
+    if (w.until - Date.now() > waitMs) return false;
+    log(`  ${w.vendor} usage limit: waiting until ${new Date(w.until).toISOString()}, then this case run starts again`);
+    await sleepUntil(w.until);
+    return true;
+  };
   try {
+    const first = await setupCheck();
+    for (const p of first) log(`preflight: ${p.what} (fix: ${p.fix})`);
+    const stop = first.filter((p) => p.kind === "setup" && holds(p));
+    if (stop.length && !args.includes("--skip-preflight")) throw new WaitHit(stop.map((p) => p.what).join("; "), { kind: "setup", until: Date.now(), vendor: stop[0].vendor });
+    if (!(await untilReachable(first))) throw new WaitHit("a model gateway isn't answering", { kind: "unreachable", until: Date.now(), vendor: first[0].vendor });
     for (let run = 1; run <= runs; run++) {
       for (const [ci, c] of cases.entries()) {
         // Rotate the arms' order case by case, so no arm always goes first.
         const order = arms.map((_, i) => arms[(i + ci + run) % arms.length]);
         for (const arm of order) {
           if (done.has(`${c.id}/${arm}/${run}`)) continue;
-          log(`  ${c.id} · ${arm} · run ${run}`);
-          const r = await runCase(c, arm, run, { out, runId, models: flag("models"), maxTicks: Number(flag("max-ticks", "10")), log });
+          let r: Result;
+          const firstTry = Date.now();
+          for (;;) {
+            log(`  ${c.id} · ${arm} · run ${run}`);
+            try {
+              r = await runCase(c, arm, run, { out, runId, models: flag("models"), maxTicks: Number(flag("max-ticks", "10")), log });
+              break;
+            } catch (e) {
+              if (!(e instanceof WaitHit)) throw e;
+              log(`    ${e.wait.kind === "limit" ? "usage limit" : e.wait.kind === "unreachable" ? "can't reach the service" : "setup problem"}: ${e.message.slice(0, 200)}`);
+              if (Date.now() - firstTry > waitMs || !(await waitOut(e.wait))) throw e;
+            }
+          }
           log(`    score ${f2(r.score)} (${r.passed}/${r.total}) · ${r.turns} turns · ${r.premiumRequests} premium requests · ${r.minutes} min · ${r.stoppedBy}`);
           results.push(r);
           fs.appendFileSync(resultsFile, `${JSON.stringify(r)}\n`);
@@ -263,8 +329,8 @@ async function main(): Promise<void> {
       }
     }
   } catch (e) {
-    if (!(e instanceof LimitHit)) throw e;
-    log(`a usage limit stopped the run: ${e.message}`);
+    if (!(e instanceof WaitHit)) throw e;
+    log(`the run stopped: ${e.message}${e.wait.kind === "setup" ? " (fix the setup first: npm run harness -- doctor)" : ""}`);
     log(`continue it later with: npm run eval -- --run-id ${runId} ${args.filter((x, i) => x !== "--run-id" && args[i - 1] !== "--run-id").join(" ")}`);
     process.exitCode = 3;
   } finally {

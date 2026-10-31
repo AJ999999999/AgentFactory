@@ -759,7 +759,7 @@ function engBlock(e, now) {
       e.folder && ui.data.dirs && ui.data.dirs.length > 1 && !e.id.endsWith(`@${baseName(e.folder)}`) ? h("span", { class: "folder", title: e.folder }, baseName(e.folder)) : null,
       beat(e, now), btn),
     e.error ? h("div", { class: "eng-err", role: "alert" }, e.error) : null,
-    (e.capacity || []).map((c) => h("div", { class: "eng-wait", title: c.reason }, `${({ claude: "Claude", copilot: "Copilot", codex: "Codex", pi: "pi", omp: "omp" })[c.vendor] || "Model"} usage limit. Its turns resume ${day(c.until)}.`)),
+    (e.capacity || []).map((c) => h("div", { class: "eng-wait", title: c.reason }, `${({ claude: "Claude", copilot: "Copilot", codex: "Codex", pi: "pi", omp: "omp" })[c.vendor] || "Model"} ${({ unreachable: "can't be reached", setup: "has a setup problem: " + c.reason })[c.kind] || "usage limit"}. Its turns ${c.kind === "setup" ? "try again" : "resume"} ${day(c.until)}.`)),
     (e.running || []).map((t) => liveBlock(e, t, now)),
     h("div", { class: "goals" }, e.goals.map((g) => goalBlock(e, g))));
 }

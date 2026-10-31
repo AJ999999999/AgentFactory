@@ -10,7 +10,8 @@ import { cloneControl, decodeUnit, Git, initBare, leaseRef } from "../src/git.ts
 import { MockAgent } from "../src/agents/mock.ts";
 import { Coordinator } from "../src/orchestrator.ts";
 import { AttentionBudget, ownerOf, recipientOf, triage } from "../src/policy.ts";
-import { EscalationLog } from "../src/escalation-log.ts";
+import { EscalationLog, nearThresholds, pickAudit, pickBlind, renderAuditBrief } from "../src/escalation-log.ts";
+import { computeLedger, missedByAgent } from "../src/ledger.ts";
 import type { DeliveredEvent, TriagedEvent } from "../src/escalation-log.ts";
 import { Index } from "../src/store.ts";
 import { planTeam, validateTeam } from "../src/factory.ts";
@@ -126,6 +127,74 @@ describe("escalation log", () => {
     assert.deepEqual(events.map((e) => e.type), ["triaged", "delivered"]);
     assert.equal((events[0] as TriagedEvent).triggers.includes("threshold:diff_lines"), true);
     idx.close();
+  });
+});
+
+describe("blind briefs, daily audit and missed escalations", () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "esc2-"));
+
+  it("sends about a fifth of briefs blind, the same way every time, and never an interrupt", () => {
+    const ids = Array.from({ length: 2000 }, (_, i) => `brief-${i}`);
+    const share = ids.filter((id) => pickBlind(policy, id)).length / ids.length;
+    assert.ok(share > 0.17 && share < 0.23, `blind share ${share}`);
+    assert.equal(pickBlind(policy, "brief-7"), pickBlind(policy, "brief-7"));
+    assert.equal(ids.some((id) => pickBlind(policy, id, true)), false);
+  });
+
+  it("finds which thresholds an auto-resolved proposal came close to", () => {
+    const log = new EscalationLog(tmp());
+    const near = p({ id: "N", diffLines: 700, reviewRounds: 1 });
+    const t = log.triaged(policy, near, triage(policy, near));
+    assert.equal(t.route, "auto");
+    assert.deepEqual(nearThresholds(policy, t.features), ["diff_lines", "review_rounds"]);
+    const far = p({ id: "F", reviewRounds: 0 });
+    assert.deepEqual(nearThresholds(policy, log.triaged(policy, far, triage(policy, far)).features), []);
+  });
+
+  it("audits near-threshold items more often and reports each pick's probability", () => {
+    const log = new EscalationLog(tmp());
+    const near = p({ id: "near", diffLines: 700, reviewRounds: 0 });
+    const tn = log.triaged(policy, near, triage(policy, near));
+    const others = [1, 2, 3, 4].map((i) => { const x = p({ id: `far-${i}`, reviewRounds: 0 }); return log.triaged(policy, x, triage(policy, x)); });
+    const esc = p({ id: "esc", diffLines: 900 });
+    const te = log.triaged(policy, esc, triage(policy, esc));
+    const pool = [tn, ...others, te];
+    let nearPicks = 0;
+    for (let d = 0; d < 800; d++) {
+      const pick = pickAudit(policy, pool, `day-${d}`)!;
+      assert.notEqual(pick.event.proposalId, "esc");
+      if (pick.event.proposalId === "near") {
+        nearPicks++;
+        assert.equal(pick.probability, 0.5);
+      } else assert.equal(pick.probability, 0.125);
+    }
+    assert.ok(nearPicks > 340 && nearPicks < 460, `near picked ${nearPicks}/800`);
+    assert.equal(pickAudit(policy, [te], "x"), null);
+    assert.match(renderAuditBrief(tn), /would differ/);
+  });
+
+  it("counts a missed escalation against an agent only when the agent misreported", () => {
+    const dir = tmp();
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    const git = new Git(dir);
+    const log = new EscalationLog(dir);
+    for (const id of ["A", "B", "C"]) { const x = p({ id }); log.triaged(policy, x, triage(policy, x)); }
+    const e = p({ id: "E", diffLines: 900 });
+    log.triaged(policy, e, triage(policy, e));
+    log.outcome({ proposalId: "A", kind: "reverted", severity: "high", cause: "input_misreport", agent: "agent-07" });
+    log.outcome({ proposalId: "A", kind: "incident", severity: "high", cause: "input_misreport", agent: "agent-07" });
+    log.outcome({ proposalId: "B", kind: "reverted", severity: "low", cause: "policy_gap", agent: "agent-08" });
+    log.outcome({ proposalId: "C", kind: "flagged", severity: "low", cause: "check_failure", agent: "agent-08" });
+    log.outcome({ proposalId: "E", kind: "reverted", severity: "low", cause: "input_misreport", agent: "agent-08" });
+    fs.writeFileSync(path.join(dir, "a.txt"), "x\n");
+    execFileSync("git", ["add", "-A"], { cwd: dir });
+    for (const agent of ["agent-07", "agent-08"]) {
+      fs.appendFileSync(path.join(dir, "a.txt"), `${agent}\n`);
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", `work by ${agent}`, "--trailer", `Agent: ${agent}`], { cwd: dir });
+    }
+    assert.deepEqual([...missedByAgent(git)], [["agent-07", 1]]);
+    const ledger = computeLedger(git, policy);
+    assert.deepEqual(ledger.map((r) => [r.agent, r.missedEscalations, r.demoted]), [["agent-07", 1, true], ["agent-08", 0, false]]);
   });
 });
 

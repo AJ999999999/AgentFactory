@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { cloneControl, Git, initBare } from "../git.ts";
+import { readEvents } from "./store.ts";
 import { resolveCommand, runCommand, sleepUntil } from "../proc.ts";
 import { aboutLines, loadMemoryPolicy, readMemory, understand } from "../memory/memory.ts";
 import { userAgentsDir, vendorOfModel } from "./agents.ts";
@@ -26,6 +27,7 @@ import type { TurnAgent } from "./agents.ts";
 import { buildTurnAgent, loadAgentsConfig, usedVendors } from "./setup.ts";
 import { VENDOR_DEFAULTS } from "./vendors.ts";
 import { Harness } from "./harness.ts";
+import { escalationReport, worthAsking } from "./escalation.ts";
 import { buildPacket } from "./packet.ts";
 import { beliefs, loadPolicy, seatPermissions } from "./project.ts";
 import { blockers, phase } from "./select.ts";
@@ -333,8 +335,26 @@ async function main(): Promise<void> {
       console.log(`${rest[0]}: budget ${rest[1]}`);
       return;
     }
+    case "escalation": {
+      // How well the harness chooses when to ask you, from the log so far.
+      const eng = currentEngagement();
+      const h = await harness(eng);
+      const r = escalationReport(readEvents(h.control.cwd, eng), h.policy);
+      const k = h.policy.escalation?.missCostRatio ?? 10;
+      const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
+      const rate = (b: { n: number; followed: number }) => (b.n ? `${b.followed}/${b.n}` : "-");
+      console.log(`## Questions that changed nothing (k = ${k}: worth asking when you change course more than ${pct(1 / k)} of the time)`);
+      for (const o of r.byOrigin) {
+        console.log(`${o.origin.padEnd(28)} asked ${o.opened} · answered ${o.answered} · changed nothing ${pct(o.keptRate)} · followed recommendation shown ${rate(o.followedShown)}, blind ${rate(o.followedBlind)} · median ${o.medianHoursToAnswer === null ? "-" : `${o.medianHoursToAnswer.toFixed(1)}h`} · ${worthAsking(o, k).replace(/_/g, " ")}`);
+      }
+      console.log(`must-ask questions (money, access, refuted or killing assumptions, people's tasks, reviews): ${r.floor.opened} asked, ${r.floor.answered} answered`);
+      console.log(`closed by the harness itself: ${r.autoClosed}`);
+      const v = r.audits.verdicts;
+      console.log(`\n## Spot checks of decisions made without asking\n${r.audits.asked} asked, ${r.audits.answered} answered: same ${v.same} · would differ ${v.would_differ} · wanted to be asked ${v.wanted_to_be_asked} · estimated miss rate ${pct(r.audits.missRate)}`);
+      return;
+    }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | doctor | agents [install]");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | doctor | agents [install]");
   }
 }
 

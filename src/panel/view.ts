@@ -7,6 +7,7 @@ import { beliefs, findAssumption } from "../harness/project.ts";
 import { blockers, phase } from "../harness/select.ts";
 import { irreversibleEffect } from "../harness/types.ts";
 import type { AskKind, BeliefStatus, Budget, GoalRevision, Granularity, TurnResult } from "../harness/types.ts";
+import { isBlind } from "../harness/escalation.ts";
 
 // Some options need more than a click: a number, the revised goal, or what you saw.
 export type Needs = "budget" | "revision" | "observation";
@@ -32,6 +33,7 @@ export type AskView = {
   evidence: Array<{ grade: string; direction: string; text: string }>;
   options: OptionView[];
   recommend?: { option: string; label: string; why: string; by: string };
+  blind?: true; // the recommendation is held back until you answer
   // Why this one shouldn't be answered from the card in one click. Empty: the card has
   // what the answer needs.
   lookFirst: string[];
@@ -99,7 +101,9 @@ export function askView(s: State, engagement: string, a: AskState): AskView {
   const t = a.todo ? s.todos.get(a.todo) : undefined;
   const tests = t?.tests ? findAssumption(s, a.goal, t.tests) : null;
   const evidence = (a.evidence ?? []).map((id) => s.findings.get(id)).filter((f) => !!f).map((f) => ({ grade: f.grade, direction: f.direction, text: f.text }));
-  const rec = a.recommend ? a.options.find((o) => o.id === a.recommend!.option) : undefined;
+  // A blind question keeps its recommendation hidden until it is answered (see isBlind).
+  const blind = a.status === "open" && isBlind(s.policy, a);
+  const rec = a.recommend && !blind ? a.options.find((o) => o.id === a.recommend!.option) : undefined;
   const final = (o: AskState["options"][number]) => irreversibleEffect(o.effect) || o.irreversible === true;
   const lookFirst = [
     ...(rec && final(rec) ? ["what it recommends can't be undone"] : []),
@@ -133,6 +137,7 @@ export function askView(s: State, engagement: string, a: AskState): AskView {
     options,
     ...(rec ? { recommend: { option: rec.id, label: splitLabel(rec.label).label, why: a.recommend!.why, by: a.recommend!.by } } : {}),
     lookFirst,
+    ...(blind ? { blind: true } : {}),
     ...(g && options.some((o) => o.needs === "budget") ? { budget: g.def.budget } : {}),
     ...(g && options.some((o) => o.needs === "revision") ? { revision: { objective: g.def.objective, assumptions: g.def.assumptions, success: g.def.success, kill: g.def.kill, todos: [] } } : {}),
     ...(tests ? { tests: { id: tests.def.id, text: tests.def.text } } : {}),

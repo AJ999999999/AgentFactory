@@ -15,7 +15,7 @@ import { loadPolicy } from "../src/harness/project.ts";
 import { blockers, readyTodos } from "../src/harness/select.ts";
 import type { EngagementDef } from "../src/harness/types.ts";
 import { SystemClock } from "../src/harness/world.ts";
-import { startPanel } from "../src/panel/server.ts";
+import { answerFromBody, startPanel, Workspace } from "../src/panel/server.ts";
 import { askView, splitLabel } from "../src/panel/view.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -159,7 +159,7 @@ test("the panel: local requests only, a token on every call, and answers that la
     assert.equal(eng.goals[0].turns.budget, 10);
 
     const play = eng.asks.find((a: { about?: string; question: string }) => a.question.startsWith("Play it"));
-    const answer = { engagement: "shop", ask: play.id, choice: "done", note: "Played three days running", observation: { direction: "supports", metrics: { days_chosen: 3 }, runs: 1 } };
+    const answer = { engagement: "shop", ask: play.id, choice: "done", relayed: true, note: "Played three days running", observation: { direction: "supports", metrics: { days_chosen: 3 }, runs: 1 } };
     assert.equal((await request(port, { path: "/api/answer", token: panel.token, origin: "https://evil.example", body: answer })).status, 403, "another site can't post");
     assert.equal((await request(port, { path: "/api/answer", token: panel.token, body: answer, type: "text/plain" })).status, 415);
     assert.equal((await request(port, { path: "/api/answer", token: panel.token, body: "{not json" })).status, 400);
@@ -167,7 +167,7 @@ test("the panel: local requests only, a token on every call, and answers that la
     assert.equal(ok.status, 200, ok.body);
     let s = await h.state();
     assert.equal(s.asks.get(play.id)!.status, "answered");
-    assert.equal(s.asks.get(play.id)!.answeredBy, "parent", "answered as whoever it was for");
+    assert.equal(s.asks.get(play.id)!.answeredBy, "parent", "passed on for whoever it was for, when you say so");
     const f = [...s.findings.values()].find((x) => x.source === `ask:${play.id}`)!;
     assert.deepEqual([f.grade, f.direction, f.assumption, f.metrics], ["expert", "supports", "A1", { days_chosen: 3 }]);
     assert.equal(s.todos.get("play")!.status, "done");
@@ -188,6 +188,18 @@ test("the panel: local requests only, a token on every call, and answers that la
   } finally {
     await panel.close();
   }
+});
+
+test("an answer counts as yours unless you say you're passing it on", async () => {
+  const { dir, h } = await workspace();
+  const ws = new Workspace(dir, policy);
+  const play = [...(await h.state()).asks.values()].find((a) => a.todo === "play")!;
+  await answerFromBody(ws, { engagement: "shop", ask: play.id, choice: "done", note: "I tried it myself", observation: { direction: "supports" } });
+  const s = await h.state();
+  assert.equal(s.asks.get(play.id)!.answeredBy, "partner");
+  const f = [...s.findings.values()].find((x) => x.source === `ask:${play.id}`)!;
+  assert.equal(f.author, "partner");
+  assert.notEqual(f.grade, "expert", "the partner's own report isn't graded as the parent's");
 });
 
 // ---------- one checkout, several processes ----------

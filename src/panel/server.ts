@@ -97,7 +97,7 @@ export class Workspace {
 
 // ---------- requests ----------
 
-type AnswerBody = { engagement: string; ask: string; choice: string; note?: string; budget?: Record<string, number>; revision?: GoalRevision; observation?: { direction: Direction; metrics?: Record<string, number>; runs?: number } };
+type AnswerBody = { engagement: string; ask: string; choice: string; relayed?: boolean; note?: string; budget?: Record<string, number>; revision?: GoalRevision; observation?: { direction: Direction; metrics?: Record<string, number>; runs?: number } };
 
 function str(v: unknown, name: string, max = 4000): string {
   if (typeof v !== "string" || !v.length || v.length > max) throw new BadRequest(`${name} is missing or too long`);
@@ -124,9 +124,10 @@ export async function answerFromBody(ws: Workspace, b: AnswerBody): Promise<void
   const o = b.observation;
   if (o && !["supports", "refutes", "neutral"].includes(o.direction)) throw new BadRequest("what you saw supports, refutes, or is neutral");
   const ans: Answer = {
-    // You answer as whoever the question is for (the parent, the lawyer): what you
-    // report counts as their evidence, as with `answer` on the command line.
-    by: ask.to,
+    // You answer as yourself. What you report counts as the parent's or the lawyer's
+    // evidence only when you say you're passing on what they told you ("relayed"), as
+    // with `answer --by <role>` on the command line.
+    by: b.relayed === true ? ask.to : "partner",
     choice: str(b.choice, "choice", 100),
     ...(note ? { note } : {}),
     ...(b.budget ? { budget: numbers(b.budget, "budget") } : {}),

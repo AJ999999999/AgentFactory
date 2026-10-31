@@ -148,8 +148,8 @@ The rules:
 - **Two things that disagree become a question, not an average.** Saying that one replaces the other settles it, and forgetting the replacement brings the old one back.
 
 ```bash
-npm run memory -- add --kind preference --subject travel.flight-time --value red-eye --text "I like red-eye flights" --condition "short business trips" --because "it saves a hotel night"
-npm run memory -- add --kind intention --subject travel.trip --text "Maybe Tokyo this weekend" --until 2026-11-01
+npm run memory -- add --as principal --kind preference --subject travel.flight-time --value red-eye --text "I like red-eye flights" --condition "short business trips" --because "it saves a hotel night"
+npm run memory -- add --as principal --kind intention --subject travel.trip --text "Maybe Tokyo this weekend" --until 2026-11-01
 npm run memory -- view                                   # what we believe now, how we know it, what it may be used for
 npm run memory -- render --subjects "work.*" --out profile.md   # a self-profile for your coding agents, regenerated, never stale
 ```

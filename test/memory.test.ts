@@ -169,3 +169,16 @@ test("the harness: an engagement's agents get the defaults that apply in their p
   assert.doesNotMatch(packet, /Demo for the team/, "a lapsed plan is gone");
   assert.doesNotMatch(packet, /red-eye/, "outside the engagement's subjects");
 });
+
+test("the command line speaks for the person only when told to: without --as, an entry is an agent's guess", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-mem-cli-"));
+  const cli = path.join(import.meta.dirname, "..", "src", "memory", "cli.ts");
+  const run = (...a: string[]) => execFileSync(process.execPath, ["--no-warnings", cli, ...a, "--dir", dir], { encoding: "utf8" });
+  assert.throws(() => run("add", "--kind", "preference", "--subject", "travel.seat", "--text", "Aisle seats", "--source", "stated"), /an agent can record/);
+  run("add", "--kind", "preference", "--subject", "travel.seat", "--text", "Aisle seats");
+  run("add", "--as", "principal", "--kind", "preference", "--subject", "travel.meal", "--text", "Vegetarian");
+  const sources = Object.fromEntries(readMemory(dir, "partner").flatMap((e) => (e.type === "remembered" ? [[e.entry.subject, e.entry.source]] : [])));
+  assert.deepEqual(sources, { "travel.seat": "inferred", "travel.meal": "stated" });
+  fs.rmSync(dir, { recursive: true, force: true });
+});

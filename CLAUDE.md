@@ -25,6 +25,7 @@ npm run harness -- agents install          # af-<role> profiles into ~/.copilot/
 npm run harness -- open <engagement.json> [--world w.mjs] [--seed dir] [--memory dir]
 npm run harness -- tick [--copilot <path>]   # one wake: maintenance, then at most one Copilot turn
 npm run harness -- status --packet         # beliefs, open work and why it waits, questions for the partner
+npm run harness -- escalation              # which questions changed anything, blind follow rate, spot-check miss rate
 npm run harness -- answer <ask> --choice <id> [--result supports --metrics k=v --runs n --note ..]
 npm run harness -- pause | resume | budget <goal> turns=N
 npm run panel [-- --dir <folder> ...] [-- --demo]   # local page on 127.0.0.1:4700, over every folder `open` ran in

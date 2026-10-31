@@ -21,5 +21,6 @@
   "schedule": {"jobPollMinutes": [10, 30, 60, 240], "maxSleepMinutes": 720, "waitPollMinutes": 1440},
   "protected": [".agents/harness/**", "policy/**", ".github/hooks/**"],
   "probation": {"promoteAfter": 3, "rejectStreak": 2},
-  "team": {"library": "library.json", "catalog": "permission-catalog.json"}
+  "team": {"library": "library.json", "catalog": "permission-catalog.json"},
+  "escalation": {"missCostRatio": 10, "blindShare": 0.2}
 }

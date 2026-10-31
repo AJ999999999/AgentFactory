@@ -22,5 +22,6 @@
   "protected": [".agents/harness/**", "policy/**", ".github/hooks/**"],
   "probation": {"promoteAfter": 3, "rejectStreak": 2},
   "capacity": {"defaultBackoffMinutes": 30, "minBackoffMinutes": 1, "maxBackoffHours": 24, "unreachableBackoffMinutes": 5, "setupBackoffMinutes": 60},
-  "team": {"library": "library.json", "catalog": "permission-catalog.json"}
+  "team": {"library": "library.json", "catalog": "permission-catalog.json"},
+  "escalation": {"missCostRatio": 10, "blindShare": 0.2}
 }

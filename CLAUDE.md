@@ -25,10 +25,11 @@ npm run harness -- agents install          # af-<role> profiles into ~/.copilot/
 npm run harness -- open <engagement.json> [--world w.mjs] [--seed dir] [--memory dir]
 npm run harness -- tick [--copilot <path>]   # one wake: maintenance, then at most one Copilot turn
 npm run harness -- status --packet         # beliefs, open work and why it waits, questions for the partner
+npm run harness -- escalation              # which questions changed anything, blind follow rate, spot-check miss rate
 npm run harness -- answer <ask> --choice <id> [--result supports --metrics k=v --runs n --note ..]
 npm run harness -- pause | resume | budget <goal> turns=N
 npm run panel [-- --dir <folder> ...] [-- --demo]   # local page on 127.0.0.1:4700, over every folder `open` ran in: questions, live turns with Stop
-npm run mcp:partner -- --dir <folder>      # the partner's tools over MCP (status, open_questions, answer, add_work, pause, stop_turn)
+npm run mcp:partner [-- --dir <folder> ...]   # the partner's tools over MCP, over the panel's folders (status, open_questions, answer, add_work, pause, stop_turn)
 npm run memory -- add | view | render
 npm run demo:harness                       # six simulated cases, months in seconds
 npm run eval -- --check | --list | --arms A,B,C --runs 2   # compare ways of running turns on graded cases (eval/README.md)
@@ -132,7 +133,7 @@ The pieces of `src/harness/`:
 - The partner's MCP tools.
 - Running unattended: three kinds of wait (a usage limit, a service that can't be reached, a CLI that can't start as set up), none counted against the work; preflight (agent profiles, Codex's gateway) in `doctor`, `tick`, `loop` and the eval; a blocker on work its own checker passed is closed by the harness, and a person's earlier answer to the same question stands (both recorded as `ask_auto_closed`, never as a person's answer); the eval waits out limits and dead gateways and redoes the case run (`scripts/windows/start-eval.ps1` starts it detached).
 
-**Branches and PRs.** PRs #1 to #8 are merged into `main` (foundation, harness, Windows, memory, panel, then two from other sessions: answers count as the partner's own unless relayed, and an escalation log). The work on real CLIs, usage limits, live turns, Claude judges, partner tools, worker mode and the eval is on branch `real-clis-eval`, based on `main`, open as PR #10. #8 (panel across project folders, decision cards) is merged into `main`, and `main` is merged into this branch. #9 (an animated overview diagram, `docs/architecture.svg`) is stacked on this branch; the README shows it at the top and this branch's one-turn walk-through (`docs/architecture.gif`) in the harness section.
+**Branches and PRs.** PRs #1 to #8 are merged into `main` (foundation, harness, Windows, memory, panel, then two from other sessions: answers count as the partner's own unless relayed, and an escalation log). The work on real CLIs, usage limits, live turns, Claude judges, partner tools, worker mode and the eval is on branch `real-clis-eval`, based on `main`, open as PR #10. #8 (panel across project folders, decision cards) and #11 (escalation quality measured on the harness's own questions) are merged into `main`, and `main` is merged into this branch. #9 (an animated overview diagram, `docs/architecture.svg`) is stacked on this branch; the README shows it at the top and this branch's one-turn walk-through (`docs/architecture.gif`) in the harness section.
 
 **What the first real runs showed (Windows, Copilot CLI 1.0.105, Claude Code 2.1.314, Codex CLI 0.166.0, pi 1.4.0)**
 - **Copilot has one model on this plan.** Its router reports only `gpt-6-luna`, and `--model` refuses every name, that one included. So `model-a` and `model-c` stay empty (Copilot's default), and `model-b`, the judges, is `claude:opus`.

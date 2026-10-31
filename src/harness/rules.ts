@@ -9,6 +9,7 @@ import { apply, beliefOf, beliefs, criterionMet, findAssumption, metricsOf, open
 import { blockers, spendAskId } from "./select.ts";
 import { eid } from "./store.ts";
 import { staffSeat } from "./team.ts";
+import { auditRule } from "./escalation.ts";
 
 const DAY = 86_400_000;
 const LIVE = ["open", "running", "review", "blocked"];
@@ -309,7 +310,9 @@ function rules(s: State, now: number, emitOut: Emit): void {
     // Nothing left to do, nothing asked, not closed: a goal that would idle forever.
     const monitored = (g.def.monitors ?? []).some((m) => !m.expiresAt || Date.parse(m.expiresAt) > now);
     const succeeded = !!g.def.success?.length && g.def.success.every((c) => criterionMet(s, g.id, c));
-    if (!g.def.perpetual && !live.length && !openAsks(s, g.id).length && !asked.has(g.id) && !monitored && !succeeded) {
+    // The daily spot check holds no work, so it doesn't count as a pending question here.
+    const pending = openAsks(s, g.id).filter((a) => !a.audit);
+    if (!g.def.perpetual && !live.length && !pending.length && !asked.has(g.id) && !monitored && !succeeded) {
       const done = [...s.todos.values()].filter((t) => t.goal === g.id && t.status === "done").length;
       emit(ask(now, {
         id: eid("ask-idle", g.id, v, done), goal: g.id, to: owner, kind: "decision", origin: "rule:idle", goalVersion: g.version,
@@ -322,6 +325,7 @@ function rules(s: State, now: number, emitOut: Emit): void {
       }));
     }
   }
+  auditRule(s, now, emitOut);
 }
 
 function budgetRules(s: State, g: GoalState, now: number, emit: Emit): void {

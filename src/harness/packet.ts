@@ -40,7 +40,8 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
   const bs = beliefs(s, g.id);
   const count = (st: string) => bs.filter((b) => b.status === st).length;
   const ph = phase(s, g.id);
-  const asks = openAsks(s).filter((a) => a.goal === g.id || a.todo === t.id);
+  // The partner's spot checks of the harness are not the agents' business.
+  const asks = openAsks(s).filter((a) => (a.goal === g.id || a.todo === t.id) && !a.audit);
   const recent = s.turns.filter((x) => x.goal === g.id).slice(-3).reverse();
   const notes = g.notes.filter((n) => n.version === g.version).slice(-3).reverse();
   const evidence = t.tests ? [...s.findings.values()].filter((f) => f.assumption === t.tests).slice(-2).reverse() : [];

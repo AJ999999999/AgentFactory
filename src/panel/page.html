@@ -482,6 +482,7 @@ function body(a) {
     // The card says when it isn't enough to answer from.
     a.lookFirst.length ? h("div", { class: "look", role: "note" }, "Look before you answer: ", a.lookFirst.join("; "), ".") : null,
     a.recommend ? h("div", { class: "why" }, h("b", null, a.recommend.label), ": ", a.recommend.why, " ", h("span", { class: "by" }, `(${a.recommend.by}'s opinion)`)) : null,
+    a.blind ? h("div", { class: "why" }, "Blind check: decide on your own first. The agent's recommendation is held back on some questions so we can tell agreement from going along.") : null,
     told.length ? h("ul", { class: "conseq" }, told.map((o) => h("li", null, h("b", null, o.label),
       h("span", null, o.consequence || "", o.irreversible ? h("span", { class: "final" }, `${o.consequence ? " · " : ""}can't be undone`) : null)))) : null,
     a.evidence.length ? h("ul", { class: "evidence" }, a.evidence.map((f) => h("li", { class: f.direction }, h("span", { class: "grade" }, f.grade), h("span", null, f.text)))) : null,

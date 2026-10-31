@@ -24,8 +24,8 @@ import { observe } from "./observator.ts";
 import type { Observation } from "./observator.ts";
 import { Coordinator } from "./orchestrator.ts";
 import type { TxResult } from "./orchestrator.ts";
-import { EscalationLog } from "./escalation-log.ts";
-import type { EscalationEvent } from "./escalation-log.ts";
+import { EscalationLog, pickAudit, pickBlind } from "./escalation-log.ts";
+import type { EscalationEvent, TriagedEvent } from "./escalation-log.ts";
 import { AttentionBudget, triage as triageRaw } from "./policy.ts";
 import type { Policy, Proposal, Triage } from "./policy.ts";
 import { fromBreakpoint, fromConfigChange } from "./solver.ts";
@@ -416,9 +416,13 @@ export async function runScenario(opts: { baseDir: string; echo?: boolean }): Pr
   log("phase", { n: 8, name: "attention budget and backpressure" });
   const budget = new AttentionBudget(policy, escalations);
   const results: string[] = [];
-  for (let i = 0; i < 10; i++) results.push(budget.submit({ id: `B${i}`, markdown: "", blockedTasks: i, interrupt: false }));
+  for (let i = 0; i < 10; i++) results.push(budget.submit({ id: `B${i}`, markdown: "", blockedTasks: i, interrupt: false, blind: pickBlind(policy, `B${i}`) }));
   results.push(budget.submit({ id: "SEC", markdown: "", blockedTasks: 0, interrupt: true }));
   const backpressure = budget.backpressure;
+  // Daily audit: one auto-resolved proposal goes back to the human as a blind question.
+  const autoToday = escalations.list().filter((e): e is TriagedEvent => e.type === "triaged" && e.route === "auto");
+  const pick = pickAudit(policy, autoToday, "day-0");
+  if (pick) escalations.sampled({ proposalId: pick.event.proposalId, probability: pick.probability, nearThreshold: pick.nearThreshold });
   const nextDay = budget.nextDay().length;
 
   // ---------- phase 9: lease backstop ----------

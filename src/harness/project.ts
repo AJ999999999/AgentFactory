@@ -36,6 +36,9 @@ export type HarnessPolicy = {
   // The firm library and permission catalog, loaded from the files the policy names.
   // Without them, nothing is staffed and every lane runs as the fallback agent.
   team?: { library: Library; catalog: Catalog };
+  // missCostRatio (k): a question the harness should have asked costs as much as k it
+  // needn't have. blindShare: share of agents' questions shown without the recommendation.
+  escalation?: { missCostRatio: number; blindShare: number };
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
@@ -125,6 +128,8 @@ export type State = {
   seats: Map<string, SeatState>; // "<goal>/<lane>"
   paused: { at: number; by: string; reason?: string } | null;
   capacity: Map<string, CapacityState>; // by vendor: who said "not now", until when, for which seats
+  // Decisions the harness made without asking anyone: what the daily audit draws from.
+  autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
   lastAt: number;
   policy: HarnessPolicy;
@@ -144,6 +149,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     seats: new Map(),
     paused: null,
     capacity: new Map(),
+    autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
     policy,
@@ -153,10 +159,32 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
   return s;
 }
 
+// Runs before the event is applied, so a todo's goal and a finding's goal are still known
+// and the record reads as the decision was made.
+function noteAutonomous(s: State, e: HEvent): void {
+  if (e.by !== "harness") return;
+  const add = (goal: string | undefined, what: string) => goal && s.autonomous.push({ event: e.id, type: e.type, goal, at: e.at, what });
+  switch (e.type) {
+    case "todo_superseded":
+      add(s.todos.get(e.todo)?.goal, `dropped "${s.todos.get(e.todo)?.text ?? e.todo}": ${e.reason}`);
+      break;
+    case "todo_reopened":
+      add(s.todos.get(e.todo)?.goal, `sent back "${s.todos.get(e.todo)?.text ?? e.todo}": ${e.reason}`);
+      break;
+    case "finding_discounted":
+      add(s.findings.get(e.finding)?.goal, `discounted the finding "${s.findings.get(e.finding)?.text ?? e.finding}": ${e.reason}`);
+      break;
+    case "assumption_reset":
+      add(e.goal, `reset assumption ${e.assumption}: ${e.reason}`);
+      break;
+  }
+}
+
 export function apply(s: State, e: HEvent): void {
   if (s.eventIds.has(e.id)) return;
   s.eventIds.add(e.id);
   s.lastAt = Math.max(s.lastAt, e.at);
+  noteAutonomous(s, e);
   switch (e.type) {
     case "engagement_opened":
       s.engagement = e.engagement;

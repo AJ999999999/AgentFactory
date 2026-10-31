@@ -28,6 +28,9 @@ export type HarnessPolicy = {
   schedule: { jobPollMinutes: number[]; maxSleepMinutes: number; waitPollMinutes: number };
   protected: string[];
   probation?: { promoteAfter: number; rejectStreak: number };
+  // When the model service refuses for capacity: wait for the reset it names, clamped to
+  // [min, max]; with no reset given, defaultBackoff doubled for each hit in a row.
+  capacity?: { defaultBackoffMinutes: number; minBackoffMinutes: number; maxBackoffHours: number };
   // The firm library and permission catalog, loaded from the files the policy names.
   // Without them, nothing is staffed and every lane runs as the fallback agent.
   team?: { library: Library; catalog: Catalog };
@@ -72,6 +75,7 @@ export type TodoState = TodoDraft & {
   addedAt: number;
   provenance: string;
   failures: number; // consecutive, reset by a retry
+  stopped?: boolean; // the partner stopped its last turn; cleared when it's reopened
   turns: number;
   capFrom: number; // turn count when the turn cap last reset (a person said keep going)
   handle?: string;
@@ -119,6 +123,7 @@ export type State = {
   sources: Map<string, { fingerprint: string; at: number }>; // "<goal>/<monitor>"
   seats: Map<string, SeatState>; // "<goal>/<lane>"
   paused: { at: number; by: string; reason?: string } | null;
+  capacity: Map<string, CapacityState>; // by vendor: who said "not now", until when, for which seats
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -139,6 +144,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     sources: new Map(),
     seats: new Map(),
     paused: null,
+    capacity: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -239,7 +245,7 @@ export function apply(s: State, e: HEvent): void {
     }
     case "todo_reopened": {
       const t = s.todos.get(e.todo);
-      if (t && t.status !== "superseded") Object.assign(t, { status: "open", reason: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
+      if (t && t.status !== "superseded") Object.assign(t, { status: "open", stopped: false, reason: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
       break;
     }
     case "todo_superseded": {
@@ -281,6 +287,11 @@ export function apply(s: State, e: HEvent): void {
     }
     case "turn": {
       s.turns.push({ ...e.turn, at: e.at });
+      // A turn the model actually ran ends the streak of refusals.
+      if (["completed", "progress", "blocked", "validation_failed", "stopped"].includes(e.turn.result)) {
+        const m = e.turn.seat ? s.seats.get(e.turn.seat)?.model : undefined;
+        for (const c of s.capacity.values()) if (covers(c, m)) c.streak = 0;
+      }
       const g = s.goals.get(e.turn.goal);
       if (g) {
         g.spent.turns++;
@@ -290,7 +301,8 @@ export function apply(s: State, e: HEvent): void {
       if (t) {
         t.turns++;
         if (e.turn.result === "host_failure" || e.turn.result === "validation_failed") t.failures++;
-        else if (e.turn.result !== "claim_lost") t.failures = 0;
+        else if (e.turn.result !== "claim_lost" && e.turn.result !== "stopped") t.failures = 0;
+        t.stopped = e.turn.result === "stopped";
       }
       break;
     }
@@ -320,6 +332,12 @@ export function apply(s: State, e: HEvent): void {
       if (!s.seats.has(key)) s.seats.set(key, { ...e.seat, key, staffedAt: e.at, ask: e.ask, probation: e.seat.generated, accepted: 0, acceptStreak: 0, rejectStreak: 0, rejected: 0 });
       break;
     }
+    case "capacity":
+      // Never move the wait earlier: two runners hitting the same limit keep the later reset.
+      const vendor = e.vendor ?? "model";
+      const was = s.capacity.get(vendor);
+      s.capacity.set(vendor, { vendor, until: Math.max(e.until, was?.until ?? 0), reason: e.reason, streak: Math.max(e.streak, was?.streak ?? 0), ...(e.models ? { models: e.models } : {}) });
+      break;
     case "paused":
       s.paused = e.paused ? { at: e.at, by: e.by, reason: e.reason } : null;
       break;
@@ -348,6 +366,18 @@ export function seatPermissions(s: State, seat: SeatState): string[] {
   const a = seat.ask ? s.asks.get(seat.ask) : undefined;
   const granted = a?.status === "answered" && a.choice === "grant";
   return granted ? [...seat.permissions, ...seat.pending.map((p) => p.permission)] : [...seat.permissions];
+}
+
+export type CapacityState = { vendor: string; until: number; reason: string; streak: number; models?: string[] };
+
+// Does a vendor's limit hold up a seat on this model? Unknown either way: yes.
+function covers(c: CapacityState, model: string | undefined): boolean {
+  return !c.models || !model || c.models.includes(model);
+}
+
+// The usage limit, if any, that a model turn for this seat waits on now.
+export function capacityFor(s: State, model: string | undefined, now: number): CapacityState | undefined {
+  return [...s.capacity.values()].find((c) => c.until > now && covers(c, model));
 }
 
 export function seatOf(s: State, t: { goal: string; lane: string }): SeatState | undefined {
@@ -462,7 +492,7 @@ export function thinStreak(s: State, goalId: string): TurnAt[] {
   for (let i = s.turns.length - 1; i >= 0; i--) {
     const t = s.turns[i];
     if (t.goal !== goalId) continue;
-    if (t.result === "host_failure" || t.result === "validation_failed" || t.result === "claim_lost") continue;
+    if (t.result === "host_failure" || t.result === "validation_failed" || t.result === "claim_lost" || t.result === "stopped") continue;
     if (t.granularity === "substantive" || t.granularity === "milestone") break;
     streak.push(t);
   }

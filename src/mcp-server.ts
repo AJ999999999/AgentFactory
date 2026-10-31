@@ -5,11 +5,11 @@
 //   RAEE_REPO  repository root (defaults to cwd)
 //   RAEE_ROLE  role used for permission scoping when a call doesn't pass one
 import * as path from "node:path";
-import * as readline from "node:readline";
 import { currentBasis, currentPins, readTask, taskContext, writeLockfile } from "./context.ts";
 import { findPrecedent, listDecisions } from "./decisions.ts";
 import type { DecisionKind } from "./decisions.ts";
 import { Git } from "./git.ts";
+import { serveMcp } from "./mcp-rpc.ts";
 import { Index } from "./store.ts";
 
 const repo = path.resolve(process.env.RAEE_REPO ?? process.cwd());
@@ -82,49 +82,13 @@ const tools: Tool[] = [
   },
 ];
 
-function reply(id: unknown, result: unknown): void {
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
-}
-function fail(id: unknown, code: number, message: string): void {
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
-}
-
-const rl = readline.createInterface({ input: process.stdin });
-rl.on("line", (line) => {
-  if (!line.trim()) return;
-  let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    return fail(null, -32700, "parse error");
-  }
-  const { id, method, params = {} } = msg;
-  if (method === "notifications/initialized" || id === undefined) return; // notifications get no reply
-  if (method === "initialize") {
-    return reply(id, {
-      protocolVersion: (params.protocolVersion as string) ?? "2025-06-18",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "raee-context", version: "0.1.0" },
-    });
-  }
-  if (method === "ping") return reply(id, {});
-  if (method === "tools/list") {
-    return reply(id, { tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
-  }
-  if (method === "tools/call") {
-    const tool = tools.find((t) => t.name === params.name);
-    if (!tool) return fail(id, -32602, `unknown tool ${String(params.name)}`);
-    const args = (params.arguments ?? {}) as Record<string, unknown>;
+serveMcp({ name: "raee-context", version: "0.1.0" }, tools.map((t) => ({
+  name: t.name,
+  description: t.description,
+  inputSchema: t.inputSchema,
+  call: t.call,
+  refuse: (args) => {
     const role = String(args.role ?? defaultRole);
-    if (!tool.roles.includes(role)) {
-      return reply(id, { content: [{ type: "text", text: `role "${role}" may not call ${tool.name}` }], isError: true });
-    }
-    try {
-      const out = tool.call(args);
-      return reply(id, { content: [{ type: "text", text: JSON.stringify(out, null, 2) }], structuredContent: { result: out } });
-    } catch (e) {
-      return reply(id, { content: [{ type: "text", text: (e as Error).message }], isError: true });
-    }
-  }
-  return fail(id, -32601, `method not found: ${method}`);
-});
+    return t.roles.includes(role) ? null : `role "${role}" may not call ${t.name}`;
+  },
+})));

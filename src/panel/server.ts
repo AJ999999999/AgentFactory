@@ -13,6 +13,7 @@ import { Git } from "../git.ts";
 import type { TurnAgent } from "../harness/agents.ts";
 import type { Answer } from "../harness/answers.ts";
 import { Harness } from "../harness/harness.ts";
+import { LiveTurns } from "../harness/live.ts";
 import type { HarnessPolicy } from "../harness/project.ts";
 import type { Direction, GoalRevision } from "../harness/types.ts";
 import { SystemClock } from "../harness/world.ts";
@@ -109,6 +110,11 @@ export class Workspace {
     return out.sort((a, b) => b.at - a.at);
   }
 
+  // Turns running on this PC: the loop writes their markers and logs next to its heartbeat.
+  live(key: string): LiveTurns {
+    return new LiveTurns(path.join(this.home(this.entry(key)), "turns"));
+  }
+
   // Every engagement, read fresh from git. One that can't be read (remote down) shows
   // what was last read, with the error.
   async snapshot(): Promise<{ now: number; dir: string; dirs: string[]; engagements: EngagementView[] }> {
@@ -116,13 +122,13 @@ export class Workspace {
     const engagements = await Promise.all(this.entries().map(async (e) => {
       const home = this.home(e);
       try {
-        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key)), folder: e.dir };
+        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key)), running: this.live(e.key).list(now), folder: e.dir };
         this.lastGood.set(home, v);
         return v;
       } catch (err) {
         const msg = (err as Error).message.split("\n")[0].slice(0, 300);
         const last = this.lastGood.get(home);
-        return last ? { ...last, id: e.key, error: msg } : { id: e.key, title: e.key, paused: null, goals: [], asks: [], runners: this.runners(e.key), error: msg, folder: e.dir };
+        return last ? { ...last, id: e.key, running: this.live(e.key).list(now), error: msg } : { id: e.key, title: e.key, paused: null, capacity: [], running: this.live(e.key).list(now), goals: [], asks: [], runners: this.runners(e.key), error: msg, folder: e.dir };
       }
     }));
     return { now, dir: this.dir, dirs: this.dirs, engagements };
@@ -225,6 +231,16 @@ export async function startPanel(opts: PanelOptions): Promise<Panel> {
           const paused = body.paused === true;
           await ws.harness(str(body.engagement, "engagement", 100)).pause(paused, "partner");
           log(`${paused ? "paused" : "resumed"} ${body.engagement}`);
+          break;
+        }
+        case "/api/stop": {
+          // The runner checks for this every second, kills the agent, throws its changes
+          // away and records the turn as stopped; the work then waits for your call.
+          const eng = str(body.engagement, "engagement", 100);
+          ws.harness(eng); // a known engagement
+          const turn = str(body.turn, "turn", 200);
+          if (!ws.live(eng).requestStop(turn, "partner", Date.now())) throw new BadRequest("that turn isn't running any more");
+          log(`stop requested: ${eng} ${turn}`);
           break;
         }
         case "/api/budget":

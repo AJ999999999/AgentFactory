@@ -242,7 +242,8 @@ export type TurnResult =
   | "blocked"
   | "validation_failed"
   | "host_failure"
-  | "claim_lost";
+  | "claim_lost"
+  | "stopped"; // the partner stopped it: counted as spent, never as a failure
 
 // Granularity is computed by the harness from what the turn changed, never claimed by
 // the agent. none < surface < substantive < milestone.
@@ -293,6 +294,9 @@ export type HEvent = Base &
     | { type: "review_verdict"; todo: string; review: string; seat: string; verdict: Verdict; note?: string }
     // The partner stops anything new from starting, or lets it start again.
     | { type: "paused"; paused: boolean; reason?: string }
+    // The model service said "not now" (a usage limit, a rate limit). Model turns wait
+    // until `until`; it is no failure of the work, so no turn is counted.
+    | { type: "capacity"; until: number; reason: string; streak: number; vendor?: string; models?: string[] } // models: the seats' placeholders that wait; unset = all
   );
 
 export type EventOf<T extends HEvent["type"]> = Extract<HEvent, { type: T }>;

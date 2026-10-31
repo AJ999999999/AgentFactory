@@ -1,0 +1,13 @@
+{
+  "about": "A planted rounding bug: half up instead of half to even, as docs/rules.md requires. One todo, one file, a rule the agent has to read.",
+  "engagement": {
+    "id": "fix-rounding",
+    "title": "Tally: invoices a cent off",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Invoices reconcile to the cent", "objective": "Invoice totals match what the bank reconciles, to the cent.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "fix-rounding", "lane": "build", "text": "Some invoice totals are a cent off from what the bank reconciles. Make every computed amount round the way docs/rules.md says, and add a test for it.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

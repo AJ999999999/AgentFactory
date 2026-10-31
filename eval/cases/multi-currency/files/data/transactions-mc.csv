@@ -1,0 +1,6 @@
+date,description,category,amount,currency
+2026-04-01,Salary,income,"3,200.00",CAD
+2026-04-03,Software,work,-19.99,USD
+2026-04-05,"Rent, April",housing,"-1,450.00",CAD
+2026-04-09,Hosting,work,-7.50,USD
+2026-04-12,Groceries,groceries,-88.10,CAD

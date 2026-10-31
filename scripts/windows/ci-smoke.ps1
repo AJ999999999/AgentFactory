@@ -105,13 +105,15 @@ $control = Join-Path $engDir "control"
 $hello = & git -C $control show origin/main:work/hello.md
 if ($hello -notmatch "fake Copilot CLI on Windows") { Fail "work/hello.md isn't on main" }
 $argsJson = & git -C $control show origin/main:work/args.json
-if ($argsJson -notmatch '"--agent","af-builder"') { Fail "the fake CLI didn't get the builder's profile: $argsJson" }
+# Worker mode: every seat runs as the af-worker profile, with its lane's skill in the prompt.
+if ($argsJson -notmatch '"--agent","af-worker"' -or $argsJson -notmatch 'Skill \(builder\)') { Fail "the fake CLI didn't get the worker profile with the builder skill: $argsJson" }
 $autocrlf = & git -C $control config --get core.autocrlf
 if ($autocrlf -ne "false") { Fail "the control repo converts line endings (core.autocrlf=$autocrlf)" }
 
 # 5. The doctor should pass now: node, git, copilot (through the .cmd shim), remote,
-#    heartbeat and the installed task.
-$doc = & node --no-warnings $cli doctor --copilot $copilot 2>&1 | Out-String
+#    heartbeat and the installed task. The judges' model maps to Claude Code, which this
+#    runner doesn't have: the fake CLI stands in for it, so doctor checks it's found.
+$doc = & node --no-warnings $cli doctor --copilot $copilot --claude $copilot 2>&1 | Out-String
 $docExit = $LASTEXITCODE
 Write-Host $doc
 if ($docExit) { Fail "doctor failed:`n$doc" }

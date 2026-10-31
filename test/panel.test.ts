@@ -11,6 +11,7 @@ import { acquireFileLock, lockIsStale } from "../src/git.ts";
 import { createWorkspace } from "../src/foundation/workspace.ts";
 import type { TurnAgent } from "../src/harness/agents.ts";
 import { Harness } from "../src/harness/harness.ts";
+import { LiveTurns } from "../src/harness/live.ts";
 import { loadPolicy } from "../src/harness/project.ts";
 import { blockers, readyTodos } from "../src/harness/select.ts";
 import type { EngagementDef } from "../src/harness/types.ts";
@@ -201,6 +202,32 @@ test("an answer counts as yours unless you say you're passing it on", async () =
   const f = [...s.findings.values()].find((x) => x.source === `ask:${play.id}`)!;
   assert.equal(f.author, "partner");
   assert.notEqual(f.grade, "expert", "the partner's own report isn't graded as the parent's");
+});
+
+test("the panel shows turns running on this PC with the end of their log, and asks the runner to stop one", async () => {
+  const { dir } = await workspace();
+  const live = new LiveTurns(path.join(dir, ".af", "harness", "shop", "turns"));
+  const t = live.start({ turn: "core-1-ab12", todo: "core", goal: "g", text: "Build the core loop", runner: "pc-1", role: "builder", pid: process.pid, startedAt: Date.now(), until: Date.now() + 60_000 });
+  t.log("→ Running command: npm test", "  exit 1");
+  const panel = await startPanel({ dir, policy, port: 0 });
+  try {
+    const port = panel.port;
+    const eng = (await request(port, { path: "/api/state", token: panel.token })).json().engagements[0];
+    assert.equal(eng.running.length, 1);
+    assert.deepEqual([eng.running[0].turn, eng.running[0].role, eng.running[0].stopping], ["core-1-ab12", "builder", false]);
+    assert.ok(eng.running[0].tail.at(-1).endsWith("  exit 1"));
+    assert.equal((await request(port, { path: "/api/stop", token: panel.token, body: { engagement: "shop", turn: "nope-1" } })).status, 400, "a turn that isn't running");
+    assert.equal((await request(port, { path: "/api/stop", token: panel.token, body: { engagement: "../x", turn: "core-1-ab12" } })).status, 400);
+    assert.equal((await request(port, { path: "/api/stop", body: { engagement: "shop", turn: "core-1-ab12" } })).status, 403, "no token");
+    assert.equal(t.stopRequested(), false);
+    assert.equal((await request(port, { path: "/api/stop", token: panel.token, body: { engagement: "shop", turn: "core-1-ab12" } })).status, 200);
+    assert.equal(t.stopRequested(), true, "the runner sees the request");
+    assert.equal((await request(port, { path: "/api/state", token: panel.token })).json().engagements[0].running[0].stopping, true);
+    t.finish("stopped");
+    assert.equal((await request(port, { path: "/api/state", token: panel.token })).json().engagements[0].running.length, 0);
+  } finally {
+    await panel.close();
+  }
 });
 
 test("one panel over several project folders: the same id in two folders gets the folder's name, and answers reach the right one", async () => {

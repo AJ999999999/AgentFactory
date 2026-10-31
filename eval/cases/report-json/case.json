@@ -1,0 +1,13 @@
+{
+  "about": "A small feature with an exact output contract, and the existing output must not change.",
+  "engagement": {
+    "id": "report-json",
+    "title": "Tally: a JSON report",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Machine-readable report", "objective": "Other tools can read tally's report.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "report-json", "lane": "build", "text": "Add a --json option to `tally report`: it prints one JSON object {\"byCategory\": {...}, \"byMonth\": {...}, \"total\": ...} in which every amount is a string formatted exactly like the text report's (for example \"-102.23\"). Without --json the report stays exactly as it is. Add a test.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

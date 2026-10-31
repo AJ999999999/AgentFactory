@@ -22,14 +22,15 @@ import { cloneControl, Git, initBare } from "../git.ts";
 import { readEvents } from "./store.ts";
 import { resolveCommand, runCommand, sleepUntil } from "../proc.ts";
 import { aboutLines, loadMemoryPolicy, readMemory, understand } from "../memory/memory.ts";
-import { CopilotTurnAgent, userAgentsDir } from "./agents.ts";
-import type { LaneConfig, TurnAgent } from "./agents.ts";
+import { userAgentsDir, vendorOfModel } from "./agents.ts";
+import type { TurnAgent } from "./agents.ts";
+import { buildTurnAgent, loadAgentsConfig, usedVendors } from "./setup.ts";
+import { VENDOR_DEFAULTS } from "./vendors.ts";
 import { Harness } from "./harness.ts";
 import { escalationReport, worthAsking } from "./escalation.ts";
 import { buildPacket } from "./packet.ts";
 import { beliefs, loadPolicy, seatPermissions } from "./project.ts";
 import { blockers, phase } from "./select.ts";
-import type { ToolConfig } from "./team.ts";
 import { checkLibrary } from "./team.ts";
 import type { EngagementDef, GoalRevision } from "./types.ts";
 import type { World } from "./world.ts";
@@ -64,13 +65,12 @@ function currentEngagement(): string {
 
 async function harness(engagement: string): Promise<Harness> {
   const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string; world?: string; memory?: string };
-  const lanesFile = path.join(ROOT, "policy", "harness-agents.json");
-  const cfg2 = JSON.parse(fs.readFileSync(lanesFile, "utf8")) as { fallback: LaneConfig; lanes: Record<string, LaneConfig>; agents?: Record<string, string>; profilePrefix?: string; models?: Record<string, string> } & ToolConfig;
-  // A path to the binary is resolved here; turns run with the worktree as their cwd.
-  const bin = flag("copilot", "copilot")!;
-  const agent: TurnAgent = new CopilotTurnAgent({
-    bin: bin.includes("/") || bin.includes("\\") ? path.resolve(bin) : bin, fallback: cfg2.fallback, lanes: cfg2.lanes, agents: cfg2.agents, profilePrefix: cfg2.profilePrefix, models: cfg2.models,
-    tools: { tools: cfg2.tools, always: cfg2.always }, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000,
+  const lib = policy.team?.library;
+  const agent: TurnAgent = buildTurnAgent(agentsConfig(), {
+    root: ROOT, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000,
+    bins: Object.fromEntries(["copilot", "claude", "codex", "pi", "omp"].map((v) => [v, flag(v)])),
+    judgeLanes: [...(lib?.judgeLanes ?? []), "review"],
+    sessionDir: path.join(home(engagement), "sessions"), salt: engagement,
   });
   // --world <module.ts> exporting `world` (your job, metric and probe providers and
   // checkers), or case:<name> for a built-in case's checkers and simulated sources.
@@ -86,8 +86,12 @@ async function harness(engagement: string): Promise<Harness> {
     if (!m || !cfg.memory) return [];
     return aboutLines(understand(readMemory(cfg.memory, m.principal), Date.now(), memPolicy, { subjects: m.subjects }), m.principal);
   };
-  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`), about });
+  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), turnsDir: path.join(home(engagement), "turns"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`), about });
 }
+
+// --models model-a=pi:,model-b=codex: tries other CLIs for one run without editing the
+// policy (the scheduled loop goes by the policy file).
+const agentsConfig = () => loadAgentsConfig(ROOT, flag("models"));
 
 async function caseWorld(name: string): Promise<World> {
   const setups: Record<string, () => Promise<{ world: World }>> = {
@@ -406,14 +410,42 @@ async function doctor(): Promise<boolean> {
   if (policy.team) {
     const bad = checkLibrary(policy.team.library, policy.team.catalog);
     line(!bad.length, `library: ${bad.length ? bad.join("; ") : `${Object.keys(policy.team.library.lanes ?? {}).length} lanes staffed`}`);
-    const roles = [...new Set([...Object.values(policy.team.library.lanes ?? {}), policy.team.library.generated?.agent ?? "author"])];
+    // With worker mode on, every seat that does the work runs as af-worker.
+    const roles = [...new Set([...Object.values(policy.team.library.lanes ?? {}), policy.team.library.generated?.agent ?? "author", ...(agentsConfig().worker ? ["worker"] : [])])];
     const dir = userAgentsDir();
     const missing = roles.filter((r) => !fs.existsSync(path.join(dir, `af-${r}.agent.md`)));
     line(!missing.length, `agent profiles in ${dir}: ${missing.length ? `missing ${missing.map((r) => `af-${r}`).join(", ")}` : `${roles.length} installed`}`, "npm run harness -- agents install (turns still run without them, with the role in the prompt)");
-    const ac = JSON.parse(fs.readFileSync(path.join(ROOT, "policy", "harness-agents.json"), "utf8")) as { models?: Record<string, string> };
-    const used = [...new Set([...Object.values(policy.team.library.roles).map((r) => r.model), policy.team.library.generated?.model ?? ""])].filter((m) => /^model-[a-z]$/.test(m));
-    const unmapped = used.filter((m) => !ac.models?.[m]);
-    line(!unmapped.length, `models: ${unmapped.length ? `${unmapped.join(", ")} not mapped, so those seats use Copilot's default model and judges share the workers' model` : used.map((m) => `${m}=${ac.models![m]}`).join(", ")}`, "set \"models\" in policy/harness-agents.json to model ids your Copilot plan offers (different families for model-a and model-b)", true);
+    const ac = agentsConfig();
+    const lib = policy.team.library;
+    const used = [...new Set([...Object.values(lib.roles).map((r) => r.model), lib.generated?.model ?? ""])].filter((m) => /^model-[a-z]$/.test(m));
+    // What each placeholder really runs on. Unmapped ones all get Copilot's default model,
+    // so they're the same model as each other.
+    const real = (m: string) => {
+      const x = ac.models?.[m] ?? "";
+      return !x ? "Copilot's default model" : x.endsWith(":") ? `${x.slice(0, -1)}'s default model` : x;
+    };
+    const judges = new Set((lib.judgeLanes ?? []).map((l) => lib.roles[lib.lanes?.[l] ?? ""]?.model).filter(Boolean));
+    const workers = new Set(Object.entries(lib.lanes ?? {}).filter(([l]) => !(lib.judgeLanes ?? []).includes(l)).map(([, r]) => lib.roles[r]?.model).filter(Boolean));
+    const shared = [...judges].filter((j) => [...workers].some((w) => real(w) === real(j!)));
+    line(!shared.length, `models: ${used.map((m) => `${m}=${real(m)}`).join(", ")}${shared.length ? `; judges (${shared.join(", ")}) run on the same model as the work they judge` : ""}`, "map the judges' model to another vendor in policy/harness-agents.json, e.g. \"model-b\": \"claude:opus\" (Copilot on some plans offers only one model)", true);
+    // Each other CLI a placeholder maps to: is it there, and how is the catalog held.
+    const how: Record<string, string> = {
+      claude: "allowed and disallowed tools; anything else refused",
+      codex: "its sandbox: writes only in the worktree, no network unless granted. It runs any command inside that, so the catalog's command list isn't enforced",
+      pi: "the turn gate: the seat's tools, its commands one at a time, writes in the write scope",
+      omp: "the turn gate: the seat's tools, its commands one at a time, writes in the write scope",
+    };
+    const signIn: Record<string, string> = { claude: "install Claude Code and sign in (claude, then /login)", codex: "install Codex CLI and sign in (codex login)", pi: "npm install -g @earendil-works/pi-coding-agent, then set up a provider (pi, then /login)", omp: "install omp and log in to a provider (omp login)" };
+    for (const v of usedVendors(ac)) {
+      const bin = flag(v) ?? ac.cli?.[v]?.bin ?? VENDOR_DEFAULTS[v].bin!;
+      const seats = used.filter((m) => vendorOfModel(ac.models?.[m]) === v).join(", ");
+      try {
+        const ver = (await runCommand(bin, ["--version"], { timeout: 60_000 })).stdout.trim().split("\n")[0];
+        line(v !== "codex", `${v} ${ver}, for ${seats}; held to the catalog by ${how[v]}`, "fine if you accept that; or map those seats to a CLI that limits commands", true);
+      } catch (e) {
+        line(false, `${v}: ${(e as Error).message.split("\n")[0]}`, `${signIn[v]}, or pass --${v} <path>; or map ${seats} to another CLI`);
+      }
+    }
   }
   const dir = path.join(process.cwd(), ".af", "harness");
   const engs = flag("engagement") ? [flag("engagement")!] : fs.existsSync(dir) ? fs.readdirSync(dir) : [];

@@ -180,6 +180,20 @@ function rules(s: State, now: number, emitOut: Emit): void {
         emit({ id: eid("block-cap", t.id, t.turns), at: now, by: H, type: "todo_blocked", todo: t.id, reason: `${cap} turns without finishing`, ask: id });
         continue;
       }
+      // The partner stopped a turn on it: don't just start it again. Ask what they want.
+      if (t.stopped) {
+        const id = eid("ask-stopped", t.id, t.turns);
+        emit(ask(now, {
+          id, goal: g.id, to: owner, kind: "decision", todo: t.id, origin: "rule:stopped",
+          question: `You stopped a turn on "${t.text}". Try it again, or drop it?`,
+          options: [
+            { id: "retry", label: "Try again", effect: { type: "retry", todo: t.id } },
+            { id: "drop", label: "Drop it", effect: { type: "supersede", todos: [t.id] } },
+          ],
+        }));
+        emit({ id: eid("block-stopped", t.id, t.turns), at: now, by: H, type: "todo_blocked", todo: t.id, reason: "stopped by the partner", ask: id });
+        continue;
+      }
       // Repeated failure stops retrying and asks.
       if (t.failures >= p.retries.maxFailures) {
         const id = eid("ask-fail", t.id, t.turns);

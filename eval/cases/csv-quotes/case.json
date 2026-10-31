@@ -1,0 +1,13 @@
+{
+  "about": "Data handling: a naive CSV reader breaks on quoted fields. The symptom is in the report; the cause is in a different file.",
+  "engagement": {
+    "id": "csv-quotes",
+    "title": "Tally: rent filed under the wrong category",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "The report reads every row right", "objective": "Every transaction lands in its own category with its own amount.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "csv-quotes", "lane": "data", "text": "`tally report data/transactions.csv` fails on the rent and book rows. The file has quoted fields with commas and doubled quotes inside. Fix how the file is read, with a test.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

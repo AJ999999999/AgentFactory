@@ -55,7 +55,7 @@ export type EngagementView = {
   id: string;
   title: string;
   paused: { at: number; by: string; reason?: string } | null;
-  capacity: Array<{ vendor: string; until: number; reason: string }>; // a model service said "not now"
+  capacity: Array<{ vendor: string; until: number; reason: string; kind: "limit" | "unreachable" | "setup" }>; // a model service said "not now"
   running?: LiveView[]; // turns running on this PC now, with the end of each log
   goals: GoalView[];
   asks: AskView[];
@@ -152,5 +152,5 @@ export function engagementView(s: State, id: string, now: number, runners: Runne
   // Goals in the order they were opened; closed ones after the active ones.
   const goals = [...s.goals.values()].sort((a, b) => Number(a.status !== "active") - Number(b.status !== "active") || a.openedAt - b.openedAt);
   const asks = [...s.asks.values()].filter((a) => a.status === "open").map((a) => askView(s, id, a));
-  return { id, title: s.engagement?.title ?? id, paused: s.paused, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason })), goals: goals.map((g) => goalView(s, g.id, now)), asks, runners };
+  return { id, title: s.engagement?.title ?? id, paused: s.paused, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason, kind: c.kind })), goals: goals.map((g) => goalView(s, g.id, now)), asks, runners };
 }

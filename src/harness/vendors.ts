@@ -19,7 +19,8 @@ import * as path from "node:path";
 import type { RunError } from "../proc.ts";
 import { spawnCommand } from "../proc.ts";
 import type { LaneConfig, TurnAgent, TurnContext } from "./agents.ts";
-import { CapacityError, StoppedError, classifyCapacity, parseTurnOutput, turnEnv, turnPrompt } from "./agents.ts";
+import type { Capacity } from "./agents.ts";
+import { CapacityError, ConnectionWatch, StoppedError, classifyCapacity, parseTurnOutput, turnEnv, turnPrompt } from "./agents.ts";
 import type { TurnOutput } from "./validate.ts";
 
 export const GATE = path.resolve(import.meta.dirname, "..", "..", "integrations", "pi", "turn-gate.ts");
@@ -97,10 +98,10 @@ export interface TurnStream {
   feed(chunk: string): void;
   stderr(chunk: string): void;
   end(): void;
-  onLimit?: () => void; // called when the CLI reports a usage limit while it runs
+  onLimit?: () => void; // called when the CLI reports a usage limit, or keeps failing to connect, while it runs
   reply(): string;
   errors(): string;
-  capacity(): { reason: string; resetAt?: number } | null;
+  capacity(): Capacity | null;
 }
 
 const permKey = (p: string) => (p.startsWith("repo:write:") ? "repo:write:lease" : p);
@@ -201,18 +202,18 @@ abstract class CliTurnAgent implements TurnAgent {
       if (x.stopped) {
         // Stopped by its own limit (not by the partner): a wait, not a failure.
         const limit = ctx.signal?.aborted ? null : stream.capacity();
-        if (limit) throw new CapacityError(limit.reason, limit.resetAt, this.vendor);
+        if (limit) throw CapacityError.of(limit, this.vendor);
         throw new StoppedError();
       }
       // Only the CLI's own errors are read, never the prompt.
       const cap = stream.capacity() ?? classifyCapacity(`${x.stderr ?? ""}\n${stream.errors()}`, ctx.now);
-      if (cap) throw new CapacityError(cap.reason, cap.resetAt, this.vendor);
+      if (cap) throw CapacityError.of(cap, this.vendor);
       throw new Error(`${x.message.split("\n")[0]}${stream.errors() ? `: ${stream.errors().slice(0, 240)}` : x.stderr ? `: ${x.stderr.trim().slice(0, 240)}` : ""}`);
     }
     stream.end();
     this.finish(ctx, stream);
     const cap = stream.capacity();
-    if (cap) throw new CapacityError(cap.reason, cap.resetAt, this.vendor);
+    if (cap) throw CapacityError.of(cap, this.vendor);
     const reply = stream.reply();
     try {
       return parseTurnOutput(reply);
@@ -230,7 +231,8 @@ abstract class LineStream implements TurnStream {
   protected now: number;
   protected texts: string[] = [];
   protected errs: string[] = [];
-  protected limited: { reason: string; resetAt?: number } | null = null;
+  protected limited: Capacity | null = null;
+  protected conn = new ConnectionWatch();
   private buf = "";
   constructor(say: (...lines: string[]) => void, now: number) {
     this.say = say;
@@ -257,8 +259,8 @@ abstract class LineStream implements TurnStream {
   errors(): string {
     return this.errs.join("\n");
   }
-  capacity(): { reason: string; resetAt?: number } | null {
-    return this.limited ?? (this.errs.length ? classifyCapacity(this.errors(), this.now) : null);
+  capacity(): Capacity | null {
+    return this.limited ?? (this.errs.length ? classifyCapacity(this.errors(), this.now) : null) ?? this.conn.result();
   }
   protected text(t: string): void {
     if (!t.trim()) return;
@@ -270,7 +272,7 @@ abstract class LineStream implements TurnStream {
   protected error(t: string): void {
     this.errs.push(t);
     this.say(`! ${t}`);
-    if (this.onLimit && classifyCapacity(t, this.now)) this.onLimit();
+    if (classifyCapacity(t, this.now) || this.conn.see(t)) this.onLimit?.();
   }
   private line(l: string): void {
     if (!l.trim()) return;
@@ -339,8 +341,8 @@ export class ClaudeStream extends LineStream {
   reply(): string {
     return this.result ?? super.reply();
   }
-  capacity(): { reason: string; resetAt?: number } | null {
-    return this.limited;
+  capacity(): Capacity | null {
+    return this.limited ?? this.conn.result();
   }
   protected event(e: Record<string, any>): void {
     if (e.type === "system" && e.subtype === "init") {

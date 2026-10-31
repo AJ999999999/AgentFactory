@@ -130,6 +130,7 @@ The pieces of `src/harness/`:
 - Usage limits waited out per vendor.
 - Seats can run in Copilot, Claude Code, Codex, pi or omp, chosen by model; judges in Claude Code by default.
 - The partner's MCP tools.
+- Running unattended: three kinds of wait (a usage limit, a service that can't be reached, a CLI that can't start as set up), none counted against the work; preflight (agent profiles, Codex's gateway) in `doctor`, `tick`, `loop` and the eval; a blocker on work its own checker passed is closed by the harness, and a person's earlier answer to the same question stands (both recorded as `ask_auto_closed`, never as a person's answer); the eval waits out limits and dead gateways and redoes the case run (`scripts/windows/start-eval.ps1` starts it detached).
 
 **Branches and PRs.** PRs #1 to #7 are merged into `main` (foundation, harness, Windows, memory, panel, then two from other sessions: answers count as the partner's own unless relayed, and an escalation log). The work on real CLIs, usage limits, live turns, Claude judges, partner tools, worker mode and the eval is on branch `real-clis-eval`, based on `main`, open as PR #10. Open PRs #8 (panel across project folders, decision cards) and #9 (an animated architecture diagram, which duplicates `docs/architecture.gif`) touch the same files, so whichever merges second needs its conflicts resolved.
 
@@ -170,6 +171,6 @@ The pieces of `src/harness/`:
    Look for switches first. If there are none, use a separate home for turns (omp `--profile`), at the cost of a separate sign-in.
 5. **Run the rhythm-runner engagement for a few days with the scheduled task.** It's kept outside this repo. Read the turn logs and fix what goes wrong.
 6. **Check `classifyCapacity` against a real limit message from each CLI** when one shows up in a turn log.
-   - **A usage limit reported mid-run now ends the turn at once, as a wait** (the CLI agents in `vendors.ts`). Codex, answered "429 Too Many Requests" by the `magpie` gateway, said it would reconnect and then hung for the full hour. Copilot's stream reader doesn't do this yet.
-   - **A provider that can't be reached still wastes the whole turn timeout.** When the gateway stopped, Codex logged "Reconnecting... waiting for network" every 73 seconds for an hour, and the turn then counted as a failure. Repeated connection failures should end the turn early and record a wait for that vendor.
+   - **A usage limit reported mid-run now ends the turn at once, as a wait** (the CLI agents in `vendors.ts`). Codex, answered "429 Too Many Requests" by the `magpie` gateway, said it would reconnect and then hung for the full hour. Copilot's stream reader does the same now.
+   - **A provider that can't be reached now ends the turn after three of the CLI's own connection errors**, as an `unreachable` wait (5 minutes, doubling). When the gateway stopped, Codex had logged "Reconnecting... waiting for network" every 73 seconds for an hour, and the turn counted as a failure. Check the patterns in `classifyUnreachable` against what each CLI prints when the network is really down.
 7. **Find the real web settings:** Copilot's tool name for web reads (`web_fetch` is a guess) and Codex's web search setting.

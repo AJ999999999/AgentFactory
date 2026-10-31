@@ -98,6 +98,7 @@ export function turnPrompt(ctx: TurnContext): string {
     ` "asks": [{"question": "...", "options": [{"id": "...", "label": "..."}]}],`,
     ` "supersede": [{"todo": "id", "reason": "..."}], "discount": [{"finding": "id", "reason": "..."}]}`,
     "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a job, wait or action that produces it.",
+    "A blocker stops the work and asks a person. Set it only when you can't go on without them. If the todo is done, say done: true and put any doubts in the note.",
   ].join("\n");
 }
 
@@ -201,14 +202,24 @@ export class CopilotTurnAgent implements TurnAgent {
     const named = (flag: string) => l.flags.flatMap((f, i) => (l.flags[i - 1] === flag ? [f] : []));
     say(`copilot${l.agent ? ` --agent ${l.agent}` : ""}${l.model ? ` --model ${l.model}` : ""}`, `allowed: ${named("--allow-tool").join(", ") || "-"}`, `denied: ${named("--deny-tool").join(", ") || "-"}`);
     say("--- prompt ---", ...prompt.split("\n"), "--- work ---");
-    const stream = new CopilotStream(say);
+    const stream = new CopilotStream(say, ctx.now);
+    // A usage limit or a dead connection reported mid-run ends the turn at once, as a wait.
+    const own = new AbortController();
+    ctx.signal?.addEventListener("abort", () => own.abort(), { once: true });
+    stream.onLimit = () => own.abort();
     let stdout: string;
     try {
-      ({ stdout } = await spawnCommand(this.bin, args, { cwd: ctx.wtDir, env: turnEnv(ctx), timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024, signal: ctx.signal, onStdout: (s) => stream.feed(s), onStderr: (s) => stream.stderr(s) }));
+      ({ stdout } = await spawnCommand(this.bin, args, { cwd: ctx.wtDir, env: turnEnv(ctx), timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024, signal: own.signal, onStdout: (s) => stream.feed(s), onStderr: (s) => stream.stderr(s) }));
     } catch (e) {
       stream.end();
       const x = e as RunError;
-      if (x.stopped) throw new StoppedError();
+      if (x.stopped) {
+        const limit = ctx.signal?.aborted ? null : stream.capacity();
+        if (limit) throw CapacityError.of(limit, "copilot");
+        throw new StoppedError();
+      }
+      const lost = stream.capacity();
+      if (lost) throw CapacityError.of(lost, "copilot");
       // Only Copilot's own errors are read: never the prompt, the instructions of its MCP
       // servers or event ids (which contain digits like 429). Plain-text output from an
       // older CLI is read from its start.
@@ -246,8 +257,18 @@ export class CopilotStream {
   private messages: string[] = [];
   private errs: string[] = [];
   private say: (...lines: string[]) => void;
-  constructor(say: (...lines: string[]) => void) {
+  private now: number;
+  private limited: Capacity | null = null;
+  private conn = new ConnectionWatch();
+  onLimit?: () => void; // called when Copilot reports a limit, or can't reach its service, mid-run
+  constructor(say: (...lines: string[]) => void, now = Date.now()) {
     this.say = say;
+    this.now = now;
+  }
+
+  // What ended the turn early, if anything: a limit, or a connection that kept failing.
+  capacity(): Capacity | null {
+    return this.limited ?? this.conn.result();
   }
 
   feed(chunk: string): void {
@@ -344,6 +365,8 @@ export class CopilotStream {
   private error(text: string): void {
     this.errs.push(text);
     this.say(`! ${text}`);
+    if (!this.limited) this.limited = classifyCapacity(text, this.now);
+    if (this.limited || this.conn.see(text)) this.onLimit?.();
   }
 }
 
@@ -380,28 +403,87 @@ export class TurnRouter implements TurnAgent {
       }
       return await this.copilot.run(ctx);
     } catch (e) {
-      if (e instanceof CapacityError) {
+      let err = e;
+      // A CLI that can't start as configured: the vendor waits rather than failing every todo.
+      if (!(err instanceof CapacityError) && !(err instanceof StoppedError) && err instanceof Error) {
+        const setup = classifySetup(err.message);
+        if (setup) err = CapacityError.of(setup, v);
+      }
+      if (err instanceof CapacityError) {
         // Placeholders the library uses that route to the same vendor, and the one this seat used.
         const known = new Set([...Object.keys(this.copilot.models), ctx.seat?.model ?? ""].filter(Boolean));
-        e.models = [...known].filter((m) => this.vendorOf(m) === v);
+        err.models = [...known].filter((m) => this.vendorOf(m) === v);
       }
-      throw e;
+      throw err;
     }
   }
 }
 
 // The model service refused for now (a usage limit, a rate limit, a spent quota). It is
 // not a failure of the work: the harness waits and tries the same work again.
+//
+// Three kinds, each waited out on its own schedule:
+//   limit        a usage or rate limit: wait for the reset it names
+//   unreachable  the service (or a local gateway) can't be reached: retry soon
+//   setup        the CLI can't start the turn as configured (a profile it can't load, a
+//                flag it doesn't know, signed out): retry after a while; someone has to fix it
+// None of them is a failure of the work, so no turn is counted against the todo.
+export type CapacityKind = "limit" | "unreachable" | "setup";
+export type Capacity = { reason: string; resetAt?: number; kind?: CapacityKind };
+
 export class CapacityError extends Error {
   resetAt?: number; // when the service says it's back, if it says
   vendor: string; // whose limit: "copilot", "claude"
   models?: string[]; // the model placeholders that route to that vendor and wait; unset = all
-  constructor(reason: string, resetAt: number | undefined, vendor: string, models?: string[]) {
+  kind: CapacityKind;
+  constructor(reason: string, resetAt: number | undefined, vendor: string, models?: string[], kind: CapacityKind = "limit") {
     super(reason);
     this.resetAt = resetAt;
     this.vendor = vendor;
     this.models = models;
+    this.kind = kind;
   }
+  static of(c: Capacity, vendor: string): CapacityError {
+    return new CapacityError(c.reason, c.resetAt, vendor, undefined, c.kind ?? "limit");
+  }
+}
+
+// A CLI that can't reach its service says so and keeps retrying: Codex logged
+// "Reconnecting... waiting for network" every 73 seconds for an hour when the owner's
+// local gateway stopped, and the turn then counted as failed work. Read only the CLI's own
+// errors with this, never tool output (a test the agent runs may well print ECONNREFUSED).
+const UNREACHABLE = /reconnecting|waiting for network|connection (?:failed|refused|reset|timed out|error)|error sending request|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network is unreachable|socket hang up|fetch failed|getaddrinfo/i;
+export const UNREACHABLE_AFTER = 3; // this many of the CLI's own connection errors end the turn
+
+export function classifyUnreachable(text: string): Capacity | null {
+  const line = text.split(/\r?\n/).find((l) => UNREACHABLE.test(l));
+  return line ? { reason: `can't reach the service: ${line.replace(/\s+/g, " ").trim().slice(0, 140)}`, kind: "unreachable" } : null;
+}
+
+// Counts the CLI's own connection errors over a turn.
+export class ConnectionWatch {
+  hits = 0;
+  first: Capacity | null = null;
+  // True once the turn should end.
+  see(text: string): boolean {
+    const c = classifyUnreachable(text);
+    if (!c) return false;
+    this.hits++;
+    this.first ??= c;
+    return this.hits >= UNREACHABLE_AFTER;
+  }
+  result(): Capacity | null {
+    return this.hits >= UNREACHABLE_AFTER && this.first ? { ...this.first, reason: `${this.first.reason} (${this.hits} times)` } : null;
+  }
+}
+
+// The CLI couldn't start the turn as it's set up. Retrying every todo against it only burns
+// their retries (Copilot refused a malformed agent profile on every data-lane turn), so the
+// vendor waits instead and the reason shows in status and the panel.
+const SETUP = /failed to load|frontmatter is malformed|malformed (?:front ?matter|yaml)|unknown (?:option|flag|argument)|unexpected argument|unrecognized (?:option|argument)|not (?:logged|signed) in|please (?:log|sign) in|login required|is not recognized as an internal or external command|spawn \S+ ENOENT|command not found/i;
+export function classifySetup(text: string): Capacity | null {
+  const line = text.split(/\r?\n/).find((l) => SETUP.test(l));
+  return line ? { reason: `setup: ${line.replace(/\s+/g, " ").trim().slice(0, 160)}`, kind: "setup" } : null;
 }
 
 const CAPACITY = /rate[-_ ]?limit|too many requests|\b(?:http|status|code|error)\W{0,3}429\b|\b429\s+too many|quota|usage limit|premium requests?|out of (?:credits|requests)|exceeded (?:your|the) (?:\w+ )?(?:limit|allowance)|limit (?:has been )?(?:reached|exceeded)|hit (?:your|the) (?:\w+ )?limit|insufficient credits/i;

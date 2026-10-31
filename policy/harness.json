@@ -21,6 +21,6 @@
   "schedule": {"jobPollMinutes": [10, 30, 60, 240], "maxSleepMinutes": 720, "waitPollMinutes": 1440},
   "protected": [".agents/harness/**", "policy/**", ".github/hooks/**"],
   "probation": {"promoteAfter": 3, "rejectStreak": 2},
-  "capacity": {"defaultBackoffMinutes": 30, "minBackoffMinutes": 1, "maxBackoffHours": 24},
+  "capacity": {"defaultBackoffMinutes": 30, "minBackoffMinutes": 1, "maxBackoffHours": 24, "unreachableBackoffMinutes": 5, "setupBackoffMinutes": 60},
   "team": {"library": "library.json", "catalog": "permission-catalog.json"}
 }

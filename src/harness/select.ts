@@ -53,7 +53,7 @@ export function blockers(s: State, t: TodoState, now: number, runner?: Runner): 
   if (s.paused) why.push("paused");
   // Only turns that call the model wait for capacity; jobs, waits and people's tasks don't.
   const limit = t.kind === "task" ? capacityFor(s, seatOf(s, t)?.model, now) : undefined;
-  if (limit) why.push(`${limit.vendor} usage limit until ${new Date(limit.until).toISOString()}: ${limit.reason}`);
+  if (limit) why.push(`${limit.vendor} ${waitLabel(limit.kind)} until ${new Date(limit.until).toISOString()}: ${limit.reason}`);
   why.push(...goalBlocks(s, t.goal));
   const chain = goalChain(s, t.goal);
   const g = chain[0];
@@ -232,7 +232,7 @@ export function nextWake(s: State, now: number, opts: { readyNow: boolean; pulse
     }
   }
   for (const at of opts.claimExpiries) timers.push({ at: at + 1, why: "claim expires" });
-  for (const c of s.capacity.values()) if (c.until > now) timers.push({ at: c.until, why: `${c.vendor} usage limit resets` });
+  for (const c of s.capacity.values()) if (c.until > now) timers.push({ at: c.until, why: `${c.vendor} ${waitLabel(c.kind)} wait ends` });
   const cap = { at: now + s.policy.schedule.maxSleepMinutes * MIN, why: "recheck for answers" };
   const future = timers.filter((t) => t.at > now);
   const due = timers.filter((t) => t.at <= now);
@@ -240,4 +240,9 @@ export function nextWake(s: State, now: number, opts: { readyNow: boolean; pulse
   const next = future.sort((a, b) => a.at - b.at)[0];
   if (!next) return { action: "sleep", at: cap.at, why: cap.why, idle: true };
   return next.at < cap.at ? { action: "sleep", at: next.at, why: next.why, timer: next.at } : { action: "sleep", at: cap.at, why: cap.why, timer: next.at };
+}
+
+// How a capacity wait reads to a person.
+export function waitLabel(kind: "limit" | "unreachable" | "setup" | undefined): string {
+  return kind === "unreachable" ? "can't be reached" : kind === "setup" ? "setup problem" : "usage limit";
 }

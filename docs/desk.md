@@ -1,36 +1,57 @@
-# The desk: your own Copilot CLI terminals
+# The desk: one page for all your Copilot CLI terminals
 
-This branch is a variant for one setup: a Windows PC where Copilot CLI is the only agent, with several PowerShell terminals open, each in a different repo, each running an interactive `copilot` session that you drive by hand. The goal is one place where every decision those sessions wait on can be answered, while each terminal stays yours to type in.
+This branch is a variant for one setup: a Windows PC where Copilot CLI is the only agent, with several PowerShell terminals open, each in a different repo, each running an interactive `copilot` session you drive by hand. The desk is one page where the permission asks from all of them wait for you, next to each terminal's state, while every terminal stays yours to type in.
 
-## Answering from one place: use Copilot's own remote control first
+(If your company allows Copilot's own [remote control](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-remote-control), `/remote` answers prompts from github.com without any of this. Jack's company seat doesn't allow it.)
 
-Copilot CLI already does most of this. Type `/remote` in a session (or start it with `copilot --remote`) and the session appears on github.com and in GitHub Mobile, where you can approve or deny its permission requests, answer its questions, approve plans and send new prompts. The terminal keeps working: whichever side answers first wins. See GitHub's [About remote control of Copilot CLI sessions](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-remote-control).
-
-On a company seat an administrator has to set the "Store local sessions in the Cloud" policy to "View and control" first; it's off until someone sets it. Session events, including your prompts and tool calls, go to GitHub.
-
-## What the desk adds: knowing what the interruptions cost
-
-Remote control answers one prompt at a time. It doesn't tell you which repo stops you most, for what, or how long sessions sat waiting. The desk records that, so any later change (a standing permission, a different instruction file, a panel) can be judged by whether the number went down.
+## Start
 
 ```powershell
 cd C:\workspace\AgentFactory
-npm run desk -- install        # one file in %USERPROFILE%\.copilot\hooks; nothing goes into your repos
-# work as usual for a day or two, in every terminal
-npm run desk -- report         # per repo: how often a session stopped for you, for what, median wait
-npm run desk -- tail           # the last events, to check the hook fires
+npm run desk -- install      # once: one file in %USERPROFILE%\.copilot\hooks; nothing goes into your repos
+npm run desk                 # the page, on http://127.0.0.1:4710; keep this window open while you work
+```
+
+In each terminal, start Copilot with a name:
+
+```powershell
+C:\workspace\AgentFactory\scripts\windows\copilot-here.ps1 -Name billing   # any copilot flags after it
+```
+
+The name becomes the window title and the terminal's name on the page; without it the repo folder's name is used. Click "Notify me" once on the page to get a system notification when a terminal asks while you're elsewhere.
+
+## What you see and do
+
+Each terminal is a card, the ones waiting on you first: **waiting on the desk** (a permission ask held for you), **asking you** (Copilot's question, answered in the terminal), **waiting for permission** (a prompt in the terminal itself), **waiting for your next prompt**, **working**, **closed**. Each shows what Copilot last said when it stopped and how many times it stopped for you today.
+
+A held ask shows the tool and what it would run, with:
+- **Allow** or **Deny**. A reason typed next to Deny goes back to Copilot, so it can try another way.
+- **Allow `npm run …` here from now on**: a standing answer for this terminal. For a command it covers the same program and first word only, and it's never offered for a line that chains, pipes, redirects or substitutes (`;`, `&`, `|`, `>`, `` ` ``, `$(`), so `npm run build; rm -rf ~` always asks. Standing answers are listed on the card with "ask again".
+- **answer in the terminal**: lets the ask go, and Copilot shows its usual prompt in that terminal.
+
+**Go to terminal** brings that window to the front. It finds the window by the title `copilot-here.ps1` gave it, so it works best with one window per repo: Windows can't bring a particular tab of Windows Terminal forward from outside.
+
+Per terminal you can switch to "asks go to the terminal" when you're sitting in it, and back.
+
+## How it works, and its limits
+
+Copilot CLI runs a `permissionRequest` hook before it would ask you, and takes what the hook prints as the answer. The desk's hook writes the ask under `%USERPROFILE%\.af\desk\asks\` and waits for your answer from the page.
+
+- **One place at a time.** While an ask waits on the page, the terminal shows no prompt for it. That's why there's "answer in the terminal", and why nothing is held when the desk isn't running: stop `npm run desk` (or close its window) and every terminal asks for itself again within seconds. An ask nobody answers goes to the terminal after 20 minutes (`holdSec` in `%USERPROFILE%\.af\desk\config.json`).
+- **Reads aren't held.** The hook runs before Copilot's own rules, so it lets read-only tools (`view`, `grep`, `glob` and the like; `passThrough` in the config) go straight to them. Everything else is held, including tools your own Copilot settings would have allowed; answer those once with "from now on".
+- **Questions and new prompts stay in the terminal.** Copilot's hooks can't answer its multiple-choice questions or type your next instruction into a waiting session without tricks that change what Copilot sees. The page shows them and takes you to the window.
+- **If the hook breaks, Copilot goes on as usual.** It always exits cleanly; at worst Copilot asks in the terminal.
+
+## The record
+
+Every event of every session goes to `%USERPROFILE%\.af\desk\events.jsonl`, with who settled each held ask and how long it waited. It stays on your PC: it holds your company's paths and commands (cut to 300 characters each), which must never be copied into this repo.
+
+```powershell
+npm run desk -- report [--days 7]   # per repo: how often a session stopped for you, answered on the desk, settled by a standing answer, median wait
+npm run desk -- tail                # the last events, to check the hook fires
 npm run desk -- uninstall
 ```
 
-`scripts\windows\copilot-here.ps1 [-Name billing] [copilot flags]` starts `copilot` with the terminal's title and the desk's records both named, so you can tell terminals apart.
-
-The hook only records. It prints nothing and always exits cleanly, so each session behaves exactly as without it. The log is `%USERPROFILE%\.af\desk\events.jsonl` and stays on your PC: it holds your company's paths and commands (cut to 300 characters each), which must never be copied into this repo.
-
-What a "stop" is: Copilot tells its hooks when it shows you a permission prompt, a question, or goes idle waiting for your next prompt. The wait ends at that session's next event. Idle time is counted apart, since that's you driving, not an interruption.
-
-## If remote control is off at your company
-
-Copilot's hooks allow a local panel instead. A `permissionRequest` hook runs before Copilot asks you and can answer allow or deny, so a hook that waits for an answer from a page on 127.0.0.1 can take the decision. The catch is that while the hook waits, the terminal shows no prompt: each ask is answered in the panel or in the terminal, not both at once. The plan for that is in [docs/next/080-desk-panel.md](next/080-desk-panel.md); it waits until the recorded numbers and the remote-control answer say it's needed.
-
 ## Checked against
 
-Copilot CLI's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference) as of 1.0.105. The payload of `permissionRequest` isn't documented in full, so the hook reads both camelCase and snake_case names and the first real day of records should be checked with `tail`.
+Copilot CLI's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference) as of 1.0.105. It doesn't spell out the `permissionRequest` input in full; the hook reads `toolName`/`toolInput` and their snake_case forms. On the first day, check with `tail` that asks are recorded with their tool names, and add any read-only tool that gets held to `passThrough`.

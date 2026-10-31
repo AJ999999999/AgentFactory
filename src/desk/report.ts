@@ -4,14 +4,16 @@
 import * as path from "node:path";
 import type { DeskEvent } from "./log.ts";
 
-export type Wait = { at: number; repo: string; terminal?: string; session: string; why: "permission" | "question" | "idle"; tool?: string; detail?: string; waitedMs?: number };
+export type Wait = { at: number; repo: string; terminal?: string; session: string; why: "permission" | "question" | "idle"; tool?: string; detail?: string; waitedMs?: number; onPage?: boolean };
 
-export type RepoReport = { repo: string; sessions: number; permissions: number; questions: number; idle: number; asked: number; medianWaitMs?: number; tools: Array<[string, number]> };
+export type RepoReport = { repo: string; sessions: number; permissions: number; onPage: number; byRule: number; questions: number; idle: number; asked: number; medianWaitMs?: number; tools: Array<[string, number]> };
 
 const WHY: Record<string, Wait["why"]> = { permission_prompt: "permission", elicitation_dialog: "question", agent_idle: "idle" };
 
 // A session waits on you when Copilot shows a prompt (a notification). It stops waiting
-// at the session's next event: your prompt, the next tool, or its end.
+// at the session's next event: your prompt, the next tool, or its end. An ask answered
+// on the desk's page is a wait too, ended by your answer; one the page let go to the
+// terminal is counted once, at the terminal's prompt.
 export function waits(log: DeskEvent[]): Wait[] {
   const out: Wait[] = [];
   const lastAsk = new Map<string, DeskEvent>();
@@ -23,6 +25,10 @@ export function waits(log: DeskEvent[]): Wait[] {
       open.delete(e.session);
     }
     if (e.event === "permissionRequest") lastAsk.set(e.session, e);
+    if (e.event === "decision" && e.by === "page") {
+      const ask = lastAsk.get(e.session);
+      out.push({ at: e.at - (e.waitedMs ?? 0), repo: path.basename(e.cwd) || e.cwd, session: e.session, why: "permission", onPage: true, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), ...(ask?.detail ? { detail: ask.detail } : {}), ...(e.waitedMs !== undefined ? { waitedMs: e.waitedMs } : {}) });
+    }
     if (e.event !== "notification" || !e.kind || !WHY[e.kind]) continue;
     const why = WHY[e.kind];
     const ask = why === "permission" ? lastAsk.get(e.session) : undefined;
@@ -45,16 +51,18 @@ export function report(log: DeskEvent[], since = 0): RepoReport[] {
   const repos = new Map<string, RepoReport & { ids: Set<string>; waited: number[]; toolCount: Map<string, number> }>();
   const get = (repo: string) => {
     let r = repos.get(repo);
-    if (!r) repos.set(repo, (r = { repo, sessions: 0, permissions: 0, questions: 0, idle: 0, asked: 0, tools: [], ids: new Set(), waited: [], toolCount: new Map() }));
+    if (!r) repos.set(repo, (r = { repo, sessions: 0, permissions: 0, onPage: 0, byRule: 0, questions: 0, idle: 0, asked: 0, tools: [], ids: new Set(), waited: [], toolCount: new Map() }));
     return r;
   };
   for (const e of recent) {
     const r = get(path.basename(e.cwd) || e.cwd);
     r.ids.add(e.session);
     if (e.event === "permissionRequest") r.asked++;
+    if (e.event === "decision" && e.by === "rule") r.byRule++;
   }
   for (const w of ws) {
     const r = get(w.repo);
+    if (w.onPage) r.onPage++;
     if (w.why === "permission") r.permissions++;
     else if (w.why === "question") r.questions++;
     else r.idle++;
@@ -71,12 +79,13 @@ const secs = (ms?: number) => (ms === undefined ? "-" : ms < 60_000 ? `${Math.ro
 
 export function renderReport(rows: RepoReport[]): string {
   if (!rows.length) return "Nothing recorded yet. Start a Copilot CLI session and work as usual.";
-  const lines = ["repo                      sessions  asked you  questions  idle  median wait  most asked"];
+  const lines = ["repo                      sessions  asked you  on desk  by rule  questions  idle  median wait  most asked"];
   for (const r of rows) {
-    lines.push(`${r.repo.padEnd(26).slice(0, 26)}${String(r.sessions).padStart(8)}${String(r.permissions).padStart(11)}${String(r.questions).padStart(11)}${String(r.idle).padStart(6)}${secs(r.medianWaitMs).padStart(13)}  ${r.tools.map(([t, n]) => `${t}×${n}`).join(", ")}`);
+    lines.push(`${r.repo.padEnd(26).slice(0, 26)}${String(r.sessions).padStart(8)}${String(r.permissions).padStart(11)}${String(r.onPage).padStart(9)}${String(r.byRule).padStart(9)}${String(r.questions).padStart(11)}${String(r.idle).padStart(6)}${secs(r.medianWaitMs).padStart(13)}  ${r.tools.map(([t, n]) => `${t}×${n}`).join(", ")}`);
   }
   const total = rows.reduce((n, r) => n + r.permissions + r.questions, 0);
   const auto = rows.reduce((n, r) => n + r.asked, 0);
-  lines.push("", `${total} times a session stopped for you; ${auto} permission checks ran in all (most were let through by your rules without asking).`);
+  const rule = rows.reduce((n, r) => n + r.byRule, 0);
+  lines.push("", `${total} times a session stopped for you; ${auto} permission checks ran in all (most were let through by your rules without asking)${rule ? `; ${rule} settled by a standing answer from the desk` : ""}.`);
   return lines.join("\n");
 }

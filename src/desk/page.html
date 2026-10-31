@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desk</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg: #f6f5f2; --card: #fff; --ink: #1d1d1b; --mute: #6b6a66; --line: #e3e1dc; --wait: #b45309; --wait-bg: #fef3c7; --ok: #166534; --ok-bg: #dcfce7; --no: #991b1b; --no-bg: #fee2e2; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --card: #1f1f1d; --ink: #ecebe7; --mute: #9b9a95; --line: #33332f; --wait: #fbbf24; --wait-bg: #3a2c0b; --ok: #86efac; --ok-bg: #12301d; --no: #fca5a5; --no-bg: #3b1515; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .mute { font-size: 13px; }
+  main { padding: 16px 20px; display: grid; gap: 12px; max-width: 980px; }
+  .mute { color: var(--mute); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .card.waiting { border-color: var(--wait); }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .name { font-weight: 600; font-size: 15px; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--line); }
+  .badge.wait { background: var(--wait-bg); color: var(--wait); }
+  .badge.closed { opacity: .6; }
+  .spacer { flex: 1; }
+  button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--mute); }
+  button.allow { background: var(--ok-bg); color: var(--ok); border-color: transparent; font-weight: 600; }
+  button.deny { background: var(--no-bg); color: var(--no); border-color: transparent; }
+  button.link { border: none; background: none; padding: 0; color: var(--mute); text-decoration: underline; }
+  .ask { margin-top: 10px; padding: 10px; border-radius: 6px; background: var(--bg); }
+  .ask code { display: block; white-space: pre-wrap; word-break: break-all; font: 12.5px ui-monospace, Consolas, monospace; margin: 6px 0 8px; max-height: 9em; overflow: auto; }
+  .ask input { font: inherit; font-size: 13px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 220px; }
+  .said { margin-top: 6px; white-space: pre-wrap; }
+  .rules { margin-top: 8px; font-size: 13px; }
+  #err { color: var(--no); }
+  .empty { padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Desk</h1>
+  <span class="mute" id="sub">connecting…</span>
+  <span class="spacer"></span>
+  <span id="err"></span>
+  <button id="notify" hidden>Notify me</button>
+</header>
+<main id="list"></main>
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ago = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`; };
+let state = null, version = "", seen = new Set();
+
+async function call(path, body) {
+  const res = await fetch(path, body === undefined ? { headers: { "x-desk-token": TOKEN } } : { method: "POST", headers: { "x-desk-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(v.error || res.statusText);
+  return v;
+}
+async function act(path, body) {
+  try { $("#err").textContent = ""; await call(path, body); version = ""; } catch (e) { $("#err").textContent = e.message; }
+}
+
+function render() {
+  if (!state) return;
+  const ts = state.terminals;
+  const waiting = ts.reduce((n, t) => n + t.asks.length, 0);
+  document.title = waiting ? `(${waiting}) Desk` : "Desk";
+  $("#sub").textContent = `${ts.filter((t) => t.state !== "closed").length} terminals · asks wait here ${Math.round(state.holdSec / 60)} min, then go to the terminal`;
+  if (!ts.length) { $("#list").innerHTML = `<div class="card empty mute">No Copilot CLI session recorded yet. Start one in any terminal (scripts\\windows\\copilot-here.ps1 names it).</div>`; return; }
+  $("#list").innerHTML = ts.map((t) => {
+    const wait = t.state !== "working" && t.state !== "closed";
+    const asks = t.asks.map((a) => `
+      <div class="ask">
+        <div class="row"><b>${esc(a.tool)}</b><span class="mute">waiting ${ago(state.now - a.at)}</span></div>
+        ${a.detail ? `<code>${esc(a.detail)}</code>` : ""}
+        <div class="row">
+          <button class="allow" data-a="${esc(a.id)}" data-c="allow">Allow</button>
+          ${a.always ? `<button data-a="${esc(a.id)}" data-c="always">Allow ${a.always.prefix ? `<code style="display:inline">${esc(a.always.prefix)} …</code>` : esc(a.tool)} here from now on</button>` : ""}
+          <input placeholder="why not (Copilot reads this)" data-note="${esc(a.id)}">
+          <button class="deny" data-a="${esc(a.id)}" data-c="deny">Deny</button>
+          <button class="link" data-a="${esc(a.id)}" data-c="terminal">answer in the terminal</button>
+        </div>
+      </div>`).join("");
+    const rules = t.rules.length ? `<div class="rules mute">Allowed here without asking: ${t.rules.map((r) => `${r.prefix ? `<code>${esc(r.prefix)} …</code>` : esc(r.tool)} <button class="link" data-forget="${esc(t.name)}" data-tool="${esc(r.tool)}" data-prefix="${esc(r.prefix || "")}">ask again</button>`).join(", ")}</div>` : "";
+    return `
+      <div class="card ${wait ? "waiting" : ""}">
+        <div class="row">
+          <span class="name">${esc(t.name)}</span>
+          <span class="badge ${wait ? "wait" : t.state === "closed" ? "closed" : ""}">${esc(t.state)} · ${ago(state.now - t.since)}</span>
+          <span class="mute">${t.stopsToday} stops today</span>
+          <span class="spacer"></span>
+          <button class="link" data-mode="${esc(t.name)}" data-to="${t.mode === "desk" ? "terminal" : "desk"}">${t.mode === "desk" ? "asks come here · send to terminal instead" : "asks go to the terminal · bring here"}</button>
+          <button data-jump="${esc(t.name)}">Go to terminal</button>
+        </div>
+        <div class="mute">${esc(t.cwd)}</div>
+        ${t.said && !t.asks.length ? `<div class="said">${esc(t.said)}</div>` : ""}
+        ${asks}${rules}
+      </div>`;
+  }).join("");
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  if (b.dataset.a) {
+    const note = b.dataset.c === "deny" ? document.querySelector(`[data-note="${CSS.escape(b.dataset.a)}"]`)?.value : undefined;
+    act("/api/answer", { ask: b.dataset.a, choice: b.dataset.c, note });
+  } else if (b.dataset.mode) act("/api/mode", { terminal: b.dataset.mode, mode: b.dataset.to });
+  else if (b.dataset.forget) act("/api/forget", { terminal: b.dataset.forget, tool: b.dataset.tool, prefix: b.dataset.prefix });
+  else if (b.dataset.jump) act("/api/jump", { terminal: b.dataset.jump });
+});
+
+// A new ask while you're in a terminal: a system notification, if you allowed them.
+function announce() {
+  for (const t of state.terminals) for (const a of t.asks) {
+    if (seen.has(a.id)) continue;
+    seen.add(a.id);
+    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") new Notification(`${t.name} asks: ${a.tool}`, { body: a.detail || "", tag: a.id });
+  }
+}
+if ("Notification" in window && Notification.permission === "default") {
+  $("#notify").hidden = false;
+  $("#notify").onclick = () => Notification.requestPermission().then(() => ($("#notify").hidden = true));
+}
+
+// Wait on the server for a change rather than polling on a timer (timers in background tabs slow to a crawl).
+async function loop() {
+  for (;;) {
+    try {
+      const v = await call(`/api/state?since=${encodeURIComponent(version)}&wait=${version ? 25000 : 0}`);
+      version = v.version; state = v;
+      if (!document.activeElement || document.activeElement.tagName !== "INPUT") render();
+      announce();
+      $("#err").textContent = "";
+    } catch (e) {
+      $("#err").textContent = `${e.message}`;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+}
+setInterval(() => { if (state) { state.now = Date.now(); if (!document.activeElement || document.activeElement.tagName !== "INPUT") render(); } }, 5000);
+loop();
+</script>
+</body>
+</html>

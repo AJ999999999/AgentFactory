@@ -23,7 +23,8 @@ export type DeskEventName = (typeof EVENTS)[number];
 
 export type DeskEvent = {
   at: number;
-  event: DeskEventName;
+  // "decision" is the desk's own: how a held permission request was settled.
+  event: DeskEventName | "decision";
   session: string;
   cwd: string;
   // The terminal's name, when it was started with the desk's launcher.
@@ -34,6 +35,10 @@ export type DeskEvent = {
   kind?: string;
   message?: string;
   reason?: string;
+  // On a decision: who settled it, what was chosen, how long the session waited.
+  by?: string;
+  choice?: string;
+  waitedMs?: number;
 };
 
 const CUT = 300;

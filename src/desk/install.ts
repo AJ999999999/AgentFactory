@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { HOOK_TIMEOUT_SEC } from "./hold.ts";
 import { EVENTS } from "./log.ts";
 
 export const HOOK_FILE = "af-desk.json";
@@ -11,11 +12,12 @@ export function copilotHooksDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(env.COPILOT_HOME || path.join(os.homedir(), ".copilot"), "hooks");
 }
 
-// Short timeouts: recording takes milliseconds, and a hook that hangs would hold the session.
+// Short timeouts: recording takes milliseconds, and a hook that hangs would hold the
+// session. Only a permission request waits, for your answer on the page.
 export function hooksConfig(hookScript: string): unknown {
   const cmd = (e: string) => `node --no-warnings "${hookScript}" ${e}`;
   const hooks: Record<string, unknown[]> = {};
-  for (const e of EVENTS) hooks[e] = [{ type: "command", bash: cmd(e), powershell: cmd(e), timeoutSec: 5 }];
+  for (const e of EVENTS) hooks[e] = [{ type: "command", bash: cmd(e), powershell: cmd(e), timeoutSec: e === "permissionRequest" ? HOOK_TIMEOUT_SEC : 5 }];
   return { version: 1, hooks };
 }
 

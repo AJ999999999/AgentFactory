@@ -62,8 +62,10 @@ export class Harness {
   pulse: Pulse;
   coord: Coordinator;
   log: LogFn;
+  // What memory says about the people the engagement serves, as packet lines.
+  about: (s: State) => string[];
 
-  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn }) {
+  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[] }) {
     if (opts.policy.claims.turnTimeoutMinutes >= opts.policy.claims.ttlMinutes) throw new Error("turn timeout must be shorter than the claim TTL, or a slow turn could outlive its claim");
     if (!safeId(opts.engagement)) throw new Error(`bad engagement id ${opts.engagement}`);
     this.control = opts.control;
@@ -75,6 +77,7 @@ export class Harness {
     this.claims = new Claims(opts.control, opts.engagement);
     this.pulse = new Pulse(opts.control, opts.engagement);
     this.log = opts.log ?? (() => {});
+    this.about = opts.about ?? (() => []);
     this.coord = new Coordinator({ control: opts.control, worktreeRoot: opts.worktreeRoot, runner: noRunner, concurrency: opts.slots ?? 2, log: this.log });
   }
 
@@ -428,7 +431,13 @@ export class Harness {
       lockPaths,
       leaseTtlMs: this.policy.claims.ttlMinutes * MIN,
       work: async (wtDir, wt) => {
-        const packet = buildPacket(s, t, why);
+        let about: string[] = [];
+        try {
+          about = this.about(s);
+        } catch (e) {
+          this.log("memory_unreadable", { error: (e as Error).message });
+        }
+        const packet = buildPacket(s, t, why, about);
         const relevant = [...s.findings.values()].filter((f) => f.assumption && (f.assumption === t.tests || (t.assumes ?? []).includes(f.assumption)));
         let output: TurnOutput | null = null;
         let hostError = "";

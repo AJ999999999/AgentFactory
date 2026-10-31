@@ -35,7 +35,7 @@ export function answersFor(s: State, t: TodoState, max = 2): AskState[] {
   return out.sort((a, b) => (b.answeredAt ?? 0) - (a.answeredAt ?? 0)).slice(0, max);
 }
 
-export function buildPacket(s: State, t: TodoState, why: string): string {
+export function buildPacket(s: State, t: TodoState, why: string, about: string[] = []): string {
   const g = s.goals.get(t.goal)!;
   const bs = beliefs(s, g.id);
   const count = (st: string) => bs.filter((b) => b.status === st).length;
@@ -54,6 +54,7 @@ export function buildPacket(s: State, t: TodoState, why: string): string {
     `Beliefs: ${count("supported")} supported, ${count("refuted")} refuted, ${count("contested")} contested, ${count("testing")} testing, ${count("untested")} untested`,
     `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, 600)}`,
     ...answersFor(s, t).map((a) => `From ${a.answeredBy} (${a.id}): ${cut(a.note ?? `chose ${a.choice}`, 320)}`),
+    ...about.slice(0, 2),
     `Why this one: ${cut(why, 160)}`,
     `Write only: ${(t.writeScope ?? []).join(", ") || "nothing (findings, todos and asks only)"}${freezes.length ? ` · frozen: ${freezes.map((f) => f.paths.join(",")).join("; ")}` : ""}`,
   ];

@@ -150,6 +150,12 @@ describe("phases 8-9: attention budget and lease atomicity", () => {
     assert.equal(contract?.route, "escalate");
     assert.equal(contract?.tunableOnly, false);
   });
+  it("samples one auto-resolved proposal for the daily audit", () => {
+    const sampled = r.escalations.filter((e) => e.type === "sampled");
+    assert.equal(sampled.length, 1);
+    const autoIds = r.escalations.filter((e) => e.type === "triaged" && e.route === "auto").map((e) => e.proposalId);
+    assert.ok(autoIds.includes(sampled[0].proposalId));
+  });
   it("overlapping lease is refused by the pre-check AND by git itself", () => {
     assert.deepEqual(r.leaseBackstop.prechecked, ["tools/opportunity-analyzer"]);
     assert.equal(r.leaseBackstop.rawPushRejected, true);

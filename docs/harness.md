@@ -240,3 +240,11 @@ Jobs, metric sources, monitor probes and checkers come from a module you pass as
 - **Generated roles are templates, not designs.** A generated role's charter is written by deterministic code from the lane and its todos. A model-backed factory would write a better one, behind the same limits (catalog permissions, probation). Probation ends only through independent reviews; checker passes don't count toward it.
 - **Tool and model names are placeholders.** The flags in `policy/harness-agents.json` and the model names in the library have to match your Copilot CLI version and plan.
 - **Windows is tested in CI, not on your machine.** The suite and a scheduled-task smoke test (install, one turn through an npm-style `copilot.cmd`, doctor, a quiet tick, uninstall) run on a GitHub Windows runner with a fake Copilot CLI. The task there runs as S4U, because the CI user has no interactive logon; on your machine it runs Interactive.
+
+## How well the harness chooses when to ask
+
+`npm run harness -- escalation` reads the log and reports, for each kind of question (each rule, monitors, agents' questions), how often your answer changed nothing: you picked an option that only acknowledges or approves. Questions the harness must ask whatever the numbers say (money, access, a refuted or killing assumption, scope far over budget, people's tasks, reviews) are counted apart. With k = 10 in `policy/harness.json` (`escalation.missCostRatio`), a kind of question is worth asking while you change course more than 1 time in 10.
+
+Two things keep that number honest:
+- **Blind questions.** A fifth of agents' questions (`escalation.blindShare`) hide the recommendation until you answer. If you follow the recommendation much more often when you can see it, the rate of questions that changed nothing is partly you going along.
+- **Daily spot check.** Once a day, one decision the harness made without asking (dropping or reopening work, discounting a finding, resetting an assumption) comes back to the goal's owner: same, would differ, or wanted to be asked. It holds no work and agents never see it. The answers estimate how often the harness should have asked.

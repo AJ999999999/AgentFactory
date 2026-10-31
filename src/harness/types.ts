@@ -223,6 +223,9 @@ export type Ask = {
   // What the asker would pick and why, so the question can be answered from the card.
   // An opinion like any agent's: it informs the answer and never stands in for it.
   recommend?: { option: string; why: string; by: string };
+  // Set on the daily audit question: the decision it is about (an event id) and the chance
+  // that decision had of being the one picked, so the estimate can be weighted.
+  audit?: { event: string; probability: number };
 };
 
 // Effects the harness can't take back once applied: a goal closed, work dropped, the

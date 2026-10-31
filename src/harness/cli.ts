@@ -18,6 +18,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { cloneControl, Git, initBare } from "../git.ts";
 import { readEvents } from "./store.ts";
 import { resolveCommand, runCommand, sleepUntil } from "../proc.ts";
@@ -52,6 +53,12 @@ function flag(name: string, fallback?: string): string | undefined {
   return i >= 0 ? rest[i + 1] : fallback;
 }
 
+// import() takes a URL, and on Windows a bare path ("C:\...") reads as one with the
+// scheme "c:", so a world module outside this repo has to go in as a file:// URL.
+function importFile(file: string): Promise<unknown> {
+  return import(pathToFileURL(path.resolve(file)).href);
+}
+
 function home(engagement: string): string {
   return path.join(process.cwd(), ".af", "harness", engagement);
 }
@@ -79,7 +86,7 @@ async function harness(engagement: string): Promise<Harness> {
   // The engagement's world (checkers, providers) is saved when it's opened, so the
   // scheduled loop loads the same red lines a manual run does.
   const worldFile = flag("world") ?? cfg.world;
-  const world: World = !worldFile ? {} : worldFile.startsWith("case:") ? await caseWorld(worldFile.slice(5)) : ((await import(path.resolve(worldFile))) as { world: World }).world;
+  const world: World = !worldFile ? {} : worldFile.startsWith("case:") ? await caseWorld(worldFile.slice(5)) : ((await importFile(worldFile)) as { world: World }).world;
   // Memory about the people this engagement serves (open --memory <dir>), read fresh
   // for every turn so a lapsed plan is gone the moment it lapses.
   const memPolicy = loadMemoryPolicy(path.join(ROOT, "policy", "memory.json"));
@@ -156,7 +163,7 @@ async function main(): Promise<void> {
       const def = rest[0].startsWith("case:") ? await caseDef(rest[0].slice(5)) : (JSON.parse(fs.readFileSync(rest[0], "utf8")) as EngagementDef);
       // Check what's passed before anything is created.
       if (flag("seed") && !fs.statSync(path.resolve(flag("seed")!), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`--seed ${flag("seed")} is not a folder`);
-      if (flag("world") && !flag("world")!.startsWith("case:")) await import(path.resolve(flag("world")!));
+      if (flag("world") && !flag("world")!.startsWith("case:")) await importFile(flag("world")!);
       const dir = home(def.id);
       fs.mkdirSync(dir, { recursive: true });
       let remote = flag("remote");
@@ -190,7 +197,7 @@ async function main(): Promise<void> {
       }
       const w = flag("world");
       const world = w ? (w.startsWith("case:") ? w : path.resolve(w)) : undefined;
-      if (world && !world.startsWith("case:")) await import(world); // fail now, not in the scheduled task
+      if (world && !world.startsWith("case:")) await importFile(world); // fail now, not in the scheduled task
       const mem = flag("memory") ? path.resolve(flag("memory")!) : undefined;
       fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}), ...(mem ? { memory: mem } : {}) }, null, 2));
       await (await harness(def.id)).open(def);
@@ -496,7 +503,9 @@ async function doctor(): Promise<boolean> {
     }
     if (process.platform === "win32") {
       try {
-        const q = execFileSync("schtasks", ["/Query", "/TN", `AgentFactory harness - ${eng}`, "/FO", "LIST"], { encoding: "utf8", windowsHide: true });
+        // Piped, so schtasks's own "ERROR: The system cannot find the file specified."
+        // doesn't land between doctor's lines when there's no task.
+        const q = execFileSync("schtasks", ["/Query", "/TN", `AgentFactory harness - ${eng}`, "/FO", "LIST"], { encoding: "utf8", windowsHide: true, stdio: "pipe" });
         const status = q.match(/Status:\s*(.+)/)?.[1]?.trim() ?? "?";
         line(true, `${eng}: scheduled task installed (${status})`);
       } catch {

@@ -81,6 +81,8 @@ export function turnPrompt(ctx: TurnContext): string {
   const review = ctx.todo.lane === REVIEW_LANE ? [`This is a review: include "verdict": "accept" or "reject" in the JSON, and say why in "note".`] : [];
   // A resumed session remembers its earlier turns, but each turn starts in a fresh
   // checkout: say what carried over and what didn't.
+  // Who an action can go to: the validator drops an action whose assignee isn't one.
+  const people = Object.keys(ctx.state?.engagement?.principals ?? {});
   const continuing = ctx.session?.resumed ? [
     `This continues your session on this ${ctx.session.scope} (turn ${ctx.session.turn}). Your working directory is a fresh checkout: what the harness accepted from your earlier turns is in it, and anything that isn't was thrown away. The packet above is the current truth.`,
   ] : [];
@@ -93,12 +95,17 @@ export function turnPrompt(ctx: TurnContext): string {
     "Do one bounded piece of this todo now, then stop. Write files only inside the scope above.",
     "Finish with ONE JSON object on the last lines, nothing after it:",
     `{"done": bool, "blocker": "why you can't continue" | null, "note": "<= 280 chars for whoever picks this up next",`,
-    ` "findings": [{"assumption": "id", "direction": "supports|refutes|neutral", "grade": "opinion|reported", "source": "url or repo:path", "text": "...", "metrics": {}}],`,
-    ` "todos": [{"lane": "...", "text": "...", "tests": "assumption id", "because": "finding/ask/todo id", "kind": "task|job|wait|action", "writeScope": []}],`,
+    ` "findings": [{"assumption": "id", "direction": "supports|refutes|neutral", "grade": "opinion|reported", "source": "a URL you opened in this turn, or repo:<path> of a file in the repo", "text": "...", "metrics": {}}],`,
+    ` "todos": [{"lane": "...", "text": "...", "tests": "assumption id", "because": "finding/ask/todo id", "kind": "task|action|job|wait", "assignee": "for an action", "writeScope": []}],`,
     ` "asks": [{"question": "...", "options": [{"id": "...", "label": "...", "consequence": "what follows if chosen", "irreversible": bool}], "recommend": {"option": "id", "why": "..."}}],`,
     ` "supersede": [{"todo": "id", "reason": "..."}], "discount": [{"finding": "id", "reason": "..."}]}`,
     "An ask should be answerable from what it says: say what follows from each option, mark the ones that can't be undone, and recommend one with your reason.",
-    "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a job, wait or action that produces it.",
+    "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a todo that produces it.",
+    // The first real turns proposed jobs with no spec, and cited a "file" that was the
+    // packet; the validator dropped both. Say what each kind needs up front.
+    `Kinds: "task" is agent work (the default). "action" is something a person does or observes, with "assignee" one of: ${people.join(", ") || "the engagement's people"}. ` +
+      `"job" (an external run, with "job": {"spec": {...}}) and "wait" (for a metric, with "wait": {"source": "..."}) only when the packet names a job runner or metric source; otherwise propose an action. ` +
+      "Cite only what you read: a page you couldn't open is no source, and the packet is not a file.",
     "A blocker stops the work and asks a person. Set it only when you can't go on without them. If the todo is done, say done: true and put any doubts in the note.",
   ].join("\n");
 }
@@ -261,6 +268,9 @@ export class CopilotStream {
   private now: number;
   private limited: Capacity | null = null;
   private conn = new ConnectionWatch();
+  // Copilot 1.0.105 names the tool only when it starts, so a failure is matched back to
+  // it by call id; the log then says "web_fetch", not "tool".
+  private toolNames = new Map<string, string>();
   onLimit?: () => void; // called when Copilot reports a limit, or can't reach its service, mid-run
   constructor(say: (...lines: string[]) => void, now = Date.now()) {
     this.say = say;
@@ -331,12 +341,14 @@ export class CopilotStream {
         const what = typeof a === "string"
           ? [...a.matchAll(/\*\*\* (?:Add|Update|Delete) File: (.+)/g)].map((m) => m[1].trim()).join(", ") || short(a, 120)
           : short(a?.command ?? a?.path ?? a?.url ?? JSON.stringify(a ?? {}), 160);
+        if (d.toolCallId && d.toolName) this.toolNames.set(String(d.toolCallId), String(d.toolName));
         this.say(`→ ${d.toolTitle ?? d.toolName}${what ? `: ${what}` : ""}`);
         return;
       }
       case "tool.execution_complete": {
         const exit = d.shellExecution?.exitCode;
-        if (d.success === false) this.say(`  ✗ ${d.toolName ?? "tool"}: ${short(d.error?.message ?? d.result?.content ?? d.error, 240)}`);
+        const name = d.toolName ?? this.toolNames.get(String(d.toolCallId)) ?? "tool";
+        if (d.success === false) this.say(`  ✗ ${name}: ${short(d.error?.message ?? d.result?.content ?? d.error, 240)}`);
         else if (typeof exit === "number" && exit !== 0) this.say(`  exit ${exit}`);
         return;
       }

@@ -32,6 +32,9 @@ const STREAM = [
   ev("tool.execution_complete", { toolName: "powershell", success: true, shellExecution: { exitCode: 1 } }),
   ev("tool.execution_start", { toolName: "powershell", toolTitle: "Running command", arguments: { command: "git push" } }),
   ev("tool.execution_complete", { toolName: "powershell", success: false, error: { message: "Permission denied: shell(git push)" } }),
+  // A completion that names only the call, as 1.0.105 prints a refused web_fetch.
+  ev("tool.execution_start", { toolCallId: "call_7", toolName: "web_fetch", toolTitle: "Fetching web content", arguments: { url: "https://www.w3.org/WAI/" } }),
+  ev("tool.execution_complete", { toolCallId: "call_7", success: false, error: { message: "Permission denied because no interactive user response was available." } }),
   ev("assistant.message", { content: 'Wrote it. Tests fail on {braces} for now.\n{"done": false, "note": "tests red"}' }),
   JSON.stringify({ type: "result", exitCode: 0, usage: { premiumRequests: 1, sessionDurationMs: 14319 } }),
 ].join("\n");
@@ -52,6 +55,8 @@ test("Copilot's JSON stream: a line per step for the log, the reply from its mes
     "  exit 1",
     "→ Running command: git push",
     "  ✗ powershell: Permission denied: shell(git push)",
+    "→ Fetching web content: https://www.w3.org/WAI/",
+    "  ✗ web_fetch: Permission denied because no interactive user response was available.",
     "  Wrote it. Tests fail on {braces} for now.",
     '  {"done": false, "note": "tests red"}',
     "result: exit 0, 1 premium request, 14s",

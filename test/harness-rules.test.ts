@@ -506,7 +506,11 @@ test("Copilot CLI turns run as their seat: the role's agent and model, tools fro
   const r = agent.launch(ctx("r"));
   assert.deepEqual([r.agent, r.model], ["af-researcher", "plan-a"], "placeholders map to your plan's models");
   assert.ok(pairs(r.flags).includes("--allow-tool web_fetch") && pairs(r.flags).includes("--allow-tool write"));
+  // Copilot asks again for each site even with web_fetch allowed, and a headless turn
+  // can't answer, so every page was refused until the URLs were allowed too.
+  assert.ok(r.flags.includes("--allow-all-urls"), "web:read opens pages without a prompt nobody is there to answer");
   const y = agent.launch(ctx("y"));
+  assert.ok(!y.flags.includes("--allow-all-urls"), "no web:read, no web");
   assert.deepEqual([y.agent, y.model], [undefined, undefined], "no profile installed: no --agent; an unmapped placeholder: no --model; rather than a failed turn");
   assert.ok(pairs(y.flags).includes("--deny-tool write"), "a judge can't write");
   assert.ok(pairs(y.flags).includes("--deny-tool shell(git push)"));

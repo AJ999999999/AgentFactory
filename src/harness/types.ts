@@ -200,7 +200,10 @@ export type Effect =
   | { type: "reopen"; todo: string }
   | { type: "spawn"; goals: GoalDef[] };
 
-export type AskOption = { id: string; label: string; effect?: Effect };
+// consequence and irreversible are what the asker says will follow: shown to whoever
+// answers, never acted on. An option whose effect can't be undone is shown as such
+// whatever the asker says (see irreversibleEffect).
+export type AskOption = { id: string; label: string; effect?: Effect; consequence?: string; irreversible?: boolean };
 export type AskKind = "decision" | "approval" | "review" | "action";
 
 export type Ask = {
@@ -217,7 +220,16 @@ export type Ask = {
   urgent?: boolean;
   evidence?: string[];
   goalVersion?: number; // for questions about the goal's direction: moot once it changes
+  // What the asker would pick and why, so the question can be answered from the card.
+  // An opinion like any agent's: it informs the answer and never stands in for it.
+  recommend?: { option: string; why: string; by: string };
 };
+
+// Effects the harness can't take back once applied: a goal closed, work dropped, the
+// other options of a decision ruled out.
+export function irreversibleEffect(e: Effect | undefined): boolean {
+  return !!e && (e.type === "close" || e.type === "supersede" || e.type === "decide");
+}
 
 // ---------- turns ----------
 

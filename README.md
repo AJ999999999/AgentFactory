@@ -5,15 +5,65 @@ A git-native system for running a firm of AI agents with one human partner. It h
 This repo is the MVP. Zero dependencies. Node ≥ 22.18 (built-in TypeScript stripping, `node:sqlite`, `node:test`) and git ≥ 2.32.
 
 ```bash
-npm test                     # units, hooks, MCP, factory, load test, end-to-end scenario
-npm run demo                 # narrated end-to-end run (add --verbose for the event log)
+npm test                     # foundation, units, hooks, MCP, factory, load test, end-to-end scenarios
+npm run demo:challenge       # the foundation: a challenge from frame to tested MVP
+npm run demo                 # the delivery engine (add --verbose for the event log)
 ```
+
+## Foundation: from a hard problem to a tested MVP
+
+Everything else builds on how a team takes on a challenge: frame it, generate options from different angles, critique them, decide, and build the smallest thing that tests what the decision depends on. Every stage reads and writes typed entries in the shared context layer (`src/foundation/`).
+
+**Entries are claims, not chat.** Each entry has a type, an author and the angle it speaks for, links to what it builds on or attacks, a visibility, and a status:
+
+- types: frame, question, evidence, option, assumption, critique, score, decision, plan, experiment, artifact
+- never edited; a change is a new entry that replaces the old one, so the history of what was believed stays intact
+- stored as files in git, so they're versioned and reviewable
+
+**Angles are configured, not role-played.** An angle in `policy/angles.json` sets:
+
+- what it's scored on (its objective)
+- which evidence it reads (tags)
+- which model family runs it
+
+A prompt like "be the skeptic" changes the voice; different objectives, evidence and models change the reasoning.
+
+**Divergence is sealed.** Angles that see each other's ideas anchor on the first plausible one, the same reason people generating ideas alone beat interactive brainstorming groups. Each angle's submission goes to its own git ref, `refs/sealed/<challenge>/<angle>`, never to the main line, and only a hash of it is recorded there. At reveal every submission is checked against its hash and all of them land in one commit. A submission changed after its commitment fails the check, and a second submission from the same angle is refused.
+
+| Stage | Gate | What it prevents |
+|---|---|---|
+| Frame | the owner confirms the problem and criteria before any option exists; a challenger angle questions the frame first | solving the wrong problem; moving the goalposts later |
+| Diverge | sealed; refs to anything outside the angle's view are refused; option budget per angle | anchoring, peeking, idea floods |
+| Critique | never critique your own option; a critique needs evidence or a test, or it's discarded | self-review, critique theater |
+| Score | never score your own option; scores must carry the frozen criteria hash | self-promotion, shifting criteria |
+| Converge | only the owner decides; every rejected option needs a reason; scores inform but never pick | voting among agents whose errors are correlated |
+| Plan MVP | assumptions ranked by risk × uncertainty; the top ones become versioned basis | building what's easy instead of testing what's risky |
+| Experiment | a refuted assumption reopens the decision built on it, asks the owner, and marks pinned work stale | carrying on after the premise broke |
+
+Claims are fact-checked by lookup: `repo:` sources must exist, `entry:` sources must resolve, and prose sources stay "unverified".
+
+**The first challenge** is a real AgentFactory design question: how the cross-repo contract registry should work (`challenges/contract-registry.json`). `npm run demo:challenge` runs it from a fixture script and writes the full record to `challenges/out/contract-registry.md`. The fixture was written by one author to exercise the gates, including deliberate violations: a peek at another angle's option, an over-budget option, a self-critique, a critique with nothing behind it, a self-score and a stale criteria hash. Its content has none of the independence of a real run.
+
+**Running a challenge for real** with model-backed angles, one owner gate at a time. Each angle runs as a fresh headless Copilot CLI session that sees only its own view and can't write files:
+
+```bash
+npm run challenge -- start challenges/contract-registry.json --runner copilot
+npm run challenge -- confirm --by partner                # optionally --reframe "..."
+npm run challenge -- decide --by partner --chosen <option> --reject "<option>=<reason>" ...
+npm run challenge -- build
+npm run challenge -- experiment --assumption <id> --result supported|refuted --method "..." --evidence "..."
+npm run challenge -- report
+```
+
+State lives in git under `.af/<challenge>/`, so each command picks up where the last stopped. Model names in `policy/angles.json` (`model-a`, `model-b`, `model-c`) are placeholders; set them to the families your Copilot plan offers, and give angles that must disagree different families.
 
 ## Components
 
 | Component | File | What it does | Production swap |
 |---|---|---|---|
 | Git substrate | `src/git.ts` | Worktrees, commit trailers (`Agent`, `Basis`, `Config`, `Replay`, `Decision`), leases as refs under `refs/leases/<path>` acquired by one atomic push with `--force-with-lease=<ref>:` | GitHub Enterprise remote; same mechanics |
+| Entries and sealed reveal | `src/foundation/entries.ts`, `seal.ts` | Typed append-only claims; per-angle sealed refs with hash commitments; views scoped by angle and evidence tags; dependents across versions | Same |
+| Challenge process | `src/foundation/process.ts`, `runners.ts`, `cli.ts` | Frame → diverge → reveal → critique → score → converge → plan MVP → build → experiment, with the gates above; scripted and Copilot CLI angle runners | Same, with the Copilot SDK |
 | Shared context layer | `src/context.ts` | Versioned task basis, content-addressed source snapshots, per-role context bundles, `context.lock.json` per artifact | Same files; snapshot importers per source system |
 | Decision records | `src/decisions.ts` | Chosen + rejected options, bound paths, staleness when bound paths change | Same |
 | Index | `src/store.ts` | SQLite index rebuilt from committed git objects; disposable | Postgres fed by webhooks |

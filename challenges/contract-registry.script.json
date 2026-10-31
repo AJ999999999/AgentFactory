@@ -1,0 +1,100 @@
+{
+  "_note": "Fixture content for a scripted run, written by one author. It exercises the mechanics and includes deliberate violations for the gates to catch. It has none of the independence of a model-backed run.",
+  "challenge_frame": {
+    "challenger": [
+      { "type": "question", "refs": ["lead.F1"], "body": { "text": "Is the registry the problem, or undeclared coupling? If every consumer used a client generated from a pinned contract, most breakage would show up at build time without a registry service.", "reframe": "How do we make every cross-repo dependency declared, pinned and checked, so a breaking change is caught where it happens?" } }
+    ]
+  },
+  "diverge": {
+    "user-value": [
+      { "type": "option", "localId": "o", "body": { "title": "Consumer expectations first", "summary": "Each consumer publishes expectation tests for the fields and behaviour it relies on. A producer change runs every consumer's tests before merge (can-i-deploy). The registry stores contracts, consumers and their tests." } },
+      { "type": "assumption", "refs": ["o"], "body": { "text": "Consumers will keep their expectation tests current", "risk": 4, "uncertainty": 4, "test": "Count expectation tests updated per contract change over two weeks of agent work" } },
+      { "type": "assumption", "refs": ["o"], "body": { "text": "Expectation tests catch semantic changes when they assert example values", "risk": 5, "uncertainty": 2, "test": "Mutation test: change a unit in an example and confirm a consumer test fails" } }
+    ],
+    "feasibility": [
+      { "type": "option", "localId": "o1", "body": { "title": "Schema-diff gate in CI", "summary": "Contracts live as files in the control repo. CI runs oasdiff, buf breaking or JSON Schema compatibility on every change and routes breaking ones by decision rights. The registry is an index of files and owners." } },
+      { "type": "assumption", "refs": ["o1"], "body": { "text": "Structural diffs catch most breaking changes in our engagements", "risk": 4, "uncertainty": 3, "test": "Replay the last 20 interface changes and count breaks the diff misses" } },
+      { "type": "option", "localId": "o2", "body": { "title": "Generated clients, no registry service", "summary": "Consumers generate clients from the producer's contract at a pinned version, so undeclared usage fails at build time. A contract bump is an ordinary basis change the Observator already tracks." } },
+      { "type": "option", "localId": "o3", "body": { "title": "Weekly contract review", "summary": "A standing review of all interface changes once a week." } }
+    ],
+    "risk": [
+      { "type": "option", "localId": "o", "body": { "title": "Semantic contracts with examples", "summary": "Design-first contracts carry units, invariants and worked examples. Consumers pin a version and generate clients. Any change to semantics or examples counts as breaking until every consumer's example-based tests pass." } },
+      { "type": "assumption", "refs": ["o"], "body": { "text": "Agents will write semantic annotations and examples for each contract", "risk": 3, "uncertainty": 4, "test": "Check the next 10 contracts written by agents for units, invariants and examples" } }
+    ],
+    "contrarian": [
+      { "type": "option", "localId": "o", "body": { "title": "Monorepo per engagement", "summary": "Put an engagement's repos in one monorepo so interface changes are atomic commits. Keep a registry only for client-owned interfaces." } },
+      { "type": "assumption", "refs": ["o"], "body": { "text": "Clients will accept a monorepo per engagement", "risk": 5, "uncertainty": 5, "test": "Ask the owners of the two active engagements" } },
+      { "type": "option", "refs": ["risk.O1"], "body": { "title": "Lighter semantic contracts", "summary": "Like the risk angle's idea, minus the examples." } }
+    ],
+    "outside-view": [
+      { "type": "evidence", "localId": "e", "body": { "source": "text:design reasoning", "text": "Hand-written expectation tests are a maintenance cost on every consumer; tests generated from contract examples avoid most of it.", "tags": ["prior-art"] } },
+      { "type": "option", "localId": "o", "refs": ["e"], "body": { "title": "Existing tools behind a thin registry", "summary": "Use schema-diff tools and consumer-driven tests as they are. The registry stores only pointers, owners and pins, so there's nothing new to maintain." } },
+      { "type": "assumption", "refs": ["o"], "body": { "text": "Existing tools can run inside each engagement's walls without a shared broker", "risk": 4, "uncertainty": 4, "test": "Run one engagement's contract tests with no network access to other engagements" } }
+    ]
+  },
+  "critique": {
+    "user-value": [
+      { "type": "critique", "refs": ["outside-view.O1"], "body": { "text": "Pointers and owners don't tell a consumer what changed for them; someone still has to read a diff before acting.", "severity": "medium", "test": "Show three consumers a pointer-only change notice and ask whether they can act on it" } },
+      { "type": "critique", "refs": ["feasibility.O1"], "body": { "text": "Unit changes slip through schema diffs.", "severity": "high", "evidenceRefs": ["lead.E3"] } }
+    ],
+    "feasibility": [
+      { "type": "critique", "refs": ["user-value.O1"], "body": { "text": "Hand-written expectation tests rot, and every consumer carries the cost.", "severity": "medium", "test": "Count expectation tests updated per contract change over two weeks" } }
+    ],
+    "risk": [
+      { "type": "critique", "refs": ["feasibility.O1"], "body": { "text": "Structural diffs miss semantic changes: a unit switch keeps the schema identical.", "severity": "high", "evidenceRefs": ["lead.E3"] } },
+      { "type": "critique", "refs": ["contrarian.O1"], "body": { "text": "Client-owned repos often can't merge into a monorepo, so this fails exactly where breakage hurts most.", "severity": "high", "test": "Ask the owners of the two active engagements" } },
+      { "type": "critique", "refs": ["risk.O1"], "body": { "text": "Our annotations might drift.", "severity": "low", "test": "Audit annotations monthly" } }
+    ],
+    "contrarian": [
+      { "type": "critique", "refs": ["outside-view.O1"], "body": { "text": "Any shared broker crosses client walls.", "severity": "medium" } }
+    ],
+    "outside-view": [
+      { "type": "critique", "refs": ["risk.O1"], "body": { "text": "Annotations nobody executes drift from the code; examples must run as tests or they rot.", "severity": "medium", "test": "Mutation test: change a unit in an example and confirm a consumer test fails" } }
+    ]
+  },
+  "score": {
+    "user-value": [
+      { "type": "score", "body": { "option": "feasibility.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 2, "cost_to_run": 4, "fits_walls": 4, "time_to_mvp": 5 } } },
+      { "type": "score", "body": { "option": "feasibility.O2", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 4, "time_to_mvp": 4 } } },
+      { "type": "score", "body": { "option": "risk.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 5, "cost_to_run": 3, "fits_walls": 4, "time_to_mvp": 3 } } },
+      { "type": "score", "body": { "option": "contrarian.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 1, "time_to_mvp": 3 } } },
+      { "type": "score", "body": { "option": "outside-view.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 4, "fits_walls": 3, "time_to_mvp": 4 } } }
+    ],
+    "feasibility": [
+      { "type": "score", "body": { "option": "user-value.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 2, "fits_walls": 4, "time_to_mvp": 2 } } },
+      { "type": "score", "body": { "option": "feasibility.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 5, "cost_to_run": 5, "fits_walls": 5, "time_to_mvp": 5 } } },
+      { "type": "score", "body": { "option": "risk.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 5, "cost_to_run": 3, "fits_walls": 4, "time_to_mvp": 2 } } },
+      { "type": "score", "body": { "option": "contrarian.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 5, "fits_walls": 1, "time_to_mvp": 4 } } },
+      { "type": "score", "body": { "option": "outside-view.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 4, "fits_walls": 3, "time_to_mvp": 4 } } }
+    ],
+    "risk": [
+      { "type": "score", "body": { "option": "user-value.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 2, "fits_walls": 4, "time_to_mvp": 3 } } },
+      { "type": "score", "body": { "option": "feasibility.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 2, "cost_to_run": 5, "fits_walls": 4, "time_to_mvp": 5 } } },
+      { "type": "score", "body": { "option": "feasibility.O2", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 4, "time_to_mvp": 4 } } },
+      { "type": "score", "body": { "option": "contrarian.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 1, "time_to_mvp": 3 } } },
+      { "type": "score", "body": { "option": "outside-view.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 3, "fits_walls": 3, "time_to_mvp": 4 } } }
+    ],
+    "contrarian": [
+      { "type": "score", "body": { "option": "user-value.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 2, "fits_walls": 3, "time_to_mvp": 2 } } },
+      { "type": "score", "body": { "option": "feasibility.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 2, "cost_to_run": 5, "fits_walls": 4, "time_to_mvp": 5 } } },
+      { "type": "score", "body": { "option": "feasibility.O2", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 5, "fits_walls": 4, "time_to_mvp": 4 } } },
+      { "type": "score", "body": { "option": "risk.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 2, "fits_walls": 4, "time_to_mvp": 2 } } },
+      { "type": "score", "body": { "option": "outside-view.O1", "criteriaHash": "stale-criteria", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 2, "time_to_mvp": 4 } } }
+    ],
+    "outside-view": [
+      { "type": "score", "body": { "option": "user-value.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 4, "cost_to_run": 2, "fits_walls": 4, "time_to_mvp": 2 } } },
+      { "type": "score", "body": { "option": "feasibility.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 2, "cost_to_run": 4, "fits_walls": 4, "time_to_mvp": 5 } } },
+      { "type": "score", "body": { "option": "feasibility.O2", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 4, "time_to_mvp": 4 } } },
+      { "type": "score", "body": { "option": "risk.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 5, "cost_to_run": 3, "fits_walls": 4, "time_to_mvp": 3 } } },
+      { "type": "score", "body": { "option": "contrarian.O1", "criteriaHash": "$CRITERIA_HASH", "scores": { "catches_breaking": 3, "cost_to_run": 4, "fits_walls": 1, "time_to_mvp": 3 } } }
+    ]
+  },
+  "assumptions": {
+    "lead": [
+      { "type": "assumption", "refs": ["risk.O1"], "body": { "text": "Consumer tests generated from contract examples catch unit changes that schema diffs miss", "risk": 5, "uncertainty": 3, "test": "Mutation test: change a unit in one example and confirm the generated consumer test fails" } },
+      { "type": "assumption", "refs": ["risk.O1"], "body": { "text": "Treating every semantic or example change as breaking won't flood owners with briefs", "risk": 3, "uncertainty": 4, "test": "Replay a month of contract changes and count the escalations" } },
+      { "type": "assumption", "refs": ["risk.O1"], "body": { "text": "Contract files in the control repo can be pinned like any other basis", "risk": 2, "uncertainty": 2, "test": "Pin one contract in a lockfile and bump it" } },
+      { "type": "assumption", "refs": ["user-value.O1"], "body": { "text": "Consumers will review expectation tests weekly", "risk": 3, "uncertainty": 3, "test": "Track reviews" } }
+    ]
+  }
+}

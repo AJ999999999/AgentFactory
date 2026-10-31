@@ -33,6 +33,11 @@ export class Git {
     return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   }
 
+  // Plumbing commands that read stdin (hash-object --stdin, mktree).
+  runInput(args: string[], input: string): string {
+    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim();
+  }
+
   async runAsync(args: string[]): Promise<string> {
     const { stdout } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
     return stdout.trim();

@@ -1,0 +1,60 @@
+{
+  "_note": "An angle is configured, not role-played: what it is scored on (objective), what it reads (evidence tags), which model family runs it, and when it can see others' work. Angles with the same model and the same reading share blind spots, so spread models across angles that must disagree.",
+  "angles": {
+    "user-value": {
+      "title": "User value",
+      "objective": "Maximize value to the people who will use the result. Judge every option by the problems they actually have, not by elegance.",
+      "reads": ["users", "needs"],
+      "model": "model-a"
+    },
+    "feasibility": {
+      "title": "Feasibility",
+      "objective": "Find the smallest thing that works with what exists today. Judge by effort, dependencies and time to a working MVP.",
+      "reads": ["code", "constraints"],
+      "model": "model-b"
+    },
+    "risk": {
+      "title": "Risk",
+      "objective": "Find how each option fails: correctness, security, irreversible mistakes, and failures that pass every check.",
+      "reads": ["incidents", "risk", "code"],
+      "model": "model-c"
+    },
+    "cost": {
+      "title": "Cost",
+      "objective": "Total cost to build and run, including model tokens, CI time and the owner's attention.",
+      "reads": ["cost", "constraints"],
+      "model": "model-b"
+    },
+    "contrarian": {
+      "title": "Contrarian",
+      "objective": "Argue for not building it, for buying instead, or for the cheapest path that makes the problem go away.",
+      "reads": [],
+      "model": "model-a"
+    },
+    "outside-view": {
+      "title": "Outside view",
+      "objective": "How did similar efforts go elsewhere? Use base rates and known patterns, not this team's optimism.",
+      "reads": ["prior-art"],
+      "model": "model-c"
+    },
+    "challenger": {
+      "title": "Frame challenger",
+      "objective": "Question whether this is the right problem before anyone solves it. Propose reframes as questions to the owner.",
+      "reads": [],
+      "model": "model-b"
+    },
+    "lead": {
+      "title": "Lead",
+      "objective": "After the owner decides, list what the chosen option depends on being true, with risk and uncertainty for each.",
+      "reads": [],
+      "model": "model-a"
+    }
+  },
+  "stages": {
+    "challenge_frame": { "allowed": ["question"], "instructions": "Read the frame. Return questions that challenge whether this is the right problem. Each question: body.text, body.reframe (optional alternative problem statement), refs to the frame." },
+    "diverge": { "allowed": ["option", "assumption", "evidence", "question"], "instructions": "Working alone, propose options that best serve your objective. Each option: body.title, body.summary. For each option, list the assumptions it depends on (body.text, body.risk 1-5, body.uncertainty 1-5, refs to the option via its localId). Cite evidence with body.source (repo:<path>, entry:<id> or text:<description>)." },
+    "critique": { "allowed": ["critique", "evidence"], "instructions": "Critique other angles' options, never your own. Each critique: refs to the option, body.text, body.severity (low|medium|high), and either body.evidenceRefs (evidence entry ids) or body.test (how to check the claim). A critique with neither is discarded." },
+    "score": { "allowed": ["score"], "instructions": "Score every option you didn't propose against each criterion, 1-5. Each score: refs to the option, body.option, body.scores {criterionId: n}, body.criteriaHash from the frame." },
+    "assumptions": { "allowed": ["assumption"], "instructions": "List what the chosen option depends on being true. Each: body.text, body.risk 1-5, body.uncertainty 1-5, body.test (the cheapest experiment that would refute it), refs to the chosen option." }
+  }
+}

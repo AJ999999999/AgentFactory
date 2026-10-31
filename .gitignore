@@ -9,3 +9,7 @@ DEMO-OUTPUT.txt
 
 # Private engagements are excluded locally in .git/info/exclude (see README),
 # so this public file never names them.
+
+# Challenge runs and generated records
+.af/
+challenges/out/

@@ -35,7 +35,7 @@ import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.t
 import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
 import type { Budget, EngagementDef, Finding, HEvent, TodoDraft, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
-import { criteriaHash, validateTurn } from "./validate.ts";
+import { budgetProblem, criteriaHash, validateTurn } from "./validate.ts";
 import type { Clock, World } from "./world.ts";
 
 const MIN = 60_000;
@@ -98,6 +98,9 @@ export class Harness {
     const basisNames = new Set<string>();
     for (const g of goals) {
       if (!safeId(g.id)) throw new Error(`bad goal id ${g.id}`);
+      // Every pool of turns starts here, with the partner: nothing later can create one.
+      const unbudgeted = budgetProblem(g.id, g.budget);
+      if (unbudgeted) throw new Error(unbudgeted);
       events.push({ id: eid("goal", g.id), at: now, by, type: "goal_opened", goal: g, criteriaHash: criteriaHash(g) });
       for (const [i, d] of (g.todos ?? []).entries()) {
         const id = d.id ?? eid(g.id, "seed", i);

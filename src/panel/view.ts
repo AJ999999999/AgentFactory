@@ -57,6 +57,7 @@ export type EngagementView = {
   goals: GoalView[];
   asks: AskView[];
   runners: RunnerView[];
+  folder?: string; // where it was opened, when the panel shows more than one folder
   error?: string;
 };
 

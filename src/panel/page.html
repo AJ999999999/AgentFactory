@@ -207,6 +207,7 @@ main {
 .eng-head { display: flex; align-items: center; gap: 12px; }
 .eng-head h2 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 400; flex: 1; min-width: 0; display: flex; gap: 10px; align-items: baseline; }
 .eng-head h2 .call { font-size: 20px; white-space: nowrap; flex: none; }
+.eng-head .folder { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .eng-head h2 .title { font-size: 14px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .beat { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); font-stretch: 87%; white-space: nowrap; }
 .beat i { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
@@ -684,11 +685,15 @@ function goalBlock(e, g) {
       h("i", { class: `tick r-${t.result} g-${t.granularity}`, title: `${day(t.at)} · ${t.result}${t.granularity !== "none" ? `, ${t.granularity}` : ""}\n${t.text}${t.reasons.length ? `\n${t.reasons.join("\n")}` : ""}` }))) : null);
 }
 
+const baseName = (p) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+
 function engBlock(e, now) {
   const btn = h("button", { class: "toggle", onclick: () => setPaused(e, !e.paused, btn) }, e.paused ? "Resume" : "Pause");
   return h("section", { class: `eng${e.paused ? " paused" : ""}`, "data-eng": e.id },
     h("div", { class: "eng-head" },
       h("h2", null, h("span", { class: "call" }, e.id), h("span", { class: "title", title: e.title }, e.title)),
+      // Which project folder it's from, once there's more than one (unless its name says so).
+      e.folder && ui.data.dirs && ui.data.dirs.length > 1 && !e.id.endsWith(`@${baseName(e.folder)}`) ? h("span", { class: "folder", title: e.folder }, baseName(e.folder)) : null,
       beat(e, now), btn),
     e.error ? h("div", { class: "eng-err", role: "alert" }, e.error) : null,
     h("div", { class: "goals" }, e.goals.map((g) => goalBlock(e, g))));
@@ -708,8 +713,8 @@ function render() {
   // No engagements at all: say where the panel looked and how to start, in the space
   // the questions would take.
   const none = !d.engagements.length && h("div", { class: "empty" },
-    h("p", null, "No engagements in ", h("code", { class: "path" }, d.dir), "."),
-    h("p", null, "Open one with ", h("code", null, "npm run harness -- open <engagement.json>"), ", or start the panel where your engagements are: ", h("code", null, "npm run panel -- --dir <folder>"), "."),
+    h("p", null, "No engagements in ", ...(d.dirs || [d.dir]).flatMap((x, i) => [i ? ", " : null, h("code", { class: "path" }, x)]), "."),
+    h("p", null, "Open one with ", h("code", null, "npm run harness -- open <engagement.json>"), "; the panel finds it next time it starts. Or name the folders: ", h("code", null, "npm run panel -- --dir <folder> --dir <another>"), "."),
     h("p", null, "To look around first: ", h("code", null, "npm run panel -- --demo"), "."));
   const rack = document.getElementById("rack");
   rack.replaceChildren(...(none ? [none] : asks.length

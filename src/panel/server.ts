@@ -19,7 +19,7 @@ import { SystemClock } from "../harness/world.ts";
 import type { EngagementView, RunnerView } from "./view.ts";
 import { engagementView } from "./view.ts";
 
-export type PanelOptions = { dir: string; policy: HarnessPolicy; port?: number; log?: (line: string) => void };
+export type PanelOptions = { dir: string | string[]; policy: HarnessPolicy; port?: number; log?: (line: string) => void };
 export type Panel = { url: string; port: number; token: string; close: () => Promise<void> };
 
 const PAGE = path.join(import.meta.dirname, "page.html");
@@ -31,39 +31,72 @@ export class BadRequest extends Error {}
 // The panel never runs turns; the loop does.
 const noTurns: TurnAgent = { name: "panel", run: async () => { throw new Error("the panel doesn't run turns"); } };
 
+// One engagement the panel shows: where it lives, and the name the page uses for it.
+// That name is the engagement's id, unless two folders hold engagements with the same
+// id; then each gets its folder's name after it.
+type Entry = { key: string; id: string; dir: string };
+
 export class Workspace {
-  dir: string;
+  dirs: string[];
   policy: HarnessPolicy;
   private harnesses = new Map<string, Harness>();
   private lastGood = new Map<string, EngagementView>();
-  constructor(dir: string, policy: HarnessPolicy) {
-    this.dir = dir;
+  constructor(dirs: string | string[], policy: HarnessPolicy) {
+    this.dirs = typeof dirs === "string" ? [dirs] : dirs;
     this.policy = policy;
   }
 
-  root(): string {
-    return path.join(this.dir, ".af", "harness");
+  get dir(): string {
+    return this.dirs[0];
+  }
+
+  // Read fresh each time: an engagement opened while the panel runs shows up.
+  entries(): Entry[] {
+    const found: Array<{ id: string; dir: string }> = [];
+    for (const dir of this.dirs) {
+      const root = path.join(dir, ".af", "harness");
+      if (!fs.existsSync(root)) continue;
+      for (const id of fs.readdirSync(root).filter((e) => fs.existsSync(path.join(root, e, "config.json"))).sort()) found.push({ id, dir });
+    }
+    const used = new Set<string>();
+    return found.map(({ id, dir }) => {
+      let key = found.filter((f) => f.id === id).length > 1 ? `${id}@${path.basename(dir)}` : id;
+      for (let n = 2; used.has(key); n++) key = `${id}@${path.basename(dir)}-${n}`;
+      used.add(key);
+      return { key, id, dir };
+    });
   }
 
   ids(): string[] {
-    const root = this.root();
-    if (!fs.existsSync(root)) return [];
-    return fs.readdirSync(root).filter((e) => fs.existsSync(path.join(root, e, "config.json"))).sort();
+    return this.entries().map((e) => e.key);
   }
 
-  harness(id: string): Harness {
-    if (!this.ids().includes(id)) throw new BadRequest(`no engagement ${id}`);
-    let h = this.harnesses.get(id);
+  private entry(key: string): Entry {
+    const e = this.entries().find((x) => x.key === key);
+    if (!e) throw new BadRequest(`no engagement ${key}`);
+    return e;
+  }
+
+  private home(e: Entry): string {
+    return path.join(e.dir, ".af", "harness", e.id);
+  }
+
+  harness(key: string): Harness {
+    const e = this.entry(key);
+    // Cached by place, not by name: a name can move to another engagement when a
+    // folder is added, a place can't.
+    const home = this.home(e);
+    let h = this.harnesses.get(home);
     if (!h) {
-      const cfg = JSON.parse(fs.readFileSync(path.join(this.root(), id, "config.json"), "utf8")) as { repo: string };
-      h = new Harness({ control: new Git(cfg.repo), engagement: id, policy: this.policy, clock: new SystemClock(), world: {}, agent: noTurns, worktreeRoot: path.join(this.root(), id, "wt") });
-      this.harnesses.set(id, h);
+      const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")) as { repo: string };
+      h = new Harness({ control: new Git(cfg.repo), engagement: e.id, policy: this.policy, clock: new SystemClock(), world: {}, agent: noTurns, worktreeRoot: path.join(home, "wt") });
+      this.harnesses.set(home, h);
     }
     return h;
   }
 
-  runners(id: string): RunnerView[] {
-    const dir = path.join(this.root(), id);
+  runners(key: string): RunnerView[] {
+    const dir = this.home(this.entry(key));
     const out: RunnerView[] = [];
     for (const f of fs.readdirSync(dir).filter((x) => x.startsWith("heartbeat-") && x.endsWith(".json"))) {
       try {
@@ -78,20 +111,21 @@ export class Workspace {
 
   // Every engagement, read fresh from git. One that can't be read (remote down) shows
   // what was last read, with the error.
-  async snapshot(): Promise<{ now: number; dir: string; engagements: EngagementView[] }> {
+  async snapshot(): Promise<{ now: number; dir: string; dirs: string[]; engagements: EngagementView[] }> {
     const now = Date.now();
-    const engagements = await Promise.all(this.ids().map(async (id) => {
+    const engagements = await Promise.all(this.entries().map(async (e) => {
+      const home = this.home(e);
       try {
-        const v = engagementView(await this.harness(id).state(), id, now, this.runners(id));
-        this.lastGood.set(id, v);
+        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key)), folder: e.dir };
+        this.lastGood.set(home, v);
         return v;
-      } catch (e) {
-        const msg = (e as Error).message.split("\n")[0].slice(0, 300);
-        const last = this.lastGood.get(id);
-        return last ? { ...last, error: msg } : { id, title: id, paused: null, goals: [], asks: [], runners: this.runners(id), error: msg };
+      } catch (err) {
+        const msg = (err as Error).message.split("\n")[0].slice(0, 300);
+        const last = this.lastGood.get(home);
+        return last ? { ...last, id: e.key, error: msg } : { id: e.key, title: e.key, paused: null, goals: [], asks: [], runners: this.runners(e.key), error: msg, folder: e.dir };
       }
     }));
-    return { now, dir: this.dir, engagements };
+    return { now, dir: this.dir, dirs: this.dirs, engagements };
   }
 }
 

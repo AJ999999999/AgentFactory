@@ -3,3 +3,8 @@
 * text=auto eol=lf
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
+
+# Config that every branch grows: merge by key, so two new keys at the end of the
+# file don't conflict. The driver is set per clone by `npm run setup`.
+policy/*.json merge=jsonkeys
+package.json merge=jsonkeys

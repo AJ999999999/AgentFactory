@@ -515,6 +515,8 @@ export class Harness {
     // The turn as it runs, for the panel: a marker, a log and a way to ask it to stop.
     // Wall-clock times: these are about the real process, not the engagement's clock.
     const turnMs = this.policy.claims.turnTimeoutMinutes * MIN;
+    // What the merge queue checks again if main moved while the turn ran.
+    let kept: string[] = [];
     const live = this.live?.start({ turn: turnId, todo: t.id, goal: t.goal, text: t.text, runner: runner.id, role: seat?.role, pid: process.pid, startedAt: Date.now(), until: Date.now() + turnMs + MIN });
     try {
       await this.coord.transaction({
@@ -587,6 +589,7 @@ export class Harness {
           } else {
             const { failures, checked } = await this.runCheckers(wtDir, t, files);
             const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}), seat: seatState });
+            if (v.result !== "validation_failed") kept = files;
             if (v.result === "validation_failed") await discard(wt);
             else if (t.artifact && t.pins?.length && v.result === "completed") {
               writeLockfile(wtDir, {
@@ -600,6 +603,7 @@ export class Harness {
           // A turn that outlived its claim must not overwrite whoever took over.
           if (!capacity && !(await this.claims.holds(claim))) {
             await discard(wt);
+            kept = [];
             events = [turnEvent(turnId, t, runner.id, now, why, "claim_lost", ["claim expired before writeback"], files, seat?.key)];
           }
           // Scratch never lands in history.
@@ -616,6 +620,15 @@ export class Harness {
             message: `turn ${t.id}: ${rec.result} (${rec.granularity})`,
             trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, ...(seat ? { Seat: `${seat.key} ${seat.template}${seat.probation ? " (probation)" : ""}` } : {}), Result: rec.result },
           };
+        },
+        recheck: {
+          run: async (wtDir) => (kept.length ? (await this.runCheckers(wtDir, t, kept)).failures : []),
+          onFail: async (wtDir, _wt, failures) => {
+            const reasons = failures.map((f) => `after rebasing onto newer work: ${f}`);
+            writeEventFiles(wtDir, this.engagement, [turnEvent(turnId, t, runner.id, now, why, "validation_failed", reasons, kept, seat?.key)]);
+            summary = { todo: t.id, result: "validation_failed", granularity: "none", reasons };
+            return { message: `turn ${t.id}: validation_failed (none)`, trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, Result: "validation_failed" } };
+          },
         },
       });
     } finally {

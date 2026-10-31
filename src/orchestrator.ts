@@ -12,7 +12,19 @@ import { configRef } from "./agents/runner.ts";
 import type { LogFn } from "./util.ts";
 import { Mutex, Semaphore } from "./util.ts";
 
-export type TxResult = { id: string; sha: string | null; waitedForLease: boolean; startedAt: number; endedAt: number; costTokens: number };
+export type TxResult = { id: string; sha: string | null; waitedForLease: boolean; startedAt: number; endedAt: number; costTokens: number; recheckFailures?: string[] };
+
+type WorkOut = { message: string; trailers: Record<string, string | string[]>; costTokens?: number; committed?: boolean };
+
+// Checks to run again when the merge queue rebases a change onto work that landed
+// after it started. Disjoint leases keep the rebase free of text conflicts, but the
+// rebased tree is a combination nobody has checked yet.
+export type Recheck = {
+  run: (wtDir: string, wt: Git) => Promise<string[]>;
+  // The worktree has been reset to the latest main. Write what should land instead
+  // (a record of the failure), or return null to land nothing.
+  onFail: (wtDir: string, wt: Git, failures: string[]) => Promise<WorkOut | null>;
+};
 
 export class Coordinator {
   control: Git;
@@ -40,7 +52,8 @@ export class Coordinator {
     lockPaths: string[];
     leaseTtlMs?: number; // must outlast the work, or another runner may reap the lease mid-turn
     // Return null for no change; set committed when the work made its own commit (e.g. git revert).
-    work: (wtDir: string, wt: Git) => Promise<{ message: string; trailers: Record<string, string | string[]>; costTokens?: number; committed?: boolean } | null>;
+    work: (wtDir: string, wt: Git) => Promise<WorkOut | null>;
+    recheck?: Recheck;
   }): Promise<TxResult> {
     const release = await this.slots.acquire();
     const startedAt = Date.now();
@@ -63,12 +76,13 @@ export class Coordinator {
       this.log("session_start", { task: t.id, agent: t.identity.name });
       const out = await t.work(wtDir, wt);
       let sha: string | null = null;
+      let recheckFailures: string[] | undefined;
       if (out) {
         sha = out.committed ? await wt.runAsync(["rev-parse", "HEAD"]) : await wt.commitAll(out.message, out.trailers);
-        if (sha) sha = await this.merge(wt, t.id);
+        if (sha) ({ sha, recheckFailures } = await this.merge(wt, wtDir, t.id, t.recheck));
       }
       this.log("session_end", { task: t.id, sha });
-      return { id: t.id, sha, waitedForLease: waited, startedAt, endedAt: Date.now(), costTokens: out?.costTokens ?? 0 };
+      return { id: t.id, sha, waitedForLease: waited, startedAt, endedAt: Date.now(), costTokens: out?.costTokens ?? 0, ...(recheckFailures ? { recheckFailures } : {}) };
     } finally {
       if (lease) {
         await this.leases.release(lease);
@@ -80,19 +94,34 @@ export class Coordinator {
   }
 
   // Merge queue: one merge at a time; rebase onto the latest main, then push.
-  // Disjoint leases mean rebases never conflict on content.
-  private merge(wt: Git, id: string): Promise<string> {
+  // Disjoint leases mean rebases never conflict on text, but not that the result
+  // works: when main moved since the work started, the checks run again on the
+  // rebased tree, and a change that fails them is replaced by its onFail record.
+  private merge(wt: Git, wtDir: string, id: string, recheck?: Recheck): Promise<{ sha: string | null; recheckFailures?: string[] }> {
     return this.mergeQueue.run(async () => {
+      let recheckFailures: string[] | undefined;
       for (let attempt = 0; attempt < 5; attempt++) {
         await fetchOrigin(wt);
+        const tip = await wt.runAsync(["rev-parse", "origin/main"]);
+        const moved = (await wt.runAsync(["merge-base", "HEAD", "origin/main"])) !== tip;
         await wt.runAsync(["rebase", "-q", "origin/main"]);
+        if (moved && recheck && !recheckFailures) {
+          const failures = await recheck.run(wtDir, wt);
+          if (failures.length) {
+            recheckFailures = failures;
+            this.log("recheck_failed", { task: id, failures });
+            await wt.runAsync(["reset", "-q", "--hard", "origin/main"]);
+            const out = await recheck.onFail(wtDir, wt, failures);
+            if (!out || !(await wt.commitAll(out.message, out.trailers))) return { sha: null, recheckFailures };
+          }
+        }
         // push also rewrites the local refs/remotes/origin/main, so it shares the
         // repository lock with fetch (otherwise: "cannot lock ref ... expected ...").
         const push = await repoLock(wt).run(() => wt.tryAsync(["push", "-q", "origin", "HEAD:main"]));
         if (push.ok) {
           const sha = await wt.runAsync(["rev-parse", "HEAD"]);
           this.log("merged", { task: id, sha: sha.slice(0, 8) });
-          return sha;
+          return { sha, ...(recheckFailures ? { recheckFailures } : {}) };
         }
       }
       throw new Error(`merge failed for ${id}`);

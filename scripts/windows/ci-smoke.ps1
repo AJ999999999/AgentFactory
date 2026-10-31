@@ -111,8 +111,9 @@ $autocrlf = & git -C $control config --get core.autocrlf
 if ($autocrlf -ne "false") { Fail "the control repo converts line endings (core.autocrlf=$autocrlf)" }
 
 # 5. The doctor should pass now: node, git, copilot (through the .cmd shim), remote,
-#    heartbeat and the installed task.
-$doc = & node --no-warnings $cli doctor --copilot $copilot 2>&1 | Out-String
+#    heartbeat and the installed task. The judges' model maps to Claude Code, which this
+#    runner doesn't have: the fake CLI stands in for it, so doctor checks it's found.
+$doc = & node --no-warnings $cli doctor --copilot $copilot --claude $copilot 2>&1 | Out-String
 $docExit = $LASTEXITCODE
 Write-Host $doc
 if ($docExit) { Fail "doctor failed:`n$doc" }

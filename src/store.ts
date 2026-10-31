@@ -6,6 +6,8 @@ import { log } from "./git.ts";
 import { LOCKFILE, parseBasisRef } from "./context.ts";
 import type { BasisRecord, Lockfile } from "./context.ts";
 import type { DecisionRecord } from "./decisions.ts";
+import { ESCALATIONS_DIR } from "./escalation-log.ts";
+import type { EscalationEvent } from "./escalation-log.ts";
 
 export type Breakpoint = {
   artifact: string;
@@ -29,11 +31,12 @@ export class Index {
       create table if not exists decisions(id text primary key, kind text, subject text, status text, bound_commit text);
       create table if not exists commits(sha text primary key, author text, agent text, subject text, reverts text, replay text);
       create table if not exists commit_basis(sha text, ref text);
+      create table if not exists escalation_events(proposal_id text, seq text, type text, at text, data text, primary key(proposal_id, seq));
     `);
   }
 
   rebuild(git: Git, rev = "HEAD"): this {
-    this.db.exec("delete from basis; delete from lockfiles; delete from pins; delete from decisions; delete from commits; delete from commit_basis;");
+    this.db.exec("delete from basis; delete from lockfiles; delete from pins; delete from decisions; delete from commits; delete from commit_basis; delete from escalation_events;");
     this.rev = git.run(["rev-parse", rev]);
     const files = git.listFiles(rev);
 
@@ -41,6 +44,7 @@ export class Index {
     const insLock = this.db.prepare("insert into lockfiles values (?, ?, ?, ?, ?)");
     const insPin = this.db.prepare("insert into pins values (?, ?, ?, ?)");
     const insDec = this.db.prepare("insert into decisions values (?, ?, ?, ?, ?)");
+    const insEsc = this.db.prepare("insert into escalation_events values (?, ?, ?, ?, ?)");
 
     for (const f of files) {
       if (f.startsWith(".agents/context/basis/") && f.endsWith(".json")) {
@@ -56,6 +60,10 @@ export class Index {
       } else if (f.startsWith(".agents/decisions/") && f.endsWith(".json")) {
         const d = JSON.parse(git.show(rev, f)) as DecisionRecord;
         insDec.run(d.id, d.kind, d.subject, d.status, d.boundCommit);
+      } else if (f.startsWith(`${ESCALATIONS_DIR}/`) && f.endsWith(".json")) {
+        const text = git.show(rev, f);
+        const e = JSON.parse(text) as EscalationEvent;
+        insEsc.run(e.proposalId, f.slice(f.lastIndexOf("/") + 1, -".json".length), e.type, e.at, text);
       }
     }
 
@@ -101,6 +109,14 @@ export class Index {
       const p = parseBasisRef(r.ref);
       return (cur.get(`${p.task}/${p.name}`) ?? 0) > p.version;
     });
+  }
+
+  // Escalation events in order, optionally for one proposal (the calibration report reads these).
+  escalationEvents(proposalId?: string): EscalationEvent[] {
+    const rows = (proposalId
+      ? this.db.prepare("select data from escalation_events where proposal_id = ? order by seq").all(proposalId)
+      : this.db.prepare("select data from escalation_events order by proposal_id, seq").all()) as Array<{ data: string }>;
+    return rows.map((r) => JSON.parse(r.data) as EscalationEvent);
   }
 
   close(): void {

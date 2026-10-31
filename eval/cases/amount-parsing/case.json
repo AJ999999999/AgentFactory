@@ -1,0 +1,13 @@
+{
+  "about": "A refactor with behaviour to keep: two loaders parse amounts with their own code; both must use the one parser, and every amount must come out right.",
+  "engagement": {
+    "id": "amount-parsing",
+    "title": "Tally: one way to read an amount",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Every amount read one way", "objective": "Every file tally reads gets its amounts right, through one parser.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "one-parser", "lane": "polish", "text": "src/loader.js and src/budget.js each parse amounts with their own code, and get amounts like \"1,450.00\" and \"$128\" wrong. Make both use parse from src/money.js, so every amount is read one way, with tests.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

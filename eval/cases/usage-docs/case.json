@@ -1,0 +1,13 @@
+{
+  "about": "Documentation that must be true: every example in docs/USAGE.md is run against the real CLI. The agent may only run the tests, not the CLI, so it has to read the code.",
+  "engagement": {
+    "id": "usage-docs",
+    "title": "Tally: a usage guide",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "A usage guide whose examples work", "objective": "A new user can copy any example from the guide and it works.", "owner": "partner",
+      "scope": ["docs"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "usage-docs", "lane": "polish", "text": "Write docs/USAGE.md for tally's command line. Cover every command (total, report, list, and list's --page and --size) with an example that works exactly as written on data/transactions.csv, written as `tally <command> ...` on its own line in a code block, and show what each prints.", "writeScope": ["docs"] }]
+    }]
+  }
+}

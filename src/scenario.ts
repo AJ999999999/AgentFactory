@@ -24,7 +24,9 @@ import { observe } from "./observator.ts";
 import type { Observation } from "./observator.ts";
 import { Coordinator } from "./orchestrator.ts";
 import type { TxResult } from "./orchestrator.ts";
-import { AttentionBudget, triage } from "./policy.ts";
+import { EscalationLog } from "./escalation-log.ts";
+import type { EscalationEvent } from "./escalation-log.ts";
+import { AttentionBudget, triage as triageRaw } from "./policy.ts";
 import type { Policy, Proposal, Triage } from "./policy.ts";
 import { fromBreakpoint, fromConfigChange } from "./solver.ts";
 import type { ContextPortfolio } from "./solver.ts";
@@ -107,6 +109,7 @@ export type ScenarioResult = {
   contract: { triage: Triage; brief: string; claims: ReturnType<typeof checkAll> };
   ledger: AgentRecord[];
   budget: { results: string[]; backpressure: boolean; nextDay: number };
+  escalations: EscalationEvent[];
   leaseBackstop: { prechecked: string[]; rawPushRejected: boolean; reaped: string[] };
   staleness: { before: string; after: string };
   log: Array<{ t: number; event: string; data?: Record<string, unknown> }>;
@@ -140,6 +143,13 @@ export async function runScenario(opts: { baseDir: string; echo?: boolean }): Pr
   const scratch = path.join(base, "replays");
   fs.mkdirSync(scratch, { recursive: true });
   const policy = readJson<Policy>(path.join(PROJECT_ROOT, "policy/escalation-policy.json"));
+  // Escalation log kept outside the control repo here so the scenario's git history is unchanged.
+  const escalations = new EscalationLog(path.join(base, "escalation-log"));
+  const triage = (pol: Policy, p: Proposal): Triage => {
+    const t = triageRaw(pol, p);
+    escalations.triaged(pol, p, t);
+    return t;
+  };
 
   // ---------- seed the repo: policy, task, criteria, sources, basis v1, decision D-0001 ----------
   initBare(originDir);
@@ -404,7 +414,7 @@ export async function runScenario(opts: { baseDir: string; echo?: boolean }): Pr
 
   // ---------- phase 8: attention budget ----------
   log("phase", { n: 8, name: "attention budget and backpressure" });
-  const budget = new AttentionBudget(policy);
+  const budget = new AttentionBudget(policy, escalations);
   const results: string[] = [];
   for (let i = 0; i < 10; i++) results.push(budget.submit({ id: `B${i}`, markdown: "", blockedTasks: i, interrupt: false }));
   results.push(budget.submit({ id: "SEC", markdown: "", blockedTasks: 0, interrupt: true }));
@@ -436,6 +446,7 @@ export async function runScenario(opts: { baseDir: string; echo?: boolean }): Pr
     contract: { triage: cTriage, brief: cBrief, claims: cClaims },
     ledger,
     budget: { results, backpressure, nextDay },
+    escalations: escalations.list(),
     leaseBackstop: { prechecked: pre.conflicts, rawPushRejected: !raw.ok, reaped },
     staleness: { before, after },
     log: sink,

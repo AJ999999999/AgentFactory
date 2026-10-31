@@ -1,0 +1,13 @@
+{
+  "about": "A bug report to triage: find the cause from the symptom, fix it, and add a regression test that would have caught it (checked by running that test against the bug).",
+  "engagement": {
+    "id": "paginate-issue",
+    "title": "Tally: issue 12",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Issue 12 fixed", "objective": "Listing transactions page by page shows each transaction exactly once.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "issue-12", "lane": "triage", "text": "Triage issue 12 (docs/issues/12.md): find the cause, fix it, and add a regression test that would have caught it.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

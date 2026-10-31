@@ -140,6 +140,16 @@ describe("phases 8-9: attention budget and lease atomicity", () => {
     assert.equal(r.budget.backpressure, true);
     assert.equal(r.budget.nextDay, 2);
   });
+  it("logs every triage and every brief to the escalation log", () => {
+    const triaged = r.escalations.filter((e) => e.type === "triaged");
+    const delivered = r.escalations.filter((e) => e.type === "delivered");
+    assert.equal(triaged.length, 6);
+    // 11 submits on day 0, then the 2 queued briefs delivered on day 1.
+    assert.equal(delivered.length, 13);
+    const contract = triaged.find((e) => e.proposalId === "PR-billing-v4");
+    assert.equal(contract?.route, "escalate");
+    assert.equal(contract?.tunableOnly, false);
+  });
   it("overlapping lease is refused by the pre-check AND by git itself", () => {
     assert.deepEqual(r.leaseBackstop.prechecked, ["tools/opportunity-analyzer"]);
     assert.equal(r.leaseBackstop.rawPushRejected, true);

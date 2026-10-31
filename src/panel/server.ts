@@ -13,6 +13,7 @@ import { Git } from "../git.ts";
 import type { TurnAgent } from "../harness/agents.ts";
 import type { Answer } from "../harness/answers.ts";
 import { Harness } from "../harness/harness.ts";
+import { LiveTurns } from "../harness/live.ts";
 import type { HarnessPolicy } from "../harness/project.ts";
 import type { Direction, GoalRevision } from "../harness/types.ts";
 import { SystemClock } from "../harness/world.ts";
@@ -76,19 +77,24 @@ export class Workspace {
     return out.sort((a, b) => b.at - a.at);
   }
 
+  // Turns running on this PC: the loop writes their markers and logs next to its heartbeat.
+  live(id: string): LiveTurns {
+    return new LiveTurns(path.join(this.root(), id, "turns"));
+  }
+
   // Every engagement, read fresh from git. One that can't be read (remote down) shows
   // what was last read, with the error.
   async snapshot(): Promise<{ now: number; dir: string; engagements: EngagementView[] }> {
     const now = Date.now();
     const engagements = await Promise.all(this.ids().map(async (id) => {
       try {
-        const v = engagementView(await this.harness(id).state(), id, now, this.runners(id));
+        const v = { ...engagementView(await this.harness(id).state(), id, now, this.runners(id)), running: this.live(id).list(now) };
         this.lastGood.set(id, v);
         return v;
       } catch (e) {
         const msg = (e as Error).message.split("\n")[0].slice(0, 300);
         const last = this.lastGood.get(id);
-        return last ? { ...last, error: msg } : { id, title: id, paused: null, goals: [], asks: [], runners: this.runners(id), error: msg };
+        return last ? { ...last, running: this.live(id).list(now), error: msg } : { id, title: id, paused: null, capacity: [], running: this.live(id).list(now), goals: [], asks: [], runners: this.runners(id), error: msg };
       }
     }));
     return { now, dir: this.dir, engagements };
@@ -191,6 +197,16 @@ export async function startPanel(opts: PanelOptions): Promise<Panel> {
           const paused = body.paused === true;
           await ws.harness(str(body.engagement, "engagement", 100)).pause(paused, "partner");
           log(`${paused ? "paused" : "resumed"} ${body.engagement}`);
+          break;
+        }
+        case "/api/stop": {
+          // The runner checks for this every second, kills the agent, throws its changes
+          // away and records the turn as stopped; the work then waits for your call.
+          const eng = str(body.engagement, "engagement", 100);
+          ws.harness(eng); // a known engagement
+          const turn = str(body.turn, "turn", 200);
+          if (!ws.live(eng).requestStop(turn, "partner", Date.now())) throw new BadRequest("that turn isn't running any more");
+          log(`stop requested: ${eng} ${turn}`);
           break;
         }
         case "/api/budget":

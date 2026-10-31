@@ -13,6 +13,8 @@
     "challenge": "node --no-warnings src/foundation/cli.ts",
     "test": "node --no-warnings --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "mcp": "node --no-warnings src/mcp-server.ts",
+    "mcp:partner": "node --no-warnings src/harness/mcp.ts",
+    "eval": "node --no-warnings src/eval/run.ts",
     "demo:harness": "node --no-warnings src/harness/demo.ts",
     "harness": "node --no-warnings src/harness/cli.ts",
     "memory": "node --no-warnings src/memory/cli.ts",

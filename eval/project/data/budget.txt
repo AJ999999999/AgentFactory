@@ -1,0 +1,5 @@
+# Monthly budget (category: amount)
+groceries: 450.00
+housing: 1,450.00
+transport: $128
+gifts: 60.5

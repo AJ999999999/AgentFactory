@@ -1,0 +1,13 @@
+{
+  "about": "Test design, graded by mutation: the agent's tests must pass on the real code and fail on four versions that each break one stacking rule.",
+  "engagement": {
+    "id": "discount-tests",
+    "title": "Tally: pin down the discount rules",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Discount rules can't break silently", "objective": "Any change that breaks a discount stacking rule fails a test.", "owner": "partner",
+      "scope": ["test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "discount-tests", "lane": "test-design", "text": "Write tests for src/discount.js that pin down every stacking rule in docs/discounts.md, so that a change breaking any one rule fails a test. Don't change src/.", "writeScope": ["test"] }]
+    }]
+  }
+}

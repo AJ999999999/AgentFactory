@@ -140,9 +140,12 @@ export function cloneControl(remote: string, dir: string): Git {
 // admin operations are serialized per repository.
 
 const repoLocks = new Map<string, Mutex>();
+const commonDirs = new Map<string, string>();
 export function repoLock(git: Git): Mutex {
   // --git-common-dir may be relative to the repo's cwd (".git"), so resolve against it.
-  const key = path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"]));
+  // A directory's common dir never changes while it exists, so it's looked up once.
+  let key = commonDirs.get(git.cwd);
+  if (!key) commonDirs.set(git.cwd, (key = path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"]))));
   let m = repoLocks.get(key);
   if (!m) repoLocks.set(key, (m = new Mutex()));
   return m;
@@ -237,11 +240,11 @@ export class LeaseManager {
     return { lease: { ...body, sha }, conflicts: [] };
   }
 
-  async acquire(task: string, agent: string, paths: string[], opts: { timeoutMs?: number; onWait?: (c: string[]) => void } = {}): Promise<Lease> {
+  async acquire(task: string, agent: string, paths: string[], opts: { timeoutMs?: number; ttlMs?: number; onWait?: (c: string[]) => void } = {}): Promise<Lease> {
     const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
     let delay = 25;
     for (;;) {
-      const { lease, conflicts } = await this.tryAcquire(task, agent, paths);
+      const { lease, conflicts } = await this.tryAcquire(task, agent, paths, opts.ttlMs);
       if (lease) return lease;
       opts.onWait?.(conflicts);
       if (Date.now() > deadline) throw new Error(`lease timeout for ${paths.join(",")}: held by ${conflicts.join(",")}`);

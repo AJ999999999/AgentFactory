@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "evidence": {
+    "desirability": ["behavioral"],
+    "feasibility": ["measured", "expert"],
+    "viability": ["behavioral", "measured", "expert"],
+    "compliance": ["expert"],
+    "safety": ["expert"]
+  },
+  "minRuns": 3,
+  "claims": {"ttlMinutes": 90, "turnTimeoutMinutes": 60},
+  "retries": {"maxFailures": 3, "maxTurnsPerTodo": 6},
+  "spin": {"thinStreak": 3},
+  "thrash": {"maxPivots": 2, "windowDays": 60},
+  "synthesis": {"afterFindings": 6},
+  "budget": {"warnAt": 0.8, "scopeAskOver": 1.5, "defaultTurnsPerTodo": 2},
+  "money": {"autoApproveUsd": 0},
+  "spawn": {"autoCarveFraction": 0.25},
+  "proposals": {"maxTodosPerTurn": 5, "maxAsksPerTurn": 2, "noteChars": 280},
+  "packet": {"maxLines": 16, "maxChars": 1800},
+  "schedule": {"jobPollMinutes": [10, 30, 60, 240], "maxSleepMinutes": 720, "waitPollMinutes": 1440},
+  "protected": [".agents/harness/**", "policy/**", ".github/hooks/**"],
+  "probation": {"promoteAfter": 3, "rejectStreak": 2},
+  "team": {"library": "library.json", "catalog": "permission-catalog.json"}
+}

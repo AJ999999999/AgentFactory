@@ -14,12 +14,34 @@
     "backend-engineer": { "version": 7, "kind": "worker", "model": "large-model", "skills": ["tdd", "contract-codegen"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:author", "data:market:read"], "decisionRights": ["implementation"] },
     "app-surface-engineer": { "version": 4, "kind": "worker", "model": "large-model", "skills": ["contract-codegen"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:author"], "decisionRights": ["implementation"] },
     "test-case-worker": { "version": 2, "kind": "side", "model": "small-model", "skills": ["tdd"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:author"], "decisionRights": [] },
-    "data-research-worker": { "version": 1, "kind": "side", "model": "small-model", "skills": [], "permissions": ["web:read", "repo:write:lease"], "decisionRights": [] }
+    "data-research-worker": { "version": 1, "kind": "side", "model": "small-model", "skills": [], "permissions": ["web:read", "repo:write:lease"], "decisionRights": [] },
+
+    "planner": { "version": 1, "kind": "lead", "model": "model-a", "skills": ["decompose-along-boundaries", "write-contracts", "staff-from-library"], "permissions": ["repo:read", "repo:write:lease", "mcp:context:lead"], "decisionRights": ["workstream_interfaces"] },
+    "researcher": { "version": 1, "kind": "side", "model": "model-a", "skills": ["source-grading", "cite-or-drop"], "permissions": ["repo:read", "repo:write:lease", "web:read"], "decisionRights": [] },
+    "builder": { "version": 1, "kind": "worker", "model": "model-a", "skills": ["tdd", "contract-codegen"], "permissions": ["repo:read", "repo:write:lease", "shell:test", "mcp:context:author"], "decisionRights": ["implementation"] },
+    "experimenter": { "version": 1, "kind": "worker", "model": "model-c", "skills": ["preregister-thresholds", "experiment-design"], "permissions": ["repo:read", "repo:write:lease", "shell:test"], "decisionRights": [] },
+    "data-engineer": { "version": 1, "kind": "worker", "model": "model-c", "skills": ["dataset-splits", "leakage-checks"], "permissions": ["repo:read", "repo:write:lease", "shell:test", "data:private:read"], "decisionRights": [] },
+    "market-tester": { "version": 1, "kind": "worker", "model": "model-a", "skills": ["demand-test-design", "landing-copy"], "permissions": ["repo:read", "repo:write:lease", "web:read"], "decisionRights": [] },
+    "strategist": { "version": 1, "kind": "side", "model": "model-b", "skills": ["weigh-evidence", "replan-to-riskiest"], "permissions": ["repo:read", "mcp:context:author"], "decisionRights": [] },
+    "maintainer": { "version": 1, "kind": "worker", "model": "model-a", "skills": ["triage", "dependency-hygiene", "patch-release"], "permissions": ["repo:read", "repo:write:lease", "shell:test", "web:read"], "decisionRights": ["implementation"] },
+    "blind-reviewer": { "version": 1, "kind": "side", "model": "model-b", "skills": ["review-against-the-todo"], "permissions": ["repo:read"], "decisionRights": [] }
   },
   "moduleKinds": {
     "backend": "backend-engineer",
     "frontend": "app-surface-engineer",
     "tests": "test-case-worker",
     "research": "data-research-worker"
-  }
+  },
+  "lanes": {
+    "research": "researcher",
+    "build": "builder", "polish": "builder", "deploy": "builder",
+    "spike": "experimenter", "bench": "experimenter", "eval": "experimenter", "train": "experimenter", "data": "data-engineer",
+    "test-design": "experimenter", "replicate": "experimenter", "verify": "experimenter",
+    "market": "market-tester",
+    "plan": "planner", "replan": "strategist", "synthesis": "strategist",
+    "triage": "maintainer", "deps": "maintainer", "security": "maintainer",
+    "probation-review": "blind-reviewer"
+  },
+  "generated": { "agent": "author", "model": "model-a", "permissions": ["repo:read", "repo:write:lease"] },
+  "judgeLanes": ["replan", "synthesis", "probation-review"]
 }

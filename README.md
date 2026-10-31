@@ -1,12 +1,13 @@
 # AgentFactory
 
-A git-native system for running a firm of AI agents with one human partner. It has a shared context layer; an Observator → Solver → Evaluator self-evolution loop; decision rights that route each decision to its owner (client, partner or lead); a role factory that staffs teams from a tested library; and an escalation policy that only brings key decisions to a human. The delivery loop is modeled on the RulTriX RSCL/Raee concept and built on plain git. The full design is in the "Agent firm design" doc.
+A git-native system for running a firm of AI agents with one human partner. It has a shared context layer; a challenge process that takes a hard problem to a tested MVP; a long-running harness that keeps engagements moving for months without a human acting as the clock; an Observator → Solver → Evaluator self-evolution loop; decision rights that route each decision to its owner (client, partner or lead); a role factory that staffs teams from a tested library; and an escalation policy that only brings key decisions to a human. The delivery loop is modeled on the RulTriX RSCL/Raee concept and built on plain git. The full design is in the "Agent firm design" doc.
 
 This repo is the MVP. Zero dependencies. Node ≥ 22.18 (built-in TypeScript stripping, `node:sqlite`, `node:test`) and git ≥ 2.32.
 
 ```bash
-npm test                     # foundation, units, hooks, MCP, factory, load test, end-to-end scenarios
+npm test                     # foundation, harness, units, hooks, MCP, factory, load test, end-to-end scenarios
 npm run demo:challenge       # the foundation: a challenge from frame to tested MVP
+npm run demo:harness         # the long-running harness: six engagements simulated over months
 npm run demo                 # the delivery engine (add --verbose for the event log)
 ```
 
@@ -57,12 +58,27 @@ npm run challenge -- report
 
 State lives in git under `.af/<challenge>/`, so each command picks up where the last stopped. Model names in `policy/angles.json` (`model-a`, `model-b`, `model-c`) are placeholders; set them to the families your Copilot plan offers, and give angles that must disagree different families.
 
+## Long-running harness: from MVP to months of work
+
+After the challenge decides, the harness keeps the engagement moving (`src/harness/`, design and findings in [docs/harness.md](docs/harness.md)). Each wake starts from git, does at most a few bounded turns, checks them independently, commits, and says when to wake next. A person is asked only for decisions that are theirs, for money, and for work only a person can do.
+
+What it rests on:
+- **Belief is computed from evidence, never claimed.** Agents can record opinions and sourced reports; measurements come from jobs, behavior from metric sources, expert judgment from people listed as experts. Each kind of risk accepts its own grades (behavior for demand, experts for safety).
+- **The riskiest open assumption picks the next work**, so the phase (demand, feasibility, compliance...) is derived, not configured. Work that assumes something waits until it's supported.
+- **Questions block only what depends on them.** Everything else keeps moving while a regulator, a lawyer or another team takes weeks.
+- **Spin is measured by outcome**: three turns without evidence or checked output force a replan; every todo has a turn cap; failed turns still cost.
+- **Waiting is free**: jobs, market tests, calendar freezes and people's answers cost no turns, and a quiet wake is one `git ls-remote`.
+- **The team follows the work.** Each lane with open work in a goal gets a seat, staffed from the firm library (researcher, builder, experimenter, strategist...) with permissions filtered through the catalog. A lane the library doesn't cover gets a generated role with the least access, on probation: an independent reviewer on another model checks its work unless a checker or a named person already does.
+
+It was designed against six engagements, simulated end to end through the real code: an Unreal-6-scale engine, Starship 3D-printing kits for kids, a medicine assistant for seniors, a legacy migration, an open research question, and perpetual library maintenance. The simulations found ten design flaws, each fixed and now covered by a test.
+
 ## Components
 
 | Component | File | What it does | Production swap |
 |---|---|---|---|
 | Git substrate | `src/git.ts` | Worktrees, commit trailers (`Agent`, `Basis`, `Config`, `Replay`, `Decision`), leases as refs under `refs/leases/<path>` acquired by one atomic push with `--force-with-lease=<ref>:` | GitHub Enterprise remote; same mechanics |
 | Entries and sealed reveal | `src/foundation/entries.ts`, `seal.ts` | Typed append-only claims; per-angle sealed refs with hash commitments; views scoped by angle and evidence tags; dependents across versions | Same |
+| Long-running harness | `src/harness/` | Event log in git, in causal order; beliefs from graded evidence; risk-ordered selection; dependency-scoped gates; claims as refs; jobs, waits, actions, monitors; kill criteria, budgets, spin and turn caps; seats staffed per lane from the library, generated roles on probation; deterministic handoff packet; tick/loop CLI; Copilot CLI turn agent run as the seat; six simulated cases | Real job/metric providers (GitHub Actions, analytics) behind the same interfaces; a model-backed role generator behind the same limits |
 | Challenge process | `src/foundation/process.ts`, `runners.ts`, `cli.ts` | Frame → diverge → reveal → critique → score → converge → plan MVP → build → experiment, with the gates above; scripted and Copilot CLI angle runners | Same, with the Copilot SDK |
 | Shared context layer | `src/context.ts` | Versioned task basis, content-addressed source snapshots, per-role context bundles, `context.lock.json` per artifact | Same files; snapshot importers per source system |
 | Decision records | `src/decisions.ts` | Chosen + rejected options, bound paths, staleness when bound paths change | Same |
@@ -72,7 +88,7 @@ State lives in git under `.af/<challenge>/`, so each command picks up where the 
 | Evaluator | `src/evaluator.ts` | Replays baseline vs candidate at a frozen commit, N runs per side in parallel; checks outcome, red lines, cost; rejects candidates that touch protected files; engagement-specific checkers plug in by name | Same, runs on CI runners |
 | Fact-checker | `src/factcheck.ts` | Verifies claims by lookup (basis version, decision freshness, contract registry, CI result, file presence) | `fact-checker` agent maps free text to claim kinds |
 | Policy | `src/policy.ts`, `policy/escalation-policy.json` | Triage (triggers, auto-resolve conditions, evolution rules, `never_auto` floor), decision rights and owner routing, engagement profiles, attention budget with backpressure | Same |
-| Role factory | `src/factory.ts`, `policy/library.json`, `policy/permission-catalog.json` | Staffs a team from library templates, one agent per module; generated skills start on probation; permissions only from the catalog, so client text can raise a question but never grant access | Model-backed planner behind the same guardrails |
+| Role factory | `src/factory.ts`, `src/harness/team.ts`, `policy/library.json`, `policy/permission-catalog.json` | Staffs a team from library templates, one agent per module, and the harness's seats lane by lane; generated roles and skills start on probation; permissions only from the catalog, so client text can raise a question but never grant access | Model-backed planner behind the same guardrails |
 | Briefs | `src/brief.ts` | One-screen brief, blind variant | Same |
 | Trust ledger | `src/ledger.ts` | Per-agent commits, revert rate, line survival (git blame), demotion | Same, plus missed-escalation counts |
 | Coordinator | `src/orchestrator.ts` | Concurrency cap, lease → worktree → agent → lockfile → commit → merge queue → release | Temporal workflows (durable waits, retries) |
@@ -125,7 +141,8 @@ Check these against your CLI version before relying on them:
 
 ## Not real yet
 
-- Agents are mocked; `CopilotCliRunner` is written but wasn't run, because Copilot CLI isn't available in the build sandbox.
+- Agents are mocked; `CopilotCliRunner` and the harness's `CopilotTurnAgent` are written but weren't run against the real CLI (the turn agent was tested against a fake `copilot` binary), because Copilot CLI isn't available in the build sandbox.
+- The harness's jobs, metric sources and probes are interfaces with simulated implementations; the cases' agents and people are scripted.
 - There's no real CI; replay checks stand in.
 - The coordinator is in-process and not durable.
 - The remote is a local bare repo standing in for GitHub.

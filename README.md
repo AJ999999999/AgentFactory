@@ -127,6 +127,38 @@ An engagement that holds client-confidential material keeps its code in `src/<na
 - **Replay noise is real:** a flaky candidate passed with 1 run per side and failed with 5 runs per side (40%). Use several runs per side, or let deterministic checks decide.
 - **Returns are the wrong test for rule-following work:** in a private engagement, a config that ignored a rule earned 43% more on the backtest. A returns-based evaluator would have adopted it; the rule-fidelity checker refused it.
 
+## Running the harness on Windows
+
+The harness runs as you, on your machine, through Task Scheduler: your Copilot CLI sign-in, your git credentials, and the engagement's code never leave it. Needs Node 22.18 or later, Git for Windows, and Copilot CLI (`npm install -g @github/copilot` or WinGet) signed in once with `copilot`.
+
+```powershell
+git clone https://github.com/AJ999999999/AgentFactory C:\workspace\AgentFactory
+cd C:\workspace\AgentFactory; npm test          # the suite runs on Windows in CI too
+npm run harness -- agents install                 # Copilot agent profiles for the library roles, in %USERPROFILE%\.copilot\agents
+
+# A folder for engagements (state lives in each engagement's own git repo)
+mkdir C:\workspace\engagements; cd C:\workspace\engagements
+node C:\workspace\AgentFactory\src\harness\cli.ts open my-engagement\engagement.json --world my-engagement\world.mjs --seed my-engagement\seed
+node C:\workspace\AgentFactory\src\harness\cli.ts doctor
+powershell -ExecutionPolicy Bypass -File C:\workspace\AgentFactory\scripts\windows\install-harness-task.ps1 -Engagement my-engagement
+```
+
+What the task does:
+- **It keeps one `harness loop` alive.** It starts at logon and is retried every 15 minutes. A retry while the loop is running is ignored, so a crashed loop is back within 15 minutes.
+- **It runs only while you're logged on** (a locked screen is fine). That's what lets it use your stored credentials. Nothing runs while the machine sleeps; the loop sleeps by the wall clock and catches up on wake.
+- **Quiet rechecks are cheap.** The loop rechecks every 10 minutes (`-PollMinutes`) so your answers are picked up, and a recheck with nothing new is one `git ls-remote`. It runs on battery, hidden, and logs to `.af\harness\<engagement>\loop.log`.
+- **It rides out network drops.** Offline or off the VPN, it backs off and retries instead of exiting.
+
+`open` takes the engagement's world module (its checkers, saved so the scheduled loop uses them too) and a folder of files to seed into the engagement repo, such as a brief the agents read. Without `--remote`, state lives in a local git repo under `.af\harness\`. Set `"models"` in `policy/harness-agents.json` to model ids your Copilot plan offers; unmapped placeholders are left out, so Copilot uses its default model. You answer questions with `answer <ask> --choice <id>`, as the role the question is for, adding `--result supports|refutes --metrics name=value` when you're reporting what you observed.
+
+`doctor` checks node, git, Copilot CLI, the agent profiles, the engagement's repo and remote, when the loop last woke, and the task. Each seat runs Copilot as the profile `af-<role>` (`integrations/copilot/harness-agents/`); a profile that isn't installed is skipped rather than failing the turn, with the role in the prompt instead. To stop: `scripts\windows\uninstall-harness-task.ps1 -Engagement my-engagement`; the state stays in git and a reinstall carries on.
+
+Windows-specific handling, each found by reading the code and checked on a Windows CI runner:
+- **Copilot's `.cmd` shim is never run through `cmd.exe`.** Prompts carry text from web pages and agents, and `&`, `|` or `%` in them would run commands there. The shim's JavaScript entry is run with node instead.
+- **Clones turn off line-ending conversion and turn on long paths.**
+- **Worktree removal retries while antivirus or the indexer holds a file.**
+- **The Copilot hooks have `powershell` entries, and guard PowerShell's recursive deletes too.**
+
 ## Plugging into Copilot CLI
 
 1. Put this project at `tools/agentfactory/` in your repo.
@@ -134,7 +166,7 @@ An engagement that holds client-confidential material keeps its code in `src/<na
 3. Use `CopilotCliRunner` instead of `MockAgent` in the coordinator.
 
 Check these against your CLI version before relying on them:
-- **Tool names:** the hook matches `edit|create|write|str_replace*` for file writes and `bash|shell` for shell.
+- **Tool names:** the hook matches `edit|create|write|str_replace*` for file writes and `bash|shell|powershell` for shell.
 - **Hook output:** the hook prints `{"permissionDecision":"allow"|"deny"}`.
 - **`model:` in agent frontmatter:** model IDs depend on what your org enables.
 - **Programmatic flags:** `--output-format json` and `--no-ask-user`.
@@ -143,7 +175,7 @@ Check these against your CLI version before relying on them:
 
 - Agents are mocked; `CopilotCliRunner` and the harness's `CopilotTurnAgent` are written but weren't run against the real CLI (the turn agent was tested against a fake `copilot` binary), because Copilot CLI isn't available in the build sandbox.
 - The harness's jobs, metric sources and probes are interfaces with simulated implementations; the cases' agents and people are scripted.
-- There's no real CI; replay checks stand in.
+- CI runs the tests on Ubuntu and Windows (`.github/workflows/tests.yml`), but replay checks stand in for an engagement's own CI.
 - The coordinator is in-process and not durable.
 - The remote is a local bare repo standing in for GitHub.
 - Firm-level pieces from the design are not built yet: the control repo with client walls, nested leases for spawned teams, the client channel, staffing and cost ledgers.

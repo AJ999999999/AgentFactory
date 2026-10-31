@@ -123,6 +123,27 @@ test("a turn that outlives its claim is thrown away; whoever took over keeps the
   assert.deepEqual(s.goals.get("G")!.notes.map((n) => n.text), ["B's answer"]);
 });
 
+test("a scheduler that starts a fresh process every few minutes: an unchanged engagement costs one ls-remote", async () => {
+  const agent = new ScriptedTurnAgent([done("ok")]);
+  const { hs, clock, dir } = await machines(1, def([{ id: "a", lane: "build", text: "a", notBefore: "2026-11-03T09:00:00Z" }]), agent);
+  const r1 = await hs[0].tick({ id: "laptop", capabilities: [] });
+  assert.ok(!r1.quiet);
+  // A new process: same repo, nothing in memory but what was saved to disk.
+  const saved = JSON.parse(JSON.stringify(hs[0].memory("laptop")));
+  const fresh = new Harness({ control: hs[0].control, engagement: "s", policy, clock, world: {}, agent, worktreeRoot: path.join(dir, "wt-fresh") });
+  fresh.remember("laptop", saved);
+  const calls: string[][] = [];
+  const run = fresh.control.runAsync.bind(fresh.control);
+  fresh.control.runAsync = (args: string[]) => { calls.push(args); return run(args); };
+  clock.advance(10);
+  const r2 = await fresh.tick({ id: "laptop", capabilities: [] });
+  assert.ok(r2.quiet, "nothing changed and no timer is due");
+  assert.deepEqual(calls.map((c) => c[0]), ["ls-remote"]);
+  clock.set(Date.parse("2026-11-03T09:00:00Z"));
+  const r3 = await fresh.tick({ id: "laptop", capabilities: [] });
+  assert.equal(r3.turns[0]?.todo, "a", "and it wakes for real when the timer is due");
+});
+
 test("restart anywhere: a fresh clone projects exactly the same state and carries on", async () => {
   const agent = new ScriptedTurnAgent([done("ok")]);
   const d = def([{ id: "a", lane: "build", text: "a" }, { id: "b", lane: "build", text: "b", after: ["a"] }, { id: "c", lane: "build", text: "c", after: ["b"] }]);
@@ -150,7 +171,9 @@ test("an agent that produces nothing: replan, then the goal stops and asks the o
 
 test("Copilot CLI runner: a real process in the worktree, its edits validated, its JSON parsed", async () => {
   const dir = tmp("copilot");
-  const fake = path.join(dir, "copilot");
+  // A .js entry runs through node on every platform (on Windows, npm's .cmd shim is
+  // resolved to its entry the same way; see test/windows.test.ts).
+  const fake = path.join(dir, "copilot.js");
   fs.writeFileSync(fake, `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
@@ -161,12 +184,16 @@ console.log("I did the thing. Note the braces {like these} in prose.");
 console.log(JSON.stringify({ done: true, note: "used {braces} in a string", findings: [{ direction: "neutral", grade: "opinion", source: "", text: "ok" }] }));
 `);
   fs.chmodSync(fake, 0o755);
-  const agent = new CopilotTurnAgent({ bin: fake, fallback: { agent: "author", model: "model-a" }, lanes: { review: { agent: "reviewer", model: "model-b" } }, timeoutMs: 30_000 });
+  // The generated role's profile (af-author) is installed in this folder.
+  const profiles = path.join(dir, "agents");
+  fs.mkdirSync(profiles, { recursive: true });
+  fs.writeFileSync(path.join(profiles, "af-author.agent.md"), "---\nname: af-author\n---\n");
+  const agent = new CopilotTurnAgent({ bin: fake, fallback: { agent: "author", model: "model-a" }, profileDirs: [profiles], models: { "model-a": "plan-model-1" }, timeoutMs: 30_000 });
   const { hs } = await machines(1, def([{ id: "t", lane: "x", text: "t", writeScope: ["work"] }]), agent);
   const r = await hs[0].tick({ id: "r1", capabilities: [] });
   assert.equal(r.turns[0].result, "completed");
   const args = JSON.parse(hs[0].control.run(["show", "origin/main:work/args.json"]));
-  for (const flag of ["--agent", "author", "--model", "model-a", "--no-ask-user", "shell(git push)"]) assert.ok(args.includes(flag), flag);
+  for (const flag of ["--agent", "af-author", "--model", "plan-model-1", "--no-ask-user", "shell(git push)"]) assert.ok(args.includes(flag), flag);
   assert.ok(args[args.indexOf("-p") + 1].includes("Your todo t"), "the prompt carries the handoff packet");
   assert.deepEqual(parseTurnOutput('text {"a": "}"} more {"done": true, "note": "{x}"}'), { done: true, note: "{x}" });
 });

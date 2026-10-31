@@ -457,7 +457,10 @@ test("Copilot CLI turns run as their seat: the role's agent and model, tools fro
   const cfg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "policy", "harness-agents.json"), "utf8"));
   const s = tst(goal({ id: "G" }), todo("G", { id: "r", lane: "research", text: "r" }), todo("G", { id: "y", lane: "synthesis", text: "y" }), todo("G", { id: "c", lane: "cad", text: "design the printable kit" }), todo("G", { id: "pr", lane: "probation-review", text: "review c", reviews: "c" }));
   settle(s, T0);
-  const agent = new CopilotTurnAgent({ fallback: cfg.fallback, agents: cfg.agents, tools: { tools: cfg.tools, always: cfg.always }, timeoutMs: 1000 });
+  // Profiles installed for the researcher and the generated-role fallback, not the strategist.
+  const profiles = fs.mkdtempSync(path.join(os.tmpdir(), "af-profiles-"));
+  for (const n of ["af-researcher", "af-author", "af-blind-reviewer"]) fs.writeFileSync(path.join(profiles, `${n}.agent.md`), `---\nname: ${n}\n---\n`);
+  const agent = new CopilotTurnAgent({ fallback: cfg.fallback, agents: cfg.agents, profilePrefix: cfg.profilePrefix, profileDirs: [profiles], models: { "model-a": "plan-a" }, tools: { tools: cfg.tools, always: cfg.always }, timeoutMs: 1000 });
   const ctx = (id: string): TurnContext => {
     const t = s.todos.get(id)!;
     const seat = seatOf(s, t)!;
@@ -465,14 +468,14 @@ test("Copilot CLI turns run as their seat: the role's agent and model, tools fro
   };
   const pairs = (f: string[]) => f.map((x, i) => (x.startsWith("--") ? `${x} ${f[i + 1]}` : "")).filter(Boolean);
   const r = agent.launch(ctx("r"));
-  assert.deepEqual([r.agent, r.model], ["researcher", "model-a"]);
+  assert.deepEqual([r.agent, r.model], ["af-researcher", "plan-a"], "placeholders map to your plan's models");
   assert.ok(pairs(r.flags).includes("--allow-tool web_fetch") && pairs(r.flags).includes("--allow-tool write"));
   const y = agent.launch(ctx("y"));
-  assert.deepEqual([y.agent, y.model], ["strategist", "model-b"]);
+  assert.deepEqual([y.agent, y.model], [undefined, undefined], "no profile installed: no --agent; an unmapped placeholder: no --model; rather than a failed turn");
   assert.ok(pairs(y.flags).includes("--deny-tool write"), "a judge can't write");
   assert.ok(pairs(y.flags).includes("--deny-tool shell(git push)"));
   const c = agent.launch(ctx("c"));
-  assert.equal(c.agent, "author", "a generated role runs as the fallback agent...");
+  assert.equal(c.agent, "af-author", "a generated role runs as the fallback profile...");
   const prompt = agent.prompt(ctx("c"));
   assert.match(prompt, /design the printable kit/, "...with its charter in the prompt");
   assert.match(prompt, /on probation/);
@@ -501,4 +504,19 @@ test("event time respects cause and effect: a writer never stamps an event befor
   const evs = readEvents(dir, "e");
   assert.deepEqual(evs.map((e) => e.id), ["turn-sent-to-review", "a-review-verdict", "b-skewed-clock", "later"]);
   assert.deepEqual(evs.map((e) => e.at), [1000, 1001, 1001, 5000], "nudged only as far as needed");
+});
+
+test("what people said reaches the agents whose work depends on it, through earlier work too", () => {
+  const s = st(
+    goal({ id: "G" }),
+    todo("G", { id: "profile", kind: "action", lane: "intake", text: "Tell us about him", assignee: "pharmacist" }),
+    todo("G", { id: "core", lane: "build", text: "core", after: ["profile"] }),
+    todo("G", { id: "levels", lane: "levels", text: "levels", after: ["core"] }),
+    todo("G", { id: "other", lane: "build", text: "unrelated" }),
+  );
+  settle(s, T0);
+  const ask = [...s.asks.values()].find((a) => a.todo === "profile")!;
+  for (const e of answerEvents(s, ask.id, { by: "pharmacist", choice: "done", note: "Loves trains. Loud crash sounds upset him. Plays on a laptop with the space bar." }, T0 + 1)) apply(s, e);
+  for (const id of ["core", "levels"]) assert.match(buildPacket(s, s.todos.get(id)!, "test"), /From pharmacist .*Loves trains/, id);
+  assert.doesNotMatch(buildPacket(s, s.todos.get("other")!, "test"), /Loves trains/, "work that doesn't depend on it doesn't get it");
 });

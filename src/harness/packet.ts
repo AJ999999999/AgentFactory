@@ -2,12 +2,37 @@
 // written by a model, so it can't drift from the truth; and bounded, so it stays
 // cheap to read on every wake no matter how long the engagement has run. The full
 // record is one command away.
-import type { State, TodoState } from "./project.ts";
+import type { AskState, State, TodoState } from "./project.ts";
 import { beliefs, openAsks } from "./project.ts";
 import { activeFreezes, phase } from "./select.ts";
 
 function cut(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
+}
+
+// What people said that this todo depends on: the answers to asks it waits for, and to
+// the actions of todos it waits for, directly or through earlier work. Without this an
+// agent never hears what the parent, the lawyer or the client told the harness.
+export function answersFor(s: State, t: TodoState, max = 2): AskState[] {
+  const seen = new Set<string>();
+  const out: AskState[] = [];
+  const visit = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const a = s.asks.get(id);
+    if (a) {
+      if (a.status === "answered" && a.choice !== "moot" && (a.note || a.revision)) out.push(a);
+      return;
+    }
+    const d = s.todos.get(id);
+    if (!d) return;
+    if (d.ask) visit(d.ask);
+    for (const x of d.after ?? []) visit(x);
+    if (d.because) visit(d.because);
+  };
+  for (const x of t.after ?? []) visit(x);
+  if (t.because) visit(t.because);
+  return out.sort((a, b) => (b.answeredAt ?? 0) - (a.answeredAt ?? 0)).slice(0, max);
 }
 
 export function buildPacket(s: State, t: TodoState, why: string): string {
@@ -27,7 +52,8 @@ export function buildPacket(s: State, t: TodoState, why: string): string {
     `${cut(s.engagement?.title ?? "", 60)} · ${g.id} v${g.version}: ${cut(g.def.objective, 140)}`,
     ph ? `Phase: ${ph.category}. Riskiest open assumption ${ph.assumption}: "${cut(g.def.assumptions.find((a) => a.id === ph.assumption)?.text ?? "", 90)}"` : "Phase: no open assumptions",
     `Beliefs: ${count("supported")} supported, ${count("refuted")} refuted, ${count("contested")} contested, ${count("testing")} testing, ${count("untested")} untested`,
-    `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, 200)}`,
+    `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, 600)}`,
+    ...answersFor(s, t).map((a) => `From ${a.answeredBy} (${a.id}): ${cut(a.note ?? `chose ${a.choice}`, 320)}`),
     `Why this one: ${cut(why, 160)}`,
     `Write only: ${(t.writeScope ?? []).join(", ") || "nothing (findings, todos and asks only)"}${freezes.length ? ` · frozen: ${freezes.map((f) => f.paths.join(",")).join("; ")}` : ""}`,
   ];

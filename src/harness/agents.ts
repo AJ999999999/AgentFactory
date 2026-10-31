@@ -1,14 +1,15 @@
 // Turn agents: what does one bounded slice of work. The harness only sees this
 // interface, so a scripted agent (tests, demos) and Copilot CLI are interchangeable.
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { runCommand } from "../proc.ts";
 import type { Belief, State, TodoState } from "./project.ts";
 import type { SeatView, ToolConfig } from "./team.ts";
 import { REVIEW_LANE, toolFlags } from "./team.ts";
 import type { Finding, GoalDef } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 
-const execFileP = promisify(execFile);
 
 export type TurnContext = {
   turn: string;
@@ -57,21 +58,42 @@ export class ScriptedTurnAgent implements TurnAgent {
 // build sandbox).
 export type LaneConfig = { agent: string; model: string };
 
+// Where Copilot CLI looks for your own custom agent profiles.
+export function userAgentsDir(env: Record<string, string | undefined> = process.env): string {
+  return env.COPILOT_HOME ? path.join(env.COPILOT_HOME, "agents") : path.join(os.homedir(), ".copilot", "agents");
+}
+
 export class CopilotTurnAgent implements TurnAgent {
   name = "copilot-cli";
   bin: string;
   lanes: Record<string, LaneConfig>;
   fallback: LaneConfig;
-  agents: Record<string, string>; // role -> custom agent file name, when they differ
+  agents: Record<string, string>; // role -> custom agent profile name, when it isn't <prefix><role>
+  prefix: string;
+  profileDirs: string[] | null; // where profiles are looked for; null = don't check
+  models: Record<string, string>; // placeholder (model-a) -> your plan's model id
   tools: ToolConfig;
   timeoutMs: number;
-  constructor(opts: { bin?: string; lanes?: Record<string, LaneConfig>; fallback: LaneConfig; agents?: Record<string, string>; tools?: ToolConfig; timeoutMs: number }) {
+  constructor(opts: { bin?: string; lanes?: Record<string, LaneConfig>; fallback: LaneConfig; agents?: Record<string, string>; profilePrefix?: string; profileDirs?: string[] | null; models?: Record<string, string>; tools?: ToolConfig; timeoutMs: number }) {
+    this.models = opts.models ?? {};
     this.bin = opts.bin ?? "copilot";
     this.lanes = opts.lanes ?? {};
     this.fallback = opts.fallback;
     this.agents = opts.agents ?? {};
+    this.prefix = opts.profilePrefix ?? "af-";
+    this.profileDirs = opts.profileDirs === undefined ? [userAgentsDir()] : opts.profileDirs;
     this.tools = opts.tools ?? { always: DEFAULT_ALWAYS };
     this.timeoutMs = opts.timeoutMs;
+  }
+
+  // The seat's profile, if it's installed (your user folder or the repo's .github/agents).
+  // A missing profile mustn't fail every turn: the turn then runs without --agent, with
+  // the role in the prompt.
+  profile(seat: SeatView, wtDir: string): string | undefined {
+    const name = this.agents[seat.role] ?? `${this.prefix}${seat.generated ? this.fallback.agent : seat.agent}`;
+    if (!this.profileDirs) return name;
+    const dirs = [...this.profileDirs, path.join(wtDir, ".github", "agents")];
+    return dirs.some((d) => fs.existsSync(path.join(d, `${name}.agent.md`)) || fs.existsSync(path.join(d, `${name}.md`))) ? name : undefined;
   }
 
   prompt(ctx: TurnContext): string {
@@ -98,20 +120,23 @@ export class CopilotTurnAgent implements TurnAgent {
   }
 
   // Which custom agent, model and tools this turn gets.
-  launch(ctx: TurnContext): { agent: string; model: string; flags: string[] } {
+  launch(ctx: TurnContext): { agent?: string; model?: string; flags: string[] } {
     const seat = ctx.seat;
-    if (seat) {
-      const agent = this.agents[seat.role] ?? (seat.generated ? this.fallback.agent : seat.agent);
-      return { agent, model: seat.model, flags: toolFlags(seat.effective, this.tools) };
-    }
+    if (seat) return { agent: this.profile(seat, ctx.wtDir), model: this.model(seat.model), flags: toolFlags(seat.effective, this.tools) };
     const lane = this.lanes[ctx.todo.lane] ?? this.fallback;
-    return { agent: lane.agent, model: lane.model, flags: ["--allow-tool", "write", ...(this.tools.always ?? DEFAULT_ALWAYS)] };
+    return { agent: lane.agent, model: this.model(lane.model), flags: ["--allow-tool", "write", ...(this.tools.always ?? DEFAULT_ALWAYS)] };
+  }
+
+  // A placeholder model name (model-a) that isn't mapped to a real one is left out, so
+  // Copilot uses its default rather than failing every turn on an unknown model.
+  model(name: string): string | undefined {
+    return this.models[name] || (/^model-[a-z]$/.test(name) ? undefined : name);
   }
 
   async run(ctx: TurnContext): Promise<TurnOutput> {
     const l = this.launch(ctx);
-    const args = ["-p", this.prompt(ctx), "--agent", l.agent, "--model", l.model, "-s", "--no-ask-user", ...l.flags];
-    const { stdout } = await execFileP(this.bin, args, { cwd: ctx.wtDir, timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
+    const args = ["-p", this.prompt(ctx), ...(l.agent ? ["--agent", l.agent] : []), ...(l.model ? ["--model", l.model] : []), "-s", "--no-ask-user", ...l.flags];
+    const { stdout } = await runCommand(this.bin, args, { cwd: ctx.wtDir, timeout: this.timeoutMs, maxBuffer: 32 * 1024 * 1024 });
     return parseTurnOutput(stdout);
   }
 }

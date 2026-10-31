@@ -107,6 +107,11 @@ export class Harness {
       });
       for (const name of basisNames) if (!currentBasis(repo, def.id, name)) writeBasis(repo, def.id, name, { fingerprint: "initial" }, "open");
     });
+    // Run the rules once, so the team is staffed and the first questions (an intake
+    // action, a spend) are waiting the moment the engagement is opened.
+    const s = await this.state();
+    const follow = settle(s, now);
+    if (follow.length) await appendEvents(this.control, this.engagement, follow, `harness: open ${def.id}`);
   }
 
   async state(knownMain?: string): Promise<State> {
@@ -139,6 +144,15 @@ export class Harness {
   // ---------- the tick ----------
 
   private last = new Map<string, { main: string; hint: Hint }>();
+
+  // The quiet-wake memory (main's commit and the last hint), so a runner a scheduler
+  // starts fresh every few minutes can still skip a wake with one ls-remote.
+  memory(runnerId: string): { main: string; hint: Hint } | undefined {
+    return this.last.get(runnerId);
+  }
+  remember(runnerId: string, m: { main: string; hint: Hint }): void {
+    this.last.set(runnerId, m);
+  }
   private claimsAtStart: Promise<Claim[]> = Promise.resolve([]);
 
   async tick(runner: Runner, opts: { slots?: number } = {}): Promise<TickResult> {

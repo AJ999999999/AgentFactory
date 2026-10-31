@@ -9,14 +9,13 @@
 //
 // Not executed in the MVP test (Copilot CLI is not installed in this sandbox).
 // Swap in @github/copilot-sdk later for streaming events and session reuse.
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import type { ContextBundle } from "../context.ts";
+import { resolveCommand, runCommand } from "../proc.ts";
 import { writeJson } from "../util.ts";
 import type { AgentRunner, RunResult, RunSpec } from "./runner.ts";
 
-const execFileP = promisify(execFile);
 
 export type CopilotOptions = {
   bin?: string;
@@ -34,7 +33,8 @@ export class CopilotCliRunner implements AgentRunner {
 
   static available(bin = "copilot"): boolean {
     try {
-      execFileSync(bin, ["--version"], { stdio: "ignore" });
+      const r = resolveCommand(bin);
+      execFileSync(r.file, [...r.prefix, "--version"], { stdio: "ignore", windowsHide: true });
       return true;
     } catch {
       return false;
@@ -83,7 +83,7 @@ export class CopilotCliRunner implements AgentRunner {
     const prompt = this.buildPrompt(spec, bundle);
     const transcript: string[] = [];
     try {
-      const { stdout } = await execFileP(this.opts.bin ?? "copilot", this.buildArgs(spec, prompt), {
+      const { stdout } = await runCommand(this.opts.bin ?? "copilot", this.buildArgs(spec, prompt), {
         cwd: workdir,
         timeout: this.opts.timeoutMs ?? 20 * 60_000,
         maxBuffer: 64 * 1024 * 1024,
@@ -99,7 +99,7 @@ export class CopilotCliRunner implements AgentRunner {
           /* non-JSON line */
         }
       }
-      const status = execFileSync("git", ["status", "--porcelain"], { cwd: workdir, encoding: "utf8" });
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: workdir, encoding: "utf8", windowsHide: true });
       const changedFiles = status.split("\n").filter(Boolean).map((l) => l.slice(3)).filter((f) => !f.startsWith(".agents/session"));
       return { ok: true, changedFiles, costTokens, transcript };
     } catch (e) {

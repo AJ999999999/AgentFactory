@@ -25,27 +25,30 @@ export class Git {
     this.identity = identity;
   }
 
+  // Long paths: worktrees under .af/ plus repo paths pass Windows' 260-character
+  // limit. (Repos the harness clones also get it, and no line-ending conversion, in
+  // their own config; see cloneControl.)
   private args(args: string[]): string[] {
-    return ["-c", `user.name=${this.identity.name}`, "-c", `user.email=${this.identity.email}`, "-c", "commit.gpgsign=false", ...args];
+    return ["-c", `user.name=${this.identity.name}`, "-c", `user.email=${this.identity.email}`, "-c", "commit.gpgsign=false", "-c", "core.longpaths=true", ...args];
   }
 
   run(args: string[]): string {
-    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
   }
 
   // Plumbing commands that read stdin (hash-object --stdin, mktree).
   runInput(args: string[], input: string): string {
-    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }).trim();
   }
 
   async runAsync(args: string[]): Promise<string> {
-    const { stdout } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
     return stdout.trim();
   }
 
   async tryAsync(args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
     try {
-      const { stdout, stderr } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
+      const { stdout, stderr } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
       return { ok: true, out: stdout.trim(), err: stderr.trim() };
     } catch (e) {
       const err = e as { stdout?: string; stderr?: string; message: string };
@@ -56,7 +59,7 @@ export class Git {
   // Changed paths in the working tree (untracked included). Parsed from -z output
   // untrimmed: porcelain lines start with a status column that may be a space.
   async changedFiles(): Promise<string[]> {
-    const { stdout } = await execFileP("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileP("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
     const parts = stdout.split("\0").filter(Boolean);
     const files: string[] = [];
     for (let i = 0; i < parts.length; i++) {
@@ -125,11 +128,14 @@ export function log(git: Git, rev = "HEAD"): CommitInfo[] {
 
 export function initBare(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
-  execFileSync("git", ["init", "-q", "--bare", "-b", "main", dir]);
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", dir], { windowsHide: true });
 }
 
+// The clone's own config: no line-ending conversion (Git for Windows converts by
+// default, and then files on disk stop matching what was committed and hashed), and
+// long paths. Worktrees share this config.
 export function cloneControl(remote: string, dir: string): Git {
-  execFileSync("git", ["clone", "-q", remote, dir], { stdio: "ignore" });
+  execFileSync("git", ["clone", "-q", "-c", "core.autocrlf=false", "-c", "core.longpaths=true", remote, dir], { stdio: "ignore", windowsHide: true });
   return new Git(dir);
 }
 
@@ -144,8 +150,10 @@ const commonDirs = new Map<string, string>();
 export function repoLock(git: Git): Mutex {
   // --git-common-dir may be relative to the repo's cwd (".git"), so resolve against it.
   // A directory's common dir never changes while it exists, so it's looked up once.
+  // realpath: on Windows the same directory can be spelled with a short 8.3 name
+  // (RUNNER~1) or a long one, and two spellings would mean two locks for one repo.
   let key = commonDirs.get(git.cwd);
-  if (!key) commonDirs.set(git.cwd, (key = path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"]))));
+  if (!key) commonDirs.set(git.cwd, (key = canonical(path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"])))));
   let m = repoLocks.get(key);
   if (!m) repoLocks.set(key, (m = new Mutex()));
   return m;
@@ -161,9 +169,28 @@ export async function addDetachedWorktree(control: Git, dir: string, rev: string
   return new Git(dir, control.identity);
 }
 
+function canonical(p: string): string {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return p;
+  }
+}
+
+// On Windows an antivirus scan or the search indexer can hold a file open for a moment,
+// and the removal fails. Retry, then delete the directory and prune git's record, so
+// worktrees don't pile up over months.
 export async function removeWorktree(control: Git, dir: string, branch?: string): Promise<void> {
   await repoLock(control).run(async () => {
-    await control.tryAsync(["worktree", "remove", "--force", dir]);
+    let removed = false;
+    for (let i = 0; i < 5 && !removed; i++) {
+      removed = (await control.tryAsync(["worktree", "remove", "--force", dir])).ok || !fs.existsSync(dir);
+      if (!removed) await new Promise((r) => setTimeout(r, 100 * 2 ** i));
+    }
+    if (!removed) {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      await control.tryAsync(["worktree", "prune"]);
+    }
     if (branch) await control.tryAsync(["branch", "-D", branch]);
   });
 }

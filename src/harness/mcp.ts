@@ -8,11 +8,15 @@
 // environment) it serves nothing, and Copilot turns also switch it off by name
 // (--disable-mcp-server agentfactory), in case you registered it in your user config.
 //
-//   claude mcp add agentfactory --scope user -- node --no-warnings <repo>/src/harness/mcp.ts --dir <folder with .af>
+// It covers the same engagements as the panel: every folder `harness open` ran in, or
+// only the folders named with --dir (repeat it for more than one).
+//
+//   claude mcp add agentfactory --scope user -- node --no-warnings <repo>/src/harness/mcp.ts
 //   or in ~/.copilot/mcp-config.json: "agentfactory": { "type": "local", "command": "node", "args": [same] }
 import * as path from "node:path";
 import { serveMcp } from "../mcp-rpc.ts";
 import type { McpResult, McpTool } from "../mcp-rpc.ts";
+import { panelFolders } from "../panel/folders.ts";
 import { Workspace, answerFromBody } from "../panel/server.ts";
 import type { AskView, EngagementView } from "../panel/view.ts";
 import { PARTNER_SERVER } from "./agents.ts";
@@ -171,11 +175,17 @@ export function partnerTools(ws: Workspace): McpTool[] {
   ];
 }
 
+// The panel's folders, so your session and the panel show the same engagements under
+// the same names. AF_DIR stands in for --dir when no --dir is given.
+export function partnerFolders(argv: string[], cwd: string, env: NodeJS.ProcessEnv = process.env, file?: string): string[] {
+  const asked = argv.flatMap((a, i) => (a === "--dir" && i + 1 < argv.length && !argv[i + 1].startsWith("--") ? [argv[i + 1]] : []));
+  if (!asked.length && env.AF_DIR) asked.push(env.AF_DIR);
+  return panelFolders(asked, cwd, file);
+}
+
 // import.meta.main is newer than some Node 22 releases.
 if (import.meta.main ?? path.resolve(process.argv[1] ?? "") === import.meta.filename) {
-  const args = process.argv.slice(2);
-  const at = args.indexOf("--dir");
-  const dir = path.resolve(at >= 0 ? args[at + 1] : process.env.AF_DIR ?? process.cwd());
+  const dirs = partnerFolders(process.argv.slice(2), process.cwd());
   const inTurn = !!process.env.AF_TURN;
   const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
   serveMcp({
@@ -183,6 +193,6 @@ if (import.meta.main ?? path.resolve(process.argv[1] ?? "") === import.meta.file
     version: "0.1.0",
     instructions: inTurn
       ? "This server is the partner's and offers nothing inside a harness turn."
-      : `The partner's view of the AgentFactory engagements in ${dir}: status, open_questions, then answer, add_work, pause or stop_turn when the partner says so.`,
-  }, inTurn ? [] : partnerTools(new Workspace(dir, policy)));
+      : `The partner's view of the AgentFactory engagements in ${dirs.join(", ")}: status, open_questions, then answer, add_work, pause or stop_turn when the partner says so.`,
+  }, inTurn ? [] : partnerTools(new Workspace(dirs, policy)));
 }

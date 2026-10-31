@@ -10,6 +10,7 @@ import { createWorkspace } from "../src/foundation/workspace.ts";
 import { CopilotTurnAgent } from "../src/harness/agents.ts";
 import type { TurnAgent } from "../src/harness/agents.ts";
 import { Harness } from "../src/harness/harness.ts";
+import { partnerFolders } from "../src/harness/mcp.ts";
 import { loadPolicy } from "../src/harness/project.ts";
 import type { EngagementDef } from "../src/harness/types.ts";
 import { SystemClock } from "../src/harness/world.ts";
@@ -43,8 +44,8 @@ async function workspace(): Promise<{ dir: string; h: Harness }> {
 }
 
 // A client that talks to the server the way Copilot or Claude Code does.
-function client(dir: string, env: NodeJS.ProcessEnv = {}) {
-  const child = spawn(process.execPath, ["--no-warnings", SERVER, "--dir", dir], { env: { ...process.env, AF_TURN: "", ...env }, stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+function client(dir: string, env: NodeJS.ProcessEnv = {}, args = ["--dir", dir]) {
+  const child = spawn(process.execPath, ["--no-warnings", SERVER, ...args], { cwd: dir, env: { ...process.env, AF_TURN: "", ...env }, stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
   let buf = "";
   const waiting = new Map<number, (v: any) => void>();
   child.stdout.setEncoding("utf8");
@@ -135,4 +136,24 @@ console.log(JSON.stringify({ type: "assistant.message", data: { content: '{"done
   // Nor any of your own Copilot instructions or skills.
   assert.ok(seen.args.includes("--no-custom-instructions"));
   assert.equal(seen.args[seen.args.indexOf("--excluded-tools") + 1], "skill");
+});
+
+test("the partner's session covers the same folders as the panel: every folder opened in, or only the ones named", async () => {
+  const a = await workspace();
+  const b = await workspace();
+  const here = tmp("here");
+  const file = path.join(tmp("folders"), "panel-folders.json");
+  fs.writeFileSync(file, JSON.stringify({ folders: [a.dir, b.dir] }));
+  assert.deepEqual(partnerFolders([], here, {}, file), [here, a.dir, b.dir]);
+  assert.deepEqual(partnerFolders(["--dir", a.dir], here, {}, file), [a.dir], "folders you name are what you get");
+  assert.deepEqual(partnerFolders([], here, { AF_DIR: b.dir }, file), [b.dir]);
+  // End to end, without --dir: both engagements, named apart the way the panel names them.
+  const c = client(here, { AF_PANEL_FOLDERS: file, AF_DIR: "" }, []);
+  try {
+    await c.rpc("initialize", {});
+    const ids = (await c.call("status")).structuredContent!.result.map((e: { id: string }) => e.id);
+    assert.deepEqual(ids, [`shop@${path.basename(a.dir)}`, `shop@${path.basename(b.dir)}`]);
+  } finally {
+    c.close();
+  }
 });

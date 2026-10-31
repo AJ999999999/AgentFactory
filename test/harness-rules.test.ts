@@ -12,7 +12,7 @@ import { readEvents, writeEventFiles } from "../src/harness/store.ts";
 import type { State } from "../src/harness/project.ts";
 import { settle } from "../src/harness/rules.ts";
 import { blockers, nextWake, phase, rank, readyTodos } from "../src/harness/select.ts";
-import { validateTurn } from "../src/harness/validate.ts";
+import { budgetProblem, validateTurn } from "../src/harness/validate.ts";
 import type { TurnOutput } from "../src/harness/validate.ts";
 import { answerEvents } from "../src/harness/answers.ts";
 import { buildPacket } from "../src/harness/packet.ts";
@@ -322,6 +322,36 @@ test("validation: spawning needs disjoint scopes inside the parent, existing con
   const big = validate(s, "plan", { spawn: [child("a", "engine/a", 40)] }, [], ex);
   assert.ok(big.events.some((e) => e.type === "ask_opened" && e.ask.question.includes("Spawn 1")));
   assert.ok(!big.events.some((e) => e.type === "goal_opened"));
+});
+
+test("validation: spawning moves budget and never creates it, so a tree of workstreams can't outspend its root", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-carve-"));
+  fs.mkdirSync(path.join(dir, "contracts"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "contracts", "api.md"), "api");
+  const ex = { wtDir: dir };
+  const child = (cid: string, scope: string, budget: GoalDef["budget"]): GoalDef => ({ id: cid, title: cid, objective: "o", owner: "partner", scope: [scope], assumptions: [], budget, interfaces: ["contracts/api.md"] });
+
+  // Work that never ends has a weekly rate; its workstreams take a slice of that rate.
+  const perpetual = st(goal({ id: "P", scope: ["lib"], budget: { turnsPerWeek: 20 }, perpetual: true }), todo("P", { id: "plan", lane: "plan", text: "split" }));
+  const ok = validate(perpetual, "plan", { spawn: [child("a", "lib/a", { turnsPerWeek: 2 }), child("b", "lib/b", { turnsPerWeek: 2 })] }, [], ex);
+  assert.equal(ok.events.filter((e) => e.type === "goal_opened").length, 2);
+  assert.ok(ok.events.some((e) => e.type === "budget_set" && e.goal === "P" && e.budget.turnsPerWeek === 16), "carved out of the parent's rate");
+  // Before, a goal with no stock of turns counted as having infinitely many: this went through unasked.
+  const greedy = validate(perpetual, "plan", { spawn: [child("a", "lib/a", { turnsPerWeek: 15 })] }, [], ex);
+  assert.ok(greedy.events.some((e) => e.type === "ask_opened" && e.ask.question.includes("turns a week")));
+  assert.ok(validate(perpetual, "plan", { spawn: [child("a", "lib/a", { turnsPerWeek: 21 })] }, [], ex).reasons.some((r) => r.includes("has 20 left")));
+  assert.ok(validate(perpetual, "plan", { spawn: [child("a", "lib/a", { turns: 500 })] }, [], ex).reasons.some((r) => r.includes("turnsPerWeek, carved from P's")), "a stock can't be minted from a rate");
+
+  // A workstream holds at least one turn, so the budget alone bounds how many and how deep.
+  const stock = st(goal({ id: "S", scope: ["eng"], budget: { turns: 100 } }), todo("S", { id: "plan", lane: "plan", text: "split" }));
+  assert.ok(validate(stock, "plan", { spawn: [child("z", "eng/z", { turns: 0 })] }, [], ex).reasons.some((r) => r.includes("at least 1")));
+
+  // A goal with no turn budget at all has nothing to carve from.
+  const none = st(goal({ id: "N", scope: ["x"], budget: {} }), todo("N", { id: "plan", lane: "plan", text: "split" }));
+  assert.ok(validate(none, "plan", { spawn: [child("a", "x/a", { turns: 1 })] }, [], ex).reasons.some((r) => r.includes("no turn budget to carve from")));
+  assert.match(budgetProblem("N", {})!, /no turn budget/);
+  assert.match(budgetProblem("N", { turns: Infinity })!, /finite/);
+  assert.equal(budgetProblem("N", { turnsPerWeek: 5 }), null);
 });
 
 // ---------- answers, ranking, packet ----------

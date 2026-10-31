@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
-import type { AskOption, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import type { AskOption, Budget, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
 import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
 import { activeFreezes } from "./select.ts";
@@ -365,10 +365,37 @@ function checkTodo(s: State, goal: string, d: TodoDraft, id: string, goalScope: 
   return null;
 }
 
+// Budget is moved, never created. Every goal draws on a finite pool: a stock of turns,
+// or a weekly rate of turns for work that never ends. A spawned workstream takes its
+// pool out of its parent's, in the parent's own measure, so a whole tree of workstreams,
+// however deep or wide, never spends more than the goal at its root was given. No count
+// or depth limit is needed: each workstream holds at least one turn.
+export type Pool = "turns" | "turnsPerWeek";
+
+export function poolOf(b: Budget): Pool | null {
+  if (b.turns !== undefined) return "turns";
+  if (b.turnsPerWeek !== undefined) return "turnsPerWeek";
+  return null;
+}
+
+export function budgetProblem(id: string, b: Budget | undefined): string | null {
+  if (!b) return `${id} has no budget: give it turns, or turnsPerWeek for work that never ends`;
+  for (const [k, v] of Object.entries(b)) if (v !== undefined && !(typeof v === "number" && Number.isFinite(v) && v >= 0)) return `${id}'s budget ${k} must be a finite number of 0 or more`;
+  if (!poolOf(b)) return `${id} has no turn budget: give it turns, or turnsPerWeek for work that never ends`;
+  return null;
+}
+
+function poolLeft(g: { def: GoalDef; spent: { turns: number } }, pool: Pool): number {
+  return pool === "turns" ? g.def.budget.turns! - g.spent.turns : g.def.budget.turnsPerWeek!;
+}
+
 function checkSpawn(s: State, t: TodoState, children: GoalDef[], wtDir: string): { events: Array<Omit<HEvent, "at" | "by">> } | string {
   const parent = s.goals.get(t.goal)!;
   const siblings = [...s.goals.values()].filter((g) => g.def.parent === parent.id && g.status === "active");
-  const remaining = (parent.def.budget.turns ?? Infinity) - parent.spent.turns;
+  const pool = poolOf(parent.def.budget);
+  if (!pool) return `${parent.id} has no turn budget to carve from: the partner gives it one first`;
+  const unit = pool === "turns" ? "turns" : "turns a week";
+  const remaining = poolLeft(parent, pool);
   let carve = 0;
   const scopes: string[] = siblings.flatMap((g) => g.def.scope);
   for (const c of children) {
@@ -379,10 +406,11 @@ function checkSpawn(s: State, t: TodoState, children: GoalDef[], wtDir: string):
     if (!c.interfaces?.length) return `${c.id} names no interfaces: decide the contracts a workstream builds against before spawning it`;
     const missing = c.interfaces.filter((f) => !fs.existsSync(path.join(wtDir, f)));
     if (missing.length) return `${c.id}'s interfaces don't exist yet: ${missing.join(", ")}`;
-    if (c.budget?.turns === undefined) return `${c.id} needs a turn budget`;
-    carve += c.budget.turns;
+    const own = c.budget?.[pool];
+    if (own === undefined || !Number.isInteger(own) || own < 1) return `${c.id} needs a budget of at least 1 in ${pool}, carved from ${parent.id}'s`;
+    carve += own;
   }
-  if (carve > remaining) return `children need ${carve} turns; ${parent.id} has ${remaining} left`;
+  if (carve > remaining) return `children need ${carve} ${unit}; ${parent.id} has ${remaining} left`;
   // Workstreams an agent proposes don't get to be perpetual, watch the world, or claim
   // a bigger share of compute; their seed work goes through the same limits as any
   // proposal. Owners must be people who can answer.
@@ -402,7 +430,7 @@ function checkSpawn(s: State, t: TodoState, children: GoalDef[], wtDir: string):
         id, type: "ask_opened",
         ask: {
           id, goal: parent.id, to: parent.def.owner, kind: "decision", origin: `todo:${t.id}`, todo: t.id,
-          question: `Spawn ${goals.length} workstreams (${goals.map((g) => g.id).join(", ")}) with ${carve} of ${parent.id}'s ${remaining} remaining turns?`,
+          question: `Spawn ${goals.length} workstreams (${goals.map((g) => g.id).join(", ")}) with ${carve} of ${parent.id}'s ${remaining} remaining ${unit}?`,
           options: [{ id: "approve", label: "Spawn them", effect: { type: "spawn", goals } }, { id: "reject", label: "Don't", effect: { type: "ack" } }],
         },
       } as Omit<HEvent, "at" | "by">],
@@ -413,7 +441,7 @@ function checkSpawn(s: State, t: TodoState, children: GoalDef[], wtDir: string):
 
 export function spawnEvents(s: State, parentId: string, goals: GoalDef[]): Array<Omit<HEvent, "at" | "by">> {
   const parent = s.goals.get(parentId)!;
-  const carve = goals.reduce((n, g) => n + (g.budget.turns ?? 0), 0);
+  const pool = poolOf(parent.def.budget);
   const out: Array<Omit<HEvent, "at" | "by">> = [];
   for (const g of goals) {
     out.push({ id: eid("goal", g.id), type: "goal_opened", goal: { ...g, parent: parentId }, criteriaHash: criteriaHash(g), carvedFrom: parentId } as Omit<HEvent, "at" | "by">);
@@ -422,8 +450,9 @@ export function spawnEvents(s: State, parentId: string, goals: GoalDef[]): Array
       out.push({ id: `add-${id}`, type: "todo_added", todo: { ...d, id, goal: g.id }, provenance: `spawn:${parentId}` } as Omit<HEvent, "at" | "by">);
     }
   }
-  if (parent.def.budget.turns !== undefined) {
-    out.push({ id: eid("carve", parentId, goals.map((g) => g.id).join("_")), type: "budget_set", goal: parentId, budget: { ...parent.def.budget, turns: parent.def.budget.turns - carve } } as Omit<HEvent, "at" | "by">);
+  if (pool) {
+    const carve = goals.reduce((n, g) => n + (g.budget[pool] ?? 0), 0);
+    out.push({ id: eid("carve", parentId, goals.map((g) => g.id).join("_")), type: "budget_set", goal: parentId, budget: { ...parent.def.budget, [pool]: parent.def.budget[pool]! - carve } } as Omit<HEvent, "at" | "by">);
   }
   return out;
 }

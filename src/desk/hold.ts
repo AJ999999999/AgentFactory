@@ -107,7 +107,7 @@ export function commandOf(raw: Record<string, unknown>): string | undefined {
   return typeof c === "string" ? c : undefined;
 }
 
-export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "page" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode"; choice?: Choice; waitedMs?: number };
+export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "page" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode"; choice?: Choice; waitedMs?: number; note?: string };
 
 export type HoldDeps = { home?: string; now?: () => number; sleep?: (ms: number) => Promise<void>; pollMs?: number };
 
@@ -140,7 +140,7 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
       if (a) {
         const waitedMs = now() - start;
         if (a.choice === "terminal") return { output: usual, by: "terminal", choice: a.choice, waitedMs };
-        if (a.choice === "deny") return { output: { behavior: "deny", message: a.note ? `Denied from the desk: ${a.note}` : "Denied from the desk." }, by: "page", choice: a.choice, waitedMs };
+        if (a.choice === "deny") return { output: { behavior: "deny", message: a.note ? `Denied from the desk: ${a.note}` : "Denied from the desk." }, by: "page", choice: a.choice, waitedMs, ...(a.note ? { note: a.note } : {}) };
         return { output: { behavior: "allow" }, by: "page", choice: a.choice, waitedMs };
       }
       if (!deskOpen(home, now())) return { output: usual, by: "desk-closed", waitedMs: now() - start };

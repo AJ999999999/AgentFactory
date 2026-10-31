@@ -35,6 +35,8 @@ export type DeskEvent = {
   kind?: string;
   message?: string;
   reason?: string;
+  // Copilot's own file for the session, when a hook was told where it is.
+  transcript?: string;
   // On a decision: who settled it, what was chosen, how long the session waited.
   by?: string;
   choice?: string;
@@ -72,6 +74,8 @@ export function toEvent(event: DeskEventName, raw: Record<string, unknown>, env:
   if (message) out.message = message;
   const reason = str(raw.reason) ?? str(raw.stopReason) ?? str(raw.source);
   if (reason) out.reason = reason;
+  const transcript = str(raw.transcriptPath) ?? str(raw.transcript_path);
+  if (transcript) out.transcript = transcript;
   return out;
 }
 

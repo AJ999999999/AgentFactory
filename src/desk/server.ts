@@ -1,5 +1,6 @@
-// The desk's page: every Copilot CLI terminal on this PC, what each is waiting on, and
-// the permission asks held for you, answered with one click.
+// The desk's page: every Copilot CLI terminal on this PC, what each is waiting on and
+// doing, the permission asks held for you, and what finished sessions taught, for you
+// to confirm. It also runs the learning: each ended session is analysed once.
 //
 // Same guards as the partner's panel: it listens on 127.0.0.1 only, answers only
 // requests addressed to that host, and every call carries a token only the served page
@@ -14,16 +15,30 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { runCommand } from "../proc.ts";
 import { answer, type Choice, loadConfig, modesFile, pageFile, pending, readJson, type Rule, rulesFile, writeJson } from "./hold.ts";
+import { confirm, guesses, knowledgeDir, commit, reject, repoNameOf, summary } from "./knowledge.ts";
+import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnConfig, toLearn } from "./learn.ts";
 import { deskHome, readLog } from "./log.ts";
+import { sessionFile, sessionTail } from "./session.ts";
 import { deskView } from "./view.ts";
 
 const PAGE = path.join(import.meta.dirname, "page.html");
+const PANEL_PAGE = path.join(import.meta.dirname, "..", "panel", "page.html");
+
+// The desk wears the partner's panel's styles, taken from its page each time, so the
+// two look like one product and a change to the panel's look reaches the desk too.
+export function page(): string {
+  const panel = fs.readFileSync(PANEL_PAGE, "utf8");
+  const css = panel.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+  return fs.readFileSync(PAGE, "utf8").replace("/*__PANEL_CSS__*/", () => css);
+}
 const MAX_BODY = 64 * 1024;
 const CHOICES: Choice[] = ["allow", "deny", "terminal", "always"];
 
 class BadRequest extends Error {}
 
-export type DeskOptions = { home?: string; port?: number; log?: (line: string) => void; jump?: (title: string) => Promise<boolean> };
+export type DeskOptions = { home?: string; port?: number; log?: (line: string) => void; jump?: (title: string) => Promise<boolean>; analyst?: Analyst; learnEveryMs?: number };
+
+export type Learning = { running?: { session: string; repo: string; since: number }; queued: number; recent: Analysis[] };
 export type Desk = { url: string; port: number; token: string; close: () => Promise<void> };
 
 // Bring a terminal's window forward by the title `copilot-here.ps1` gave it. The title
@@ -38,13 +53,43 @@ export async function jumpWindows(title: string): Promise<boolean> {
   }
 }
 
-export function snapshot(home: string, now = Date.now()) {
+// Reading session files and the knowledge repo costs more than the rest; the page asks
+// several times a second while it waits, so those parts are reused for a moment.
+const cache = new Map<string, { at: number; value: unknown }>();
+function cached<T>(key: string, ms: number, now: number, make: () => T): T {
+  const c = cache.get(key);
+  if (c && now - c.at < ms) return c.value as T;
+  const value = make();
+  cache.set(key, { at: now, value });
+  return value;
+}
+
+export function recentAnalyses(dir: string, n = 6): Analysis[] {
+  try {
+    return fs.readdirSync(analysesDir(dir)).filter((f) => f.endsWith(".json")).map((f) => readJson<Analysis | null>(path.join(analysesDir(dir), f), null)).filter((a): a is Analysis => !!a).sort((a, b) => b.at - a.at).slice(0, n);
+  } catch {
+    return [];
+  }
+}
+
+export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }) {
   const cfg = loadConfig(home);
   // An ask the hook left behind (Copilot killed it, the PC slept) is past its wait.
   const asks = pending(home).filter((a) => now - a.at < cfg.holdSec * 1000);
   const rules = readJson<Rule[]>(rulesFile(home), []);
   const modes = readJson<Record<string, string>>(modesFile(home), {});
-  return { now, holdSec: cfg.holdSec, terminals: deskView(readLog(home), asks, rules, modes, now) };
+  const log = readLog(home);
+  const dir = knowledgeDir(home);
+  const terminals = deskView(log, asks, rules, modes, now).map((t) => {
+    const repo = repoNameOf(t.cwd);
+    const transcript = log.find((e) => e.session === t.session && e.transcript)?.transcript;
+    const tail = t.state === "closed" ? [] : cached(`tail:${t.session}`, 1500, now, () => {
+      const f = sessionFile(t.session, transcript);
+      return f ? sessionTail(f) : [];
+    });
+    return { ...t, repo, tail, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)) };
+  });
+  return { now, holdSec: cfg.holdSec, knowledgeDir: dir, terminals, guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), learning };
 }
 
 // Changes the page cares about; the clock alone isn't one.
@@ -72,7 +117,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     });
     res.end(body);
   };
@@ -82,7 +127,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
     try {
       if (!hosts().has(req.headers.host ?? "")) return send(res, 403, "wrong host", "text/plain");
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-      if (req.method === "GET" && url.pathname === "/") return send(res, 200, fs.readFileSync(PAGE, "utf8").replace("__TOKEN__", token), "text/html; charset=utf-8");
+      if (req.method === "GET" && url.pathname === "/") return send(res, 200, page().replace("__TOKEN__", token), "text/html; charset=utf-8");
       if (!url.pathname.startsWith("/api/")) return send(res, 404, "not found", "text/plain");
       const origin = req.headers.origin;
       if (origin !== undefined && !hosts().has(origin.replace(/^http:\/\//, ""))) return json(res, 403, { error: "wrong origin" });
@@ -93,7 +138,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         const since = url.searchParams.get("since");
         const until = Date.now() + Math.min(Number(url.searchParams.get("wait") ?? 25_000) || 0, 25_000);
         for (;;) {
-          const snap = snapshot(home);
+          const snap = snapshot(home, Date.now(), learning());
           const version = fingerprint(snap);
           if (version !== since || Date.now() >= until || req.destroyed) return json(res, 200, { ...snap, version });
           await new Promise((r) => setTimeout(r, 400));
@@ -133,6 +178,29 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
           log(`${terminal}: ${prefix ?? tool} asks again`);
           break;
         }
+        case "/api/know": {
+          // You confirm a guess (as it is, or in your words) or mark it wrong.
+          const principal = str(body.principal, "principal", 100);
+          const entry = str(body.entry, "entry", 200);
+          const dir = knowledgeDir(home);
+          try {
+            if (body.verdict === "right") confirm(dir, principal, entry, Date.now(), typeof body.text === "string" ? body.text.slice(0, 500) : undefined);
+            else if (body.verdict === "wrong") reject(dir, principal, entry, Date.now(), typeof body.text === "string" && body.text.trim() ? body.text.slice(0, 300) : undefined);
+            else throw new Error("verdict is right or wrong");
+          } catch (e) {
+            throw new BadRequest((e as Error).message);
+          }
+          cache.clear();
+          await commit(dir, `${body.verdict === "right" ? "confirm" : "retract"} ${entry}`, { Principal: principal }, log);
+          log(`${principal}: ${entry} ${body.verdict}`);
+          break;
+        }
+        case "/api/learn": {
+          const session = str(body.session, "session", 200);
+          if (!/^[\w.-]+$/.test(session)) throw new BadRequest("bad session id");
+          learnNow(session);
+          break;
+        }
         case "/api/jump": {
           const terminal = str(body.terminal, "terminal");
           if (!(await jump(`copilot: ${terminal}`))) throw new BadRequest(`couldn't find a window titled "copilot: ${terminal}": start that terminal with copilot-here.ps1`);
@@ -165,6 +233,49 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
     }
   }
   port = (server.address() as { port: number }).port;
+
+  // Learning runs here, one session at a time, so analyses never pile up on your quota.
+  let closed = false;
+  let running: Learning["running"];
+  let queued = 0;
+  const analyst = opts.analyst ?? copilotAnalyst(learnConfig(home), () => {});
+  const learning = (): Learning => ({ ...(running ? { running } : {}), queued, recent: cached("recent", 3000, Date.now(), () => recentAnalyses(knowledgeDir(home))) });
+  const runOne = async (session: string, transcript?: string, force = false) => {
+    const cwd = readLog(home).find((e) => e.session === session)?.cwd;
+    running = { session, repo: cwd ? repoNameOf(cwd) : "", since: Date.now() };
+    try {
+      await learn(session, { home, analyst, force, ...(transcript ? { transcript } : {}), log });
+    } catch (e) {
+      log(`learning ${session.slice(0, 8)}: ${(e as Error).message.split("\n")[0]}`);
+    } finally {
+      running = undefined;
+      cache.clear();
+    }
+  };
+  let busy = false;
+  const pass = async () => {
+    if (busy || learnConfig(home).learn === "off") return;
+    busy = true;
+    try {
+      const todo = toLearn(readLog(home), knowledgeDir(home));
+      queued = todo.length;
+      for (const t of todo) {
+        if (closed) break;
+        queued--;
+        await runOne(t.session, t.transcript);
+      }
+    } finally {
+      busy = false;
+    }
+  };
+  const learnNow = (session: string) => {
+    if (busy) throw new BadRequest("already learning from a session; try again in a minute");
+    busy = true;
+    void runOne(session, undefined, true).finally(() => (busy = false));
+  };
+  const learner = setInterval(() => void pass(), opts.learnEveryMs ?? 30_000);
+  const first = setTimeout(() => void pass(), Math.min(opts.learnEveryMs ?? 5_000, 5_000));
+
   const beat = () => writeJson(pageFile(home), { at: Date.now(), pid: process.pid, url: `http://127.0.0.1:${port}/` });
   beat();
   const beating = setInterval(beat, 5_000);
@@ -176,6 +287,9 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
       new Promise<void>((r) => {
         // Stop holding at once rather than after the beat goes stale.
         clearInterval(beating);
+        clearInterval(learner);
+        clearTimeout(first);
+        closed = true;
         fs.rmSync(pageFile(home), { force: true });
         server.closeAllConnections?.();
         server.close(() => r());

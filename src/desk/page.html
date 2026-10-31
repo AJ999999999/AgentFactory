@@ -2,145 +2,279 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Desk</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentFactory desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap">
 <style>
-  :root { --bg: #f6f5f2; --card: #fff; --ink: #1d1d1b; --mute: #6b6a66; --line: #e3e1dc; --wait: #b45309; --wait-bg: #fef3c7; --ok: #166534; --ok-bg: #dcfce7; --no: #991b1b; --no-bg: #fee2e2; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --card: #1f1f1d; --ink: #ecebe7; --mute: #9b9a95; --line: #33332f; --wait: #fbbf24; --wait-bg: #3a2c0b; --ok: #86efac; --ok-bg: #12301d; --no: #fca5a5; --no-bg: #3b1515; } }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 16px; margin: 0; }
-  header .mute { font-size: 13px; }
-  main { padding: 16px 20px; display: grid; gap: 12px; max-width: 980px; }
-  .mute { color: var(--mute); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
-  .card.waiting { border-color: var(--wait); }
-  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .name { font-weight: 600; font-size: 15px; }
-  .badge { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--line); }
-  .badge.wait { background: var(--wait-bg); color: var(--wait); }
-  .badge.closed { opacity: .6; }
-  .spacer { flex: 1; }
-  button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
-  button:hover { border-color: var(--mute); }
-  button.allow { background: var(--ok-bg); color: var(--ok); border-color: transparent; font-weight: 600; }
-  button.deny { background: var(--no-bg); color: var(--no); border-color: transparent; }
-  button.link { border: none; background: none; padding: 0; color: var(--mute); text-decoration: underline; }
-  .ask { margin-top: 10px; padding: 10px; border-radius: 6px; background: var(--bg); }
-  .ask code { display: block; white-space: pre-wrap; word-break: break-all; font: 12.5px ui-monospace, Consolas, monospace; margin: 6px 0 8px; max-height: 9em; overflow: auto; }
-  .ask input { font: inherit; font-size: 13px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 220px; }
-  .said { margin-top: 6px; white-space: pre-wrap; }
-  .rules { margin-top: 8px; font-size: 13px; }
-  #err { color: var(--no); }
-  .empty { padding: 30px; text-align: center; }
+/*__PANEL_CSS__*/
+
+/* ---------- the desk's own pieces, in the panel's vocabulary ---------- */
+header .sub { color: var(--ink-2); font-size: 14px; }
+header .spacer { flex: 1; }
+.cmd { display: block; margin-top: 3px; font: 13px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6em; overflow: hidden; }
+.body .cmd { max-height: 16em; overflow: auto; background: var(--rack); padding: 8px 10px; border-radius: 2px; }
+.subject { display: block; font-size: 13px; color: var(--ink-2); font-stretch: 87%; }
+.opt.allow { border-color: var(--good); color: var(--good); }
+.opt.deny { border-color: var(--bad); color: var(--bad); }
+.opt.quiet-opt { border-color: transparent; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
+.form.row { display: flex; gap: 8px; align-items: center; max-width: none; }
+.form.row input[type=text] { flex: 1; min-width: 160px; }
+.eng-head .acts { display: flex; gap: 6px; flex: none; }
+.knows { margin-top: 16px; }
+.knows .work li.k-guess .g { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ink-2); }
+.knows .work li.k-sure .g { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+.knows .work li.k-guess span { color: var(--ink-2); }
+.seat button { border: 0; background: none; padding: 0 0 0 2px; color: var(--ink-3); }
+.seat button:hover { color: var(--bad); }
+.learning { margin-top: 22px; padding-top: 14px; border-top: 2px solid var(--ink); font-size: 14px; }
+.learning .row { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; gap: 10px; color: var(--ink-2); }
+.learning .row.bad span:nth-child(2) { color: var(--bad); }
+.learning .where { font-size: 13px; color: var(--ink-3); overflow-wrap: anywhere; margin-top: 8px; }
+.live .learn-now { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 2px 10px; font-size: 13px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Desk</h1>
-  <span class="mute" id="sub">connecting…</span>
+  <h1 class="call">AgentFactory</h1>
+  <span class="sub" id="sub">desk</span>
+  <span id="offline" hidden></span>
   <span class="spacer"></span>
-  <span id="err"></span>
-  <button id="notify" hidden>Notify me</button>
+  <button class="toggle" id="notify" hidden>Notify me when a terminal asks</button>
 </header>
-<main id="list"></main>
+<main>
+  <section id="rack" aria-label="Waiting on you"></section>
+  <section id="console" aria-label="Terminals"></section>
+</main>
 <script>
+"use strict";
 const TOKEN = "__TOKEN__";
-const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const ago = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`; };
-let state = null, version = "", seen = new Set();
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, seen: new Set(), err: {} };
 
-async function call(path, body) {
-  const res = await fetch(path, body === undefined ? { headers: { "x-desk-token": TOKEN } } : { method: "POST", headers: { "x-desk-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body) });
-  const v = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(v.error || res.statusText);
-  return v;
+async function api(path, body) {
+  const res = await fetch(path, body === undefined
+    ? { headers: { "x-desk-token": TOKEN } }
+    : { method: "POST", headers: { "x-desk-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+  return out;
 }
-async function act(path, body) {
-  try { $("#err").textContent = ""; await call(path, body); version = ""; } catch (e) { $("#err").textContent = e.message; }
+
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "value") el.value = v;
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
+  return el;
+}
+
+function ago(ms, now) {
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const hr = Math.round(m / 60);
+  return hr < 48 ? `${hr}h` : `${Math.round(hr / 24)}d`;
+}
+const cmdOf = (detail) => {
+  try { const v = JSON.parse(detail); return v.command || v.path || v.url || detail; } catch { return detail || ""; }
+};
+
+// ---------- actions ----------
+
+async function act(path, body, errKey) {
+  ui.sending = true;
+  try {
+    await api(path, body);
+    delete ui.err[errKey];
+  } catch (e) {
+    ui.err[errKey] = e.message;
+  } finally {
+    ui.sending = false;
+    render();
+  }
+}
+const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); render(); };
+const jump = (name) => act("/api/jump", { terminal: name }, `t:${name}`);
+
+// ---------- the rack: what is waiting on you ----------
+
+function stripEl(k, kind, who, sub, q, rec, at, now, body, fresh) {
+  const isOpen = ui.open.has(k);
+  return h("div", { class: `strip k-${kind}${isOpen ? " open" : ""}${fresh ? " fresh" : ""}` },
+    h("button", { class: "head", "aria-expanded": String(isOpen), onclick: () => toggle(k) },
+      h("span", { class: "who" }, h("span", { class: "call" }, who), sub ? h("span", { class: "gid" }, sub) : null),
+      h("span", { class: "q" }, q, rec ? h("span", { class: "rec" }, rec) : null),
+      h("span", { class: "holds" }),
+      h("span", { class: "age" }, ago(at, now))),
+    h("div", { class: "body" }, body, ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null));
+}
+
+function askStrip(t, a, now, holdSec) {
+  const k = `ask:${a.id}`;
+  if (!ui.seen.has(k)) ui.open.add(k); // a new ask opens, so one click answers it
+  const cmd = cmdOf(a.detail);
+  const left = Math.max(0, Math.round((a.at + holdSec * 1000 - now) / 60000));
+  const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": k });
+  const body = [
+    cmd.length > 100 ? h("code", { class: "cmd" }, cmd) : null,
+    h("div", { class: "options" },
+      h("button", { class: "opt rec allow", onclick: () => act("/api/answer", { ask: a.id, choice: "allow" }, k) }, "Allow"),
+      a.always ? h("button", { class: "opt", onclick: () => act("/api/answer", { ask: a.id, choice: "always" }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : a.tool} in ${t.name} from now on`) : null,
+      h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal")),
+    h("div", { class: "form row" }, note,
+      h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k) }, "Deny")),
+  ];
+  const urgent = now - a.at > 5 * 60_000;
+  return stripEl(k, urgent ? "approval urgent" : "approval", t.name, a.tool, h("span", null, h("code", { class: "cmd" }, cmd || a.tool)), `goes to the terminal in ${left} min if you don't answer`, a.at, now, body, !ui.seen.has(k));
+}
+
+function waitStrip(t, now) {
+  const k = `wait:${t.name}:${t.since}`;
+  const kind = t.state === "asking you" ? "decision" : t.state === "waiting for permission" ? "approval" : "action";
+  const label = t.state === "asking you" ? "asks you" : t.state === "waiting for permission" ? "asks in its terminal" : "your turn";
+  const body = [
+    t.said ? h("div", { class: "why" }, t.said) : null,
+    h("div", { class: "options" }, h("button", { class: "opt rec", onclick: () => jump(t.name) }, `Go to ${t.name}`)),
+    h("div", { class: "about" }, t.state === "waiting for your next prompt" ? "Copilot finished and waits for your next prompt in that terminal." : "Copilot's own prompt is open in that terminal: answer it there."),
+  ];
+  return stripEl(k, kind, t.name, label, t.said || t.state, null, t.since, now, body, false);
+}
+
+function guessStrip(g, now) {
+  const k = `know:${g.principal}:${g.entry}`;
+  const repo = g.principal === "you" ? "you" : g.principal.replace(/^repo\./, "");
+  const mine = h("input", { type: "text", value: g.text, "data-k": k });
+  const why = h("input", { type: "text", placeholder: "What's wrong with it (optional)", "data-k": `${k}:why` });
+  const body = [
+    g.because ? h("div", { class: "why" }, g.because, g.session ? h("div", { class: "by" }, `from session ${g.session.slice(0, 8)}`) : null) : null,
+    h("div", { class: "about" }, "Until you confirm it, new sessions get this as a guess to check, not as a fact."),
+    h("div", { class: "options" },
+      h("button", { class: "opt rec allow", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right" }, k) }, "Right")),
+    h("div", { class: "form row" }, mine,
+      h("button", { class: "opt", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right", text: mine.value }, k) }, "Right, in these words")),
+    h("div", { class: "form row" }, why,
+      h("button", { class: "opt deny", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "wrong", text: why.value }, k) }, "Wrong")),
+  ];
+  return stripEl(k, "review", repo, `learned · ${g.kind}`, h("span", null, h("span", { class: "subject" }, g.subject), g.text), null, g.at, now, body, false);
+}
+
+function rack(d) {
+  const now = d.now;
+  const out = [];
+  for (const t of d.terminals) for (const a of t.asks) out.push(askStrip(t, a, now, d.holdSec));
+  for (const t of d.terminals) if (t.state === "asking you" || t.state === "waiting for permission") out.push(waitStrip(t, now));
+  for (const g of d.guesses) out.push(guessStrip(g, now));
+  for (const t of d.terminals) if (t.state === "waiting for your next prompt") out.push(waitStrip(t, now));
+  for (const t of d.terminals) for (const a of t.asks) ui.seen.add(`ask:${a.id}`);
+  if (!out.length) out.push(h("div", { class: "quiet" }, "Nothing is waiting on you."));
+  return out;
+}
+
+// ---------- the console: one block per terminal ----------
+
+function beat(t) {
+  const cls = t.state === "closed" ? "off" : t.state === "working" ? "ok" : "late";
+  return h("span", { class: `beat ${cls}` }, h("i"), `${t.state} · ${ago(t.since, ui.data.now)}`);
+}
+
+function terminalEl(t) {
+  const k = `t:${t.name}`;
+  const kn = t.knowledge;
+  return h("div", { class: "eng" },
+    h("div", { class: "eng-head" },
+      h("h2", null, h("span", { class: "call" }, t.name), h("span", { class: "folder" }, t.cwd)),
+      beat(t)),
+    h("div", { class: "eng-head", style: "margin-top:8px" },
+      h("span", { class: "n", style: "flex:1" }, `${t.stopsToday} stop${t.stopsToday === 1 ? "" : "s"} today`),
+      h("span", { class: "acts" },
+        h("button", { class: "toggle", title: "Where this terminal's permission asks are answered", onclick: () => act("/api/mode", { terminal: t.name, mode: t.mode === "desk" ? "terminal" : "desk" }, k) }, t.mode === "desk" ? "Asks: here" : "Asks: in the terminal"),
+        t.state !== "closed" ? h("button", { class: "toggle", onclick: () => jump(t.name) }, "Go to terminal") : null)),
+    ui.err[k] ? h("div", { class: "eng-err" }, ui.err[k]) : null,
+    t.tail && t.tail.length ? h("div", { class: "live" },
+      h("div", { class: "live-head" }, h("span", { class: "t" }, `Session ${t.session.slice(0, 8)}`),
+        h("button", { class: "learn-now", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
+      h("pre", null, t.tail.join("\n"))) : null,
+    h("div", { class: "knows" },
+      h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
+        h("span", { class: "v" }, kn.confirmed + kn.guesses ? `${kn.confirmed} confirmed · ${kn.guesses} to check` : "nothing yet")),
+      kn.items.length ? h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it in the left column" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))) : null),
+    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
+      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
+        h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null);
+}
+
+function learningEl(d) {
+  const l = d.learning;
+  return h("div", { class: "learning" },
+    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Learning"),
+      h("span", { class: "t" }, l.running ? `reading ${l.running.repo || "a"} session ${l.running.session.slice(0, 8)}…` : l.queued ? `${l.queued} sessions waiting` : "each finished session is read once")),
+    l.recent.map((a) => h("div", { class: `row${a.ok ? "" : " bad"}` },
+      h("span", null, ago(a.at, d.now)),
+      h("span", null, a.error ? `${a.repo}: ${a.error}` : `${a.repo}: ${a.kept.length} learned${a.dropped.length ? `, ${a.dropped.length} left out` : ""}`),
+      h("span", null, a.session.slice(0, 8)))),
+    h("div", { class: "where" }, `Kept in ${d.knowledgeDir}`));
 }
 
 function render() {
-  if (!state) return;
-  const ts = state.terminals;
-  const waiting = ts.reduce((n, t) => n + t.asks.length, 0);
-  document.title = waiting ? `(${waiting}) Desk` : "Desk";
-  $("#sub").textContent = `${ts.filter((t) => t.state !== "closed").length} terminals · asks wait here ${Math.round(state.holdSec / 60)} min, then go to the terminal`;
-  if (!ts.length) { $("#list").innerHTML = `<div class="card empty mute">No Copilot CLI session recorded yet. Start one in any terminal (scripts\\windows\\copilot-here.ps1 names it).</div>`; return; }
-  $("#list").innerHTML = ts.map((t) => {
-    const wait = t.state !== "working" && t.state !== "closed";
-    const asks = t.asks.map((a) => `
-      <div class="ask">
-        <div class="row"><b>${esc(a.tool)}</b><span class="mute">waiting ${ago(state.now - a.at)}</span></div>
-        ${a.detail ? `<code>${esc(a.detail)}</code>` : ""}
-        <div class="row">
-          <button class="allow" data-a="${esc(a.id)}" data-c="allow">Allow</button>
-          ${a.always ? `<button data-a="${esc(a.id)}" data-c="always">Allow ${a.always.prefix ? `<code style="display:inline">${esc(a.always.prefix)} …</code>` : esc(a.tool)} here from now on</button>` : ""}
-          <input placeholder="why not (Copilot reads this)" data-note="${esc(a.id)}">
-          <button class="deny" data-a="${esc(a.id)}" data-c="deny">Deny</button>
-          <button class="link" data-a="${esc(a.id)}" data-c="terminal">answer in the terminal</button>
-        </div>
-      </div>`).join("");
-    const rules = t.rules.length ? `<div class="rules mute">Allowed here without asking: ${t.rules.map((r) => `${r.prefix ? `<code>${esc(r.prefix)} …</code>` : esc(r.tool)} <button class="link" data-forget="${esc(t.name)}" data-tool="${esc(r.tool)}" data-prefix="${esc(r.prefix || "")}">ask again</button>`).join(", ")}</div>` : "";
-    return `
-      <div class="card ${wait ? "waiting" : ""}">
-        <div class="row">
-          <span class="name">${esc(t.name)}</span>
-          <span class="badge ${wait ? "wait" : t.state === "closed" ? "closed" : ""}">${esc(t.state)} · ${ago(state.now - t.since)}</span>
-          <span class="mute">${t.stopsToday} stops today</span>
-          <span class="spacer"></span>
-          <button class="link" data-mode="${esc(t.name)}" data-to="${t.mode === "desk" ? "terminal" : "desk"}">${t.mode === "desk" ? "asks come here · send to terminal instead" : "asks go to the terminal · bring here"}</button>
-          <button data-jump="${esc(t.name)}">Go to terminal</button>
-        </div>
-        <div class="mute">${esc(t.cwd)}</div>
-        ${t.said && !t.asks.length ? `<div class="said">${esc(t.said)}</div>` : ""}
-        ${asks}${rules}
-      </div>`;
-  }).join("");
+  const d = ui.data;
+  if (!d) return;
+  const f = document.activeElement;
+  if (ui.sending || (f && f.tagName === "INPUT")) { ui.pending = true; return; }
+  ui.pending = false;
+  const waiting = d.terminals.reduce((n, t) => n + t.asks.length, 0);
+  document.title = waiting ? `(${waiting}) AgentFactory desk` : "AgentFactory desk";
+  document.getElementById("sub").textContent = `desk · ${d.terminals.filter((t) => t.state !== "closed").length} terminals`;
+  document.getElementById("rack").replaceChildren(...rack(d));
+  const con = document.getElementById("console");
+  con.replaceChildren(...(d.terminals.length ? d.terminals.map(terminalEl) : [h("div", { class: "empty" },
+    h("p", null, "No Copilot CLI session yet."),
+    h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once, then start Copilot in each repo's terminal with ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."))]),
+    learningEl(d));
+  announce(d);
 }
-
-document.addEventListener("click", (ev) => {
-  const b = ev.target.closest("button");
-  if (!b) return;
-  if (b.dataset.a) {
-    const note = b.dataset.c === "deny" ? document.querySelector(`[data-note="${CSS.escape(b.dataset.a)}"]`)?.value : undefined;
-    act("/api/answer", { ask: b.dataset.a, choice: b.dataset.c, note });
-  } else if (b.dataset.mode) act("/api/mode", { terminal: b.dataset.mode, mode: b.dataset.to });
-  else if (b.dataset.forget) act("/api/forget", { terminal: b.dataset.forget, tool: b.dataset.tool, prefix: b.dataset.prefix });
-  else if (b.dataset.jump) act("/api/jump", { terminal: b.dataset.jump });
-});
+document.addEventListener("focusout", () => setTimeout(() => { if (ui.pending) render(); }, 0));
 
 // A new ask while you're in a terminal: a system notification, if you allowed them.
-function announce() {
-  for (const t of state.terminals) for (const a of t.asks) {
-    if (seen.has(a.id)) continue;
-    seen.add(a.id);
-    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") new Notification(`${t.name} asks: ${a.tool}`, { body: a.detail || "", tag: a.id });
+const told = new Set();
+function announce(d) {
+  for (const t of d.terminals) for (const a of t.asks) {
+    if (told.has(a.id)) continue;
+    told.add(a.id);
+    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") new Notification(`${t.name} wants to run ${a.tool}`, { body: cmdOf(a.detail), tag: a.id });
   }
 }
 if ("Notification" in window && Notification.permission === "default") {
-  $("#notify").hidden = false;
-  $("#notify").onclick = () => Notification.requestPermission().then(() => ($("#notify").hidden = true));
+  const b = document.getElementById("notify");
+  b.hidden = false;
+  b.onclick = () => Notification.requestPermission().then(() => (b.hidden = true));
 }
 
-// Wait on the server for a change rather than polling on a timer (timers in background tabs slow to a crawl).
+// Wait on the server for a change rather than polling on a timer: browsers slow
+// timers in background tabs to a crawl, but not a request already waiting.
 async function loop() {
+  const off = document.getElementById("offline");
   for (;;) {
     try {
-      const v = await call(`/api/state?since=${encodeURIComponent(version)}&wait=${version ? 25000 : 0}`);
-      version = v.version; state = v;
-      if (!document.activeElement || document.activeElement.tagName !== "INPUT") render();
-      announce();
-      $("#err").textContent = "";
+      const v = await api(`/api/state?since=${encodeURIComponent(ui.version)}&wait=${ui.version ? 25000 : 0}`);
+      ui.version = v.version;
+      ui.data = v;
+      off.hidden = true;
+      render();
     } catch (e) {
-      $("#err").textContent = `${e.message}`;
+      off.textContent = /out of date/.test(e.message) ? "This page is out of date. Reload it." : "Can't reach the desk. Is npm run desk still running?";
+      off.hidden = false;
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
 }
-setInterval(() => { if (state) { state.now = Date.now(); if (!document.activeElement || document.activeElement.tagName !== "INPUT") render(); } }, 5000);
+setInterval(() => { if (ui.data) { ui.data.now = Date.now(); render(); } }, 15000);
 loop();
 </script>
 </body>

@@ -1,12 +1,16 @@
 // The hook Copilot CLI runs on each session event: `node hook.ts <event>`, the event's
 // JSON on stdin. Every event is recorded. A permission request may be held for the
-// desk's page (see hold.ts); everything else prints nothing, which Copilot reads as "go
-// on as usual". It always exits 0: a command hook that fails denies the tool call, and a
-// broken desk must never be what stops your session.
+// desk's page (see hold.ts); a new session is told what earlier sessions in its repo
+// taught (see knowledge.ts); everything else prints nothing, which Copilot reads as
+// "go on as usual". It always exits 0: a command hook that fails denies the tool call,
+// and a broken desk must never be what stops your session.
 import { commandOf, hold } from "./hold.ts";
+import { contextFor } from "./knowledge.ts";
 import { append, EVENTS, toEvent, type DeskEventName } from "./log.ts";
 
 const name = process.argv[2] as DeskEventName;
+// The desk's own analysis runs are Copilot sessions too; they aren't yours to track.
+if (process.env.AF_DESK_QUIET) process.exit(0);
 try {
   if (!EVENTS.includes(name)) throw new Error(`unknown event ${name}`);
   const chunks: Buffer[] = [];
@@ -15,9 +19,13 @@ try {
   const raw = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   const e = toEvent(name, raw);
   append(e);
+  if (name === "sessionStart") {
+    const context = contextFor(e.cwd);
+    if (context) process.stdout.write(JSON.stringify({ additionalContext: context }));
+  }
   if (name === "permissionRequest") {
     const r = await hold(e, {}, commandOf(raw));
-    if (r.by !== "pass") append({ at: Date.now(), event: "decision", session: e.session, cwd: e.cwd, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), by: r.by, ...(r.choice ? { choice: r.choice } : {}), ...(r.waitedMs !== undefined ? { waitedMs: r.waitedMs } : {}) });
+    if (r.by !== "pass") append({ at: Date.now(), event: "decision", session: e.session, cwd: e.cwd, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), by: r.by, ...(r.choice ? { choice: r.choice } : {}), ...(r.note ? { message: r.note } : {}), ...(r.waitedMs !== undefined ? { waitedMs: r.waitedMs } : {}) });
     if (Object.keys(r.output).length) process.stdout.write(JSON.stringify(r.output));
   }
 } catch (e) {

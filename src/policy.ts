@@ -25,7 +25,9 @@ export type Policy = {
   profiles?: Record<string, { coordinator: boolean; max_workers: number; combined_digest_when_client_is_partner: boolean }>;
   // k: one missed escalation costs as much as k unnecessary ones. A class of decisions is
   // worth escalating when the chance the human changes the outcome is above 1/k.
-  escalation_quality?: { miss_cost_ratio: number };
+  // blind_share: share of briefs sent without the recommendation. The audit draws items
+  // within near_threshold_share of a threshold near_threshold_weight times as often.
+  escalation_quality?: { miss_cost_ratio: number; blind_share?: number; near_threshold_share?: number; near_threshold_weight?: number };
 };
 
 // Who owns a decision. Unmapped decision types go to the partner: when the policy

@@ -32,7 +32,7 @@
     "kinds": ["policy_change", "criteria_change"],
     "paths": [".agents/escalation-policy.json", ".agents/context/tasks/*.criteria.json"]
   },
-  "escalation_quality": { "miss_cost_ratio": 10 },
+  "escalation_quality": { "miss_cost_ratio": 10, "blind_share": 0.2, "near_threshold_share": 0.75, "near_threshold_weight": 4 },
   "trust": {
     "demote_when": { "revert_rate_30d": 0.05, "missed_escalations": 1 }
   },

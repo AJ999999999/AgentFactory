@@ -111,7 +111,7 @@ The pieces of `src/harness/`:
 - **Code:** plain TypeScript run by Node, with no new dependencies unless there's no reasonable alternative. Comments say why, not what.
 - **Tests:** add one per mechanism, named as a sentence about the behaviour (see `test/harness-rules.test.ts`). The harness rules have pure tests over projected state. Git-backed behaviour has tests through a real local bare repo.
 - **Docs:** written in plain words a newcomer can follow. Name things by what they do for the person, not by internal names.
-- **Commits:** make them only when asked, and branch first. The PRs are stacked; see Status.
+- **Commits:** make them only when asked, and branch first from an up-to-date `main`; see Status.
 - **Private material stays out of this public repo:**
   - engagements about real people, such as a child's game brief
   - personal apps such as trademind
@@ -131,7 +131,7 @@ The pieces of `src/harness/`:
 - Seats can run in Copilot, Claude Code, Codex, pi or omp, chosen by model; judges in Claude Code by default.
 - The partner's MCP tools.
 
-**The stacked PRs.** PRs #1 to #5 are open and stacked: foundation, then harness, then Windows, then memory, then panel. Branch `control-panel` contains all of them. Merge them in order with merge commits: retarget each next PR's base to `main` first, and don't squash, or the later PRs will conflict. The work on real CLIs, usage limits, live turns, Claude judges and partner tools sits uncommitted on top of `control-panel` until the owner says to commit it, as PR #6.
+**Branches and PRs.** PRs #1 to #7 are merged into `main` (foundation, harness, Windows, memory, panel, then two from other sessions: answers count as the partner's own unless relayed, and an escalation log). The work on real CLIs, usage limits, live turns, Claude judges, partner tools, worker mode and the eval is one commit on branch `real-clis-eval`, based on `main`; not pushed yet. Open PRs #8 (panel across project folders, decision cards) and #9 (an animated architecture diagram, which duplicates `docs/architecture.gif`) touch the same files, so whichever merges second needs its conflicts resolved.
 
 **What the first real runs showed (Windows, Copilot CLI 1.0.105, Claude Code 2.1.314, Codex CLI 0.166.0, pi 1.4.0)**
 - **Copilot has one model on this plan.** Its router reports only `gpt-6-luna`, and `--model` refuses every name, that one included. So `model-a` and `model-c` stay empty (Copilot's default), and `model-b`, the judges, is `claude:opus`.

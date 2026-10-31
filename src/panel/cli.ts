@@ -1,7 +1,8 @@
 // The partner's panel, on this PC.
 //
-//   npm run panel                     every engagement opened in this directory
-//   npm run panel -- --dir <folder>   ... or in another one (the Workspace the scheduled task uses)
+//   npm run panel                     every engagement opened here, and in every folder
+//                                     `harness open` has run in (listed in ~/.af/panel-folders.json)
+//   npm run panel -- --dir <folder>   only that folder; repeat --dir for several
 //   npm run panel -- --demo           a throwaway workspace with three simulated engagements
 //   --port 4700 (the next free one if taken)   --no-open (don't open the browser)
 import { spawn } from "node:child_process";
@@ -9,6 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadPolicy } from "../harness/project.ts";
+import { panelFolders } from "./folders.ts";
 import { startPanel } from "./server.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
@@ -19,17 +21,22 @@ const flag = (name: string) => {
 };
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
 
-let dir = path.resolve(flag("dir") ?? process.cwd());
+const asked = args.flatMap((a, i) => (a === "--dir" && i + 1 < args.length && !args[i + 1].startsWith("--") ? [args[i + 1]] : []));
 const demo = args.includes("--demo");
+let dirs = demo ? [] : panelFolders(asked, process.cwd());
+let dir = "";
 if (demo) {
   const { makeDemo } = await import("./demo.ts");
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-panel-demo-"));
   console.log(`building a demo workspace in ${dir} ...`);
   await makeDemo(dir, policy);
+  dirs = [dir];
 }
-if (!fs.existsSync(path.join(dir, ".af", "harness"))) console.log(`no engagements in ${dir} yet (open one with: npm run harness -- open <engagement.json>)`);
+const withWork = dirs.filter((d) => fs.existsSync(path.join(d, ".af", "harness")));
+if (!withWork.length) console.log(`no engagements in ${dirs.join(", ")} yet (open one with: npm run harness -- open <engagement.json>)`);
+else console.log(`engagements from: ${withWork.join(", ")}`);
 
-const panel = await startPanel({ dir, policy, port: Number(flag("port") ?? 4700), log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
+const panel = await startPanel({ dir: dirs, policy, port: Number(flag("port") ?? 4700), log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
 console.log(`panel: ${panel.url}  (Ctrl+C to stop)`);
 if (!args.includes("--no-open")) openBrowser(panel.url);
 

@@ -24,7 +24,7 @@ import { eid, safeId } from "./store.ts";
 import { REVIEW_LANE } from "./team.ts";
 
 export type FindingDraft = { assumption?: string; direction: Direction; grade: Grade; source: string; text: string; metrics?: Record<string, number> };
-export type AskDraft = { question: string; options: AskOption[]; to?: string };
+export type AskDraft = { question: string; options: AskOption[]; to?: string; recommend?: { option: string; why: string } };
 
 export type TurnOutput = {
   done?: boolean;
@@ -149,7 +149,18 @@ export function validateTurn(input: {
       continue;
     }
     if (s.asks.has(id)) { reasons.push(`ask ${i}: already asked (${id})`); continue; }
-    events.push({ id, at, by, type: "ask_opened", ask: { id, goal: t.goal, to, kind: "decision", question: d.question.slice(0, 600), options: d.options, origin: `turn:${turn}`, todo: t.id } });
+    // Only the fields the page knows, each bounded: an agent's JSON is not trusted to be small.
+    const options: AskOption[] = d.options.map((op) => ({
+      id: String(op.id).slice(0, 100),
+      label: String(op.label ?? op.id).slice(0, 200),
+      ...(op.effect ? { effect: op.effect } : {}),
+      ...(typeof op.consequence === "string" && op.consequence ? { consequence: op.consequence.slice(0, 300) } : {}),
+      ...(op.irreversible === true ? { irreversible: true } : {}),
+    }));
+    const r = d.recommend;
+    const recommend = r && typeof r.why === "string" && r.why && options.some((op) => op.id === r.option) ? { option: r.option, why: r.why.slice(0, 400), by: seat?.role ?? by } : undefined;
+    if (r && !recommend) reasons.push(`ask ${i}: the recommendation names no option of the question, or gives no reason; asked without it`);
+    events.push({ id, at, by, type: "ask_opened", ask: { id, goal: t.goal, to, kind: "decision", question: d.question.slice(0, 600), options, origin: `turn:${turn}`, todo: t.id, ...(recommend ? { recommend } : {}) } });
     accepted.asks++;
   }
 

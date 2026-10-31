@@ -20,6 +20,8 @@ export function logFile(home = deskHome()): string {
 // The events the desk listens to. Copilot names them in camelCase in a hooks file.
 export const EVENTS = ["sessionStart", "sessionEnd", "userPromptSubmitted", "permissionRequest", "notification", "agentStop"] as const;
 export type DeskEventName = (typeof EVENTS)[number];
+// Hooked but not recorded: runs after every tool call, only to hand over notes.
+export const HOOKED: ReadonlyArray<string> = [...EVENTS, "postToolUse"];
 
 export type DeskEvent = {
   at: number;

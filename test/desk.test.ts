@@ -55,7 +55,7 @@ test("install writes one hooks file in your Copilot folder covering every event,
   const file = install(HOOK, dir);
   const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.equal(cfg.version, 1);
-  assert.deepEqual(Object.keys(cfg.hooks).sort(), ["agentStop", "notification", "permissionRequest", "sessionEnd", "sessionStart", "userPromptSubmitted"]);
+  assert.deepEqual(Object.keys(cfg.hooks).sort(), ["agentStop", "notification", "permissionRequest", "postToolUse", "sessionEnd", "sessionStart", "userPromptSubmitted"]);
   for (const entries of Object.values(cfg.hooks) as Array<Array<{ powershell: string; bash: string; timeoutSec: number }>>) {
     assert.ok(entries[0].powershell.includes(HOOK) && entries[0].bash.includes(HOOK));
   }

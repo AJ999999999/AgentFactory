@@ -32,6 +32,14 @@ header .spacer { flex: 1; }
 .learning .row { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; gap: 10px; color: var(--ink-2); }
 .learning .row.bad span:nth-child(2) { color: var(--bad); }
 .learning .where { font-size: 13px; color: var(--ink-3); overflow-wrap: anywhere; margin-top: 8px; }
+.notes { margin-top: 14px; font-size: 14px; }
+.notes .note { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; color: var(--ink-2); }
+.notes .note b { color: var(--ink); font-weight: 550; }
+.notes .note.waiting span:last-child::after { content: " · waits for its next tool call"; color: var(--ink-3); }
+.notes .note.unread span:last-child::after { content: " · unread"; color: var(--ink-3); }
+.send { display: flex; gap: 6px; margin-top: 8px; }
+.send input { flex: 1; min-width: 0; border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--paper); border-radius: 2px; padding: 4px 8px; font-size: 13.5px; }
+.send button { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 3px 10px; font-size: 13px; }
 .live .learn-now { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 2px 10px; font-size: 13px; }
 </style>
 </head>
@@ -93,8 +101,10 @@ async function act(path, body, errKey) {
   try {
     await api(path, body);
     delete ui.err[errKey];
+    return true;
   } catch (e) {
     ui.err[errKey] = e.message;
+    return false;
   } finally {
     ui.sending = false;
     render();
@@ -165,14 +175,27 @@ function guessStrip(g, now) {
   return stripEl(k, "review", repo, `learned · ${g.kind}`, h("span", null, h("span", { class: "subject" }, g.subject), g.text), null, g.at, now, body, false);
 }
 
+function noteStrip(n, now) {
+  const k = `note:${n.id}`;
+  const body = [
+    h("div", { class: "why" }, n.text),
+    h("div", { class: "options" },
+      h("button", { class: "opt rec", onclick: () => act("/api/read", { note: n.id }, k) }, "Got it"),
+      h("button", { class: "opt", onclick: () => jump(n.from) }, `Go to ${n.from}`)),
+  ];
+  return stripEl(k, "action", n.from, "tells you", n.text, null, n.at, now, body, !ui.seen.has(k));
+}
+
 function rack(d) {
   const now = d.now;
   const out = [];
   for (const t of d.terminals) for (const a of t.asks) out.push(askStrip(t, a, now, d.holdSec));
   for (const t of d.terminals) if (t.state === "asking you" || t.state === "waiting for permission") out.push(waitStrip(t, now));
+  for (const n of d.forYou) out.push(noteStrip(n, now));
   for (const g of d.guesses) out.push(guessStrip(g, now));
   for (const t of d.terminals) if (t.state === "waiting for your next prompt") out.push(waitStrip(t, now));
   for (const t of d.terminals) for (const a of t.asks) ui.seen.add(`ask:${a.id}`);
+  for (const n of d.forYou) ui.seen.add(`note:${n.id}`);
   if (!out.length) out.push(h("div", { class: "quiet" }, "Nothing is waiting on you."));
   return out;
 }
@@ -205,9 +228,29 @@ function terminalEl(t) {
       h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
         h("span", { class: "v" }, kn.confirmed + kn.guesses ? `${kn.confirmed} confirmed · ${kn.guesses} to check` : "nothing yet")),
       kn.items.length ? h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it in the left column" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))) : null),
+    notesEl(t),
     t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
       t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
         h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null);
+}
+
+function noteLine(n, now, here) {
+  const dir = n.to === here ? h("b", null, `from ${n.from}`) : h("b", null, `to ${n.to}`);
+  return h("div", { class: `note${n.delivered ? "" : n.to === "you" ? " unread" : " waiting"}` }, h("span", null, ago(n.at, now)), h("span", null, dir, " ", n.text));
+}
+
+function sendBox(to, label) {
+  const k = `send:${to}`;
+  const input = h("input", { type: "text", placeholder: label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter") go(); } });
+  const go = () => { if (input.value.trim()) act("/api/note", { to, text: input.value }, k).then((ok) => { if (ok) { input.value = ""; input.blur(); } }); };
+  return [h("div", { class: "send" }, input, h("button", { onclick: go }, "Send")), ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null];
+}
+
+function notesEl(t) {
+  if (t.state === "closed" && !t.notes.length) return null;
+  return h("div", { class: "notes" },
+    t.notes.map((n) => noteLine(n, ui.data.now, t.name)),
+    t.state !== "closed" ? sendBox(t.name, `A note for ${t.name}'s session (it reads it while it works)`) : null);
 }
 
 function learningEl(d) {
@@ -236,6 +279,7 @@ function render() {
   con.replaceChildren(...(d.terminals.length ? d.terminals.map(terminalEl) : [h("div", { class: "empty" },
     h("p", null, "No Copilot CLI session yet."),
     h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once, then start Copilot in each repo's terminal with ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."))]),
+    d.terminals.filter((t) => t.state !== "closed").length > 1 ? h("div", { class: "learning" }, h("div", { class: "goal-head" }, h("span", { class: "call" }, "All terminals")), sendBox("all", "A note for every open session")) : null,
     learningEl(d));
   announce(d);
 }

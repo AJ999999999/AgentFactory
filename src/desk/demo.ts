@@ -75,6 +75,11 @@ export async function makeDemo(home: string): Promise<void> {
   recordProposals(dir, "web", [{ scope: "you", kind: "preference", subject: "git.push", value: "never", text: "Don't push; I push after reviewing the diff myself.", evidence: "you refused git push: I push myself" }], { session: "w0000000-earlier", now: at(90) });
   await commit(dir, "demo knowledge");
 
+  // Notes: web told billing about a change, and billing told you something.
+  const { send } = await import("./notes.ts");
+  send("web", "billing", "I renamed the API field invoice.totalCents to invoice.total_cents in the web client; the billing endpoint should send the new name.", { home, now: at(12) });
+  send("billing", "you", "The staging migration needs the finance team's sign-off before it runs; I've stopped at that step.", { home, now: at(4) });
+
   // The ask billing is waiting on, held the way the real hook holds it.
   writeJson(path.join(home, "page.json"), { at: Date.now() });
   const ask: DeskEvent = { at: Date.now(), event: "permissionRequest", session: "b1111111-demo", cwd: billing, terminal: "billing", tool: "powershell", detail: JSON.stringify({ command: "npm run migrate -- --env staging" }) };

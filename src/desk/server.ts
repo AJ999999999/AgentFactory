@@ -18,6 +18,7 @@ import { answer, type Choice, loadConfig, modesFile, pageFile, pending, readJson
 import { confirm, guesses, knowledgeDir, commit, reject, repoNameOf, summary } from "./knowledge.ts";
 import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnConfig, toLearn } from "./learn.ts";
 import { deskHome, readLog } from "./log.ts";
+import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
 import { sessionFile, sessionTail } from "./session.ts";
 import { deskView } from "./view.ts";
 
@@ -80,6 +81,7 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
   const modes = readJson<Record<string, string>>(modesFile(home), {});
   const log = readLog(home);
   const dir = knowledgeDir(home);
+  const notes = recentNotes(home);
   const terminals = deskView(log, asks, rules, modes, now).map((t) => {
     const repo = repoNameOf(t.cwd);
     const transcript = log.find((e) => e.session === t.session && e.transcript)?.transcript;
@@ -87,9 +89,9 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
       const f = sessionFile(t.session, transcript);
       return f ? sessionTail(f) : [];
     });
-    return { ...t, repo, tail, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)) };
+    return { ...t, repo, tail, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)), notes: notes.filter((n) => n.to === t.name || n.from === t.name).slice(0, 6) };
   });
-  return { now, holdSec: cfg.holdSec, knowledgeDir: dir, terminals, guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), learning };
+  return { now, holdSec: cfg.holdSec, knowledgeDir: dir, terminals, guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
 }
 
 // Changes the page cares about; the clock alone isn't one.
@@ -193,6 +195,22 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
           cache.clear();
           await commit(dir, `${body.verdict === "right" ? "confirm" : "retract"} ${entry}`, { Principal: principal }, log);
           log(`${principal}: ${entry} ${body.verdict}`);
+          break;
+        }
+        case "/api/note": {
+          // From you, to a terminal's session (read during its work) or to all of them.
+          const known = deskView(readLog(home), [], [], {}).filter((t) => t.state !== "closed").map((t) => t.name);
+          try {
+            sendNote(YOU, str(body.to, "to", 100), typeof body.text === "string" ? body.text : "", { home, known });
+          } catch (e) {
+            throw new BadRequest((e as Error).message);
+          }
+          log(`note to ${body.to}`);
+          break;
+        }
+        case "/api/read": {
+          // A note a terminal sent you, seen.
+          if (!claim(YOU, "desk", { home, id: str(body.note, "note", 100) }).length) throw new BadRequest("that note is already read");
           break;
         }
         case "/api/learn": {

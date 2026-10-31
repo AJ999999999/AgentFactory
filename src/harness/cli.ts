@@ -72,7 +72,9 @@ function currentEngagement(): string {
   return all[0];
 }
 
-async function harness(engagement: string): Promise<Harness> {
+// The harness's own events (lease taken, merged, each wake) go to stderr, unless the
+// caller keeps a log: the scheduled loop's stderr is for crashes only.
+async function harness(engagement: string, logLine?: (line: string) => void): Promise<Harness> {
   const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string; world?: string; memory?: string };
   const lib = policy.team?.library;
   const agent: TurnAgent = buildTurnAgent(agentsConfig(), {
@@ -95,7 +97,7 @@ async function harness(engagement: string): Promise<Harness> {
     if (!m || !cfg.memory) return [];
     return aboutLines(understand(readMemory(cfg.memory, m.principal), Date.now(), memPolicy, { subjects: m.subjects }), m.principal);
   };
-  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), turnsDir: path.join(home(engagement), "turns"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`), about });
+  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), turnsDir: path.join(home(engagement), "turns"), slots: Number(flag("slots", "2")), log: (e, d) => (logLine ? logLine(`${e} ${JSON.stringify(d)}`) : process.stderr.write(`${e} ${JSON.stringify(d)}\n`)), about });
 }
 
 // --models model-a=pi:,model-b=codex: tries other CLIs for one run without editing the
@@ -231,15 +233,18 @@ async function main(): Promise<void> {
       // rechecks at least every --poll minutes so your answers are picked up (a quiet
       // recheck is one ls-remote), and rides out network drops instead of exiting.
       const eng = currentEngagement();
-      const h = await harness(eng);
-      const rn = runner();
-      const poll = Number(flag("poll", "10")) * 60_000;
       const logFile = flag("log");
       const say = (line: string) => {
         const l = `${new Date().toISOString()} ${line}`;
         console.log(l);
         if (logFile) appendLog(logFile, l);
       };
+      // With --log, the harness's events go there too. On stderr, the scheduled task's
+      // Windows PowerShell turned every one into a six-line error in loop.err.log, which
+      // never rotates and is where a crash should stand out.
+      const h = await harness(eng, logFile ? say : undefined);
+      const rn = runner();
+      const poll = Number(flag("poll", "10")) * 60_000;
       say(`loop started: ${eng}, runner ${rn.id}, pid ${process.pid}`);
       let backoff = 60_000;
       let checkedAt = -Infinity;

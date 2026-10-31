@@ -2,7 +2,7 @@
 // in the folder the engagement was opened in.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -36,6 +36,29 @@ test("an engagement opens with its own world module from a folder outside this r
     assert.equal(cfg.world, world, "saved, so the scheduled loop loads the same checks");
     assert.match(run("status"), /## g v1/, "a later process loads the saved world");
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the loop keeps the harness's events in its log and leaves stderr for crashes", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-cli-loop-"));
+  // Nothing an agent could pick up: the loop wakes, asks the partner, and sleeps.
+  const quiet: EngagementDef = { ...def, id: "cli-loop", goals: [{ ...def.goals[0], todos: [{ id: "look", kind: "action", lane: "playtest", assignee: "partner", text: "Try it" }] }] };
+  fs.writeFileSync(path.join(dir, "engagement.json"), JSON.stringify(quiet));
+  const env = { ...process.env, AF_PANEL_FOLDERS: path.join(dir, "panel-folders.json"), COPILOT_HOME: path.join(dir, "copilot-home"), CODEX_HOME: path.join(dir, "codex-home") };
+  execFileSync(process.execPath, ["--no-warnings", CLI, "open", "engagement.json"], { cwd: dir, env, stdio: "pipe" });
+  const log = path.join(dir, "loop.log");
+  const loop = spawn(process.execPath, ["--no-warnings", CLI, "loop", "--runner", "r1", "--log", log], { cwd: dir, env, windowsHide: true });
+  let stderr = "";
+  loop.stderr.on("data", (c) => (stderr += c));
+  try {
+    const until = Date.now() + 60_000;
+    while (!(fs.existsSync(log) && /tick \{"runner":"r1"/.test(fs.readFileSync(log, "utf8"))) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+    assert.match(fs.readFileSync(log, "utf8"), /^\S+ tick \{"runner":"r1"/m, "the wake is in the log, with its time");
+    assert.equal(stderr, "", "nothing on stderr: the scheduled task keeps it for crashes");
+  } finally {
+    loop.kill();
+    await new Promise((r) => loop.once("exit", r));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

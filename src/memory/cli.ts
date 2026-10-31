@@ -1,7 +1,7 @@
 // Memory about a principal, from the command line.
 //
-//   npm run memory -- add --kind preference --subject travel.flight-time --value red-eye --text "I like red-eye flights" [--condition ..] [--because ..]
-//   npm run memory -- add --kind intention --subject travel.trip --value tokyo --text "Maybe Tokyo this weekend" --until 2026-11-01
+//   npm run memory -- add --as principal --kind preference --subject travel.flight-time --value red-eye --text "I like red-eye flights" [--condition ..] [--because ..]
+//   npm run memory -- add --as principal --kind intention --subject travel.trip --value tokyo --text "Maybe Tokyo this weekend" --until 2026-11-01
 //   npm run memory -- forget <id> --reason "wrong"          remove it from what we believe (the record stays)
 //   npm run memory -- resolve <id> --done | --dropped       an intention that happened, or won't
 //   npm run memory -- view [--subjects travel.*] [--all]    what we currently believe, and how we know
@@ -10,7 +10,9 @@
 //
 // Options: --principal (default partner), --dir (default $AF_MEMORY or ~/.agentfactory/memory),
 // --at / --until (YYYY-MM-DD or ISO), --source stated|chosen, --supersedes id,id.
-// Agents record with --as agent --by <seat> --source inferred|accepted [--suggestion ..].
+// Without --as, an entry is recorded as an agent's (inferred): only an explicit
+// --as principal states or chooses for the person, so an agent that leaves the flag
+// out can't speak for them. Agents add --by <seat> --source inferred|accepted [--suggestion ..].
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -43,7 +45,8 @@ function main(): void {
   const events = readMemory(dir, principal);
   switch (cmd) {
     case "add": {
-      const as = (flag("as", "principal") as "principal" | "agent");
+      const as = flag("as", "agent") as "principal" | "agent";
+      if (as !== "principal" && as !== "agent") throw new Error(`--as is principal or agent, not "${as}"`);
       const { event, warnings } = record(principal, {
         kind: flag("kind") as MemoryKind, subject: flag("subject")!, value: flag("value"), text: flag("text")!,
         condition: flag("condition"), because: flag("because"), source: (flag("source") ?? (as === "agent" ? "inferred" : "stated")) as MemorySource,

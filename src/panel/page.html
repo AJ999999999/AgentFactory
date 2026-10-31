@@ -174,6 +174,7 @@ main {
   padding: 8px 10px;
 }
 .form textarea { min-height: 64px; resize: vertical; }
+.form .relay { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--ink-2); }
 .form textarea.json { min-height: 240px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; line-height: 1.5; }
 .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .inline input[type=number] { width: 110px; }
@@ -486,6 +487,13 @@ function form(a, o) {
       h("input", { type: "number", min: "1", step: "1", value: d.runs || 1, "aria-label": "Runs", style: "width: 70px", oninput: (e) => (d.runs = e.target.value) }),
       h("span", { class: "unit" }, "runs")));
   }
+  // Answering for the person the question is for: what you report then counts as
+  // theirs (an expert's report is graded as one). Off unless you say so.
+  if (a.to !== "partner") {
+    parts.push(h("label", { class: "relay" },
+      h("input", { type: "checkbox", checked: !!d.relayed, onchange: (e) => (d.relayed = e.target.checked) }),
+      ` I'm passing on what ${a.to} told me`));
+  }
   if (o.needs === "revision") {
     if (d.revision === undefined) d.revision = JSON.stringify(a.revision || {}, null, 2);
     parts.push(h("textarea", { class: "json", spellcheck: "false", "aria-label": "The revised goal", oninput: (e) => (d.revision = e.target.value) }, d.revision));
@@ -529,7 +537,7 @@ async function send(a, o, button, err) {
   const k = key(a);
   const d = draft(k);
   err.textContent = "";
-  const body = { engagement: a.engagement, ask: a.id, choice: o.id, note: (d.note || "").trim() || undefined };
+  const body = { engagement: a.engagement, ask: a.id, choice: o.id, note: (d.note || "").trim() || undefined, ...(d.relayed ? { relayed: true } : {}) };
   try {
     if (o.needs === "budget") {
       const n = Math.round(Number(d.turns));

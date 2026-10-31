@@ -299,10 +299,11 @@ async function main(): Promise<void> {
       const ask = s.asks.get(rest[0]);
       const tests = ask?.todo ? s.todos.get(ask.todo)?.tests : undefined;
       const metrics = flag("metrics");
-      // You answer as whoever the question is for (the parent, the lawyer): the grade
-      // of what you report depends on that role, so it isn't silently "partner".
+      // You answer as yourself (partner). The grade of what you report depends on who
+      // it comes from, so passing on what the parent or the lawyer saw takes an
+      // explicit --by <their role>: it's never assumed from who the question was for.
       await h.answer(rest[0], {
-        by: flag("by") ?? ask?.to ?? "partner",
+        by: flag("by") ?? "partner",
         choice: flag("choice")!,
         note: flag("note"),
         revision: revFile ? (JSON.parse(fs.readFileSync(revFile, "utf8")) as GoalRevision) : undefined,

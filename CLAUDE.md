@@ -28,7 +28,7 @@ npm run harness -- status --packet         # beliefs, open work and why it waits
 npm run harness -- answer <ask> --choice <id> [--result supports --metrics k=v --runs n --note ..]
 npm run harness -- pause | resume | budget <goal> turns=N
 npm run panel [-- --dir <folder> ...] [-- --demo]   # local page on 127.0.0.1:4700, over every folder `open` ran in: questions, live turns with Stop
-npm run mcp:partner -- --dir <folder>      # the partner's tools over MCP (status, open_questions, answer, add_work, pause, stop_turn)
+npm run mcp:partner [-- --dir <folder> ...]   # the partner's tools over MCP, over the panel's folders (status, open_questions, answer, add_work, pause, stop_turn)
 npm run memory -- add | view | render
 npm run demo:harness                       # six simulated cases, months in seconds
 npm run eval -- --check | --list | --arms A,B,C --runs 2   # compare ways of running turns on graded cases (eval/README.md)

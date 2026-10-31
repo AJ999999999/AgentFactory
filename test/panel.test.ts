@@ -15,6 +15,7 @@ import { loadPolicy } from "../src/harness/project.ts";
 import { blockers, readyTodos } from "../src/harness/select.ts";
 import type { EngagementDef } from "../src/harness/types.ts";
 import { SystemClock } from "../src/harness/world.ts";
+import { panelFolders, readFolders, rememberFolder } from "../src/panel/folders.ts";
 import { answerFromBody, startPanel, Workspace } from "../src/panel/server.ts";
 import { askView, splitLabel } from "../src/panel/view.ts";
 
@@ -200,6 +201,38 @@ test("an answer counts as yours unless you say you're passing it on", async () =
   const f = [...s.findings.values()].find((x) => x.source === `ask:${play.id}`)!;
   assert.equal(f.author, "partner");
   assert.notEqual(f.grade, "expert", "the partner's own report isn't graded as the parent's");
+});
+
+test("one panel over several project folders: the same id in two folders gets the folder's name, and answers reach the right one", async () => {
+  const a = await workspace();
+  const b = await workspace();
+  const ws = new Workspace([a.dir, b.dir], policy);
+  const snap = await ws.snapshot();
+  const keys = snap.engagements.map((e) => e.id);
+  assert.deepEqual(keys, [`shop@${path.basename(a.dir)}`, `shop@${path.basename(b.dir)}`]);
+  assert.deepEqual(snap.engagements.map((e) => e.folder), [a.dir, b.dir]);
+  assert.ok(snap.engagements[1].asks.every((x) => x.engagement === keys[1]), "a question names the engagement the page will answer it through");
+  const play = [...(await b.h.state()).asks.values()].find((x) => x.todo === "play")!;
+  await answerFromBody(ws, { engagement: keys[1], ask: play.id, choice: "done", observation: { direction: "supports" } });
+  assert.equal((await b.h.state()).asks.get(play.id)!.status, "answered");
+  assert.equal((await a.h.state()).asks.get(play.id)!.status, "open", "the other folder's engagement is untouched");
+  assert.deepEqual(new Workspace(a.dir, policy).ids(), ["shop"], "alone in its folder, it keeps its own name");
+});
+
+test("the panel remembers every folder an engagement was opened in, and skips ones that are gone", () => {
+  const file = path.join(tmp("folders"), "nested", "panel-folders.json");
+  const here = tmp("here");
+  const one = tmp("one");
+  const gone = tmp("gone");
+  fs.mkdirSync(path.join(one, ".af", "harness"), { recursive: true });
+  rememberFolder(one, file);
+  rememberFolder(one, file);
+  rememberFolder(gone, file);
+  assert.deepEqual(readFolders(file), [one, gone], "each folder once");
+  fs.rmSync(gone, { recursive: true });
+  assert.deepEqual(panelFolders([], here, file), [here, one]);
+  assert.deepEqual(panelFolders([gone], here, file), [gone], "folders you name are what you get");
+  assert.deepEqual(readFolders(path.join(here, "missing.json")), []);
 });
 
 // ---------- one checkout, several processes ----------

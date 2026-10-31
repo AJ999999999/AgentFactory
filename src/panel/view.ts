@@ -4,6 +4,7 @@ import { heldBy } from "../harness/harness.ts";
 import type { AskState, State, TodoState } from "../harness/project.ts";
 import { beliefs, findAssumption } from "../harness/project.ts";
 import { blockers, phase } from "../harness/select.ts";
+import { irreversibleEffect } from "../harness/types.ts";
 import type { AskKind, BeliefStatus, Budget, GoalRevision, Granularity, TurnResult } from "../harness/types.ts";
 
 // Some options need more than a click: a number, the revised goal, or what you saw.
@@ -11,7 +12,9 @@ export type Needs = "budget" | "revision" | "observation";
 
 // confirm: it can't be undone (a goal closed, work dropped), so it takes a second
 // step; danger: it stops or drops something.
-export type OptionView = { id: string; label: string; needs?: Needs; hint?: string; confirm?: boolean; danger?: boolean };
+// irreversible: by its effect, or because the asker says so. Only ever adds caution: an
+// asker can mark an option irreversible but can't make one with a final effect undoable.
+export type OptionView = { id: string; label: string; needs?: Needs; hint?: string; confirm?: boolean; danger?: boolean; consequence?: string; irreversible?: boolean };
 
 export type AskView = {
   engagement: string;
@@ -27,6 +30,10 @@ export type AskView = {
   holds: string[]; // the work it holds up
   evidence: Array<{ grade: string; direction: string; text: string }>;
   options: OptionView[];
+  recommend?: { option: string; label: string; why: string; by: string };
+  // Why this one shouldn't be answered from the card in one click. Empty: the card has
+  // what the answer needs.
+  lookFirst: string[];
   budget?: Budget; // now, for a raise
   revision?: GoalRevision; // the goal as it stands, to edit into a new direction
   tests?: { id: string; text: string }; // what an observation counts toward
@@ -57,6 +64,7 @@ export type EngagementView = {
   goals: GoalView[];
   asks: AskView[];
   runners: RunnerView[];
+  folder?: string; // where it was opened, when the panel shows more than one folder
   error?: string;
 };
 
@@ -87,13 +95,23 @@ export function askView(s: State, engagement: string, a: AskState): AskView {
   const g = s.goals.get(a.goal);
   const t = a.todo ? s.todos.get(a.todo) : undefined;
   const tests = t?.tests ? findAssumption(s, a.goal, t.tests) : null;
+  const evidence = (a.evidence ?? []).map((id) => s.findings.get(id)).filter((f) => !!f).map((f) => ({ grade: f.grade, direction: f.direction, text: f.text }));
+  const rec = a.recommend ? a.options.find((o) => o.id === a.recommend!.option) : undefined;
+  const final = (o: AskState["options"][number]) => irreversibleEffect(o.effect) || o.irreversible === true;
+  const lookFirst = [
+    ...(rec && final(rec) ? ["what it recommends can't be undone"] : []),
+    ...(evidence.some((f) => f.direction === "supports") && evidence.some((f) => f.direction === "refutes") ? ["the evidence points both ways"] : []),
+  ];
   const options = a.options.map((o) => ({
     id: o.id,
     // Changing the approach without a new goal: say what changes, for the agents.
     ...(o.effect?.type === "revise" && !optionNeeds(a, o) ? { hint: "What changes" } : {}),
     ...splitLabel(o.label),
     ...(optionNeeds(a, o) ? { needs: optionNeeds(a, o) } : {}),
-    ...(o.effect && ["close", "supersede", "decide"].includes(o.effect.type) ? { confirm: true } : {}),
+    ...(o.consequence ? { consequence: o.consequence } : {}),
+    ...(final(o) ? { irreversible: true } : {}),
+    // Can't be undone, or the card itself says to look first: a second step, not one click.
+    ...(final(o) || lookFirst.length ? { confirm: true } : {}),
     ...((o.effect?.type === "close" && o.effect.status === "killed") || o.effect?.type === "supersede" ? { danger: true } : {}),
   }));
   return {
@@ -108,8 +126,10 @@ export function askView(s: State, engagement: string, a: AskState): AskView {
     openedAt: a.openedAt,
     ...(t && t.text !== a.question ? { about: t.text } : {}),
     holds: heldBy(s, a).filter((x) => x.id !== a.todo).map((x) => x.text),
-    evidence: (a.evidence ?? []).map((id) => s.findings.get(id)).filter((f) => !!f).map((f) => ({ grade: f.grade, direction: f.direction, text: f.text })),
+    evidence,
     options,
+    ...(rec ? { recommend: { option: rec.id, label: splitLabel(rec.label).label, why: a.recommend!.why, by: a.recommend!.by } } : {}),
+    lookFirst,
     ...(g && options.some((o) => o.needs === "budget") ? { budget: g.def.budget } : {}),
     ...(g && options.some((o) => o.needs === "revision") ? { revision: { objective: g.def.objective, assumptions: g.def.assumptions, success: g.def.success, kill: g.def.kill, todos: [] } } : {}),
     ...(tests ? { tests: { id: tests.def.id, text: tests.def.text } } : {}),

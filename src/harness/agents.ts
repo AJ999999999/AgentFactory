@@ -113,8 +113,9 @@ export class CopilotTurnAgent implements TurnAgent {
       `{"done": bool, "blocker": "why you can't continue" | null, "note": "<= 280 chars for whoever picks this up next",`,
       ` "findings": [{"assumption": "id", "direction": "supports|refutes|neutral", "grade": "opinion|reported", "source": "url or repo:path", "text": "...", "metrics": {}}],`,
       ` "todos": [{"lane": "...", "text": "...", "tests": "assumption id", "because": "finding/ask/todo id", "kind": "task|job|wait|action", "writeScope": []}],`,
-      ` "asks": [{"question": "...", "options": [{"id": "...", "label": "..."}]}],`,
+      ` "asks": [{"question": "...", "options": [{"id": "...", "label": "...", "consequence": "what follows if chosen", "irreversible": bool}], "recommend": {"option": "id", "why": "..."}}],`,
       ` "supersede": [{"todo": "id", "reason": "..."}], "discount": [{"finding": "id", "reason": "..."}]}`,
+      "An ask should be answerable from what it says: say what follows from each option, mark the ones that can't be undone, and recommend one with your reason.",
       "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a job, wait or action that produces it.",
     ].join("\n");
   }

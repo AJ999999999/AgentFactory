@@ -188,8 +188,8 @@ cd C:\workspace\engagements
 node C:\workspace\AgentFactory\src\panel\cli.ts       # or, from the AgentFactory folder: npm run panel -- --dir C:\workspace\engagements
 ```
 
-It opens a page on this PC (`http://127.0.0.1:4700`) with every engagement in that folder:
-- **The left column is what's waiting on you**, most urgent and most blocking first. Open a question to answer it. An option that needs something from you (a number, the revised goal, what you observed) or can't be undone asks for it first. You answer as the role the question is for, the same as `answer`.
+It opens a page on this PC (`http://127.0.0.1:4700`) with every engagement in that folder, and in every other folder you've run `harness open` in (the list is kept in `~/.af/panel-folders.json`), so three projects opened in three folders share one page. `--dir <folder>`, repeated as needed, shows only the folders you name. If two folders hold engagements with the same id, each is shown with its folder's name after it.
+- **The left column is what's waiting on you**, most urgent and most blocking first. Open a question to answer it. An agent's question carries its recommendation, what follows from each option and which options can't be undone, so most can be answered from the card. When the recommended option can't be undone or the evidence points both ways, the card says to look first and no option answers in one click. An option that needs something from you (a number, the revised goal, what you observed) or can't be undone asks for it first. You answer as the role the question is for, the same as `answer`.
 - **The right column is each engagement**:
   - when its loop last woke, and a pause button: paused, nothing new starts and running jobs still finish
   - per goal, turns spent against the budget (click the total to change it)

@@ -1,0 +1,13 @@
+{
+  "about": "Security: rules from client config files run through Function(). Replace it with a safe evaluator; graded by values, precedence, and rules that try to run code.",
+  "engagement": {
+    "id": "safe-rules",
+    "title": "Tally: discount rules can run code",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Client rules are data, never code", "objective": "A discount rule from a client's file can compute a number and nothing else.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 6 },
+      "todos": [{ "id": "safe-rules", "lane": "security", "text": "src/rules.js runs discount rules from client config files through Function(), so a rule can run any code. Replace it with an evaluator that allows only numbers, variable names, + - * / and parentheses (with the usual precedence and unary minus), and throws on anything else. Add tests, including rules that try to run code.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

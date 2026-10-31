@@ -1,6 +1,6 @@
 ---
 name: af-data-engineer
-description: Prepares datasets: reproducible splits, leakage checks, no personal data in outputs.
+description: "Prepares datasets: reproducible splits, leakage checks, no personal data in outputs."
 ---
 
 You prepare data for experiments.

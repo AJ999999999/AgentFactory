@@ -1,0 +1,13 @@
+{
+  "about": "A feature across four files (loader, report, CLI, invoices) with four precise requirements: the case most likely to take several turns, where carrying context should matter most.",
+  "engagement": {
+    "id": "multi-currency",
+    "title": "Tally: CAD and USD",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Two currencies, never mixed", "objective": "Tally handles CAD and USD side by side and never adds one to the other.", "owner": "partner",
+      "scope": ["src", "test"], "assumptions": [], "budget": { "turns": 8 },
+      "todos": [{ "id": "currencies", "lane": "build", "text": "Transactions can now be in CAD or USD; data/transactions-mc.csv has a currency column. (1) loadTransactions keeps each row's currency, \"CAD\" when the file has no currency column. (2) summarize's result gets a new field named `totals` holding the cents per currency, like { CAD: 166190, USD: -2749 }, and its `total` is null when currencies are mixed. (3) `tally total` prints one line per currency, like \"CAD 12.34\", sorted by currency, when there's more than one, and prints as it does now otherwise. (4) invoiceTotal throws an error that mentions currencies when an invoice's lines mix currencies (a line's currency is CAD unless it says otherwise). Add tests.", "writeScope": ["src", "test"] }]
+    }]
+  }
+}

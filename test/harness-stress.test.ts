@@ -8,10 +8,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { cloneControl } from "../src/git.ts";
 import { createWorkspace } from "../src/foundation/workspace.ts";
-import { CopilotTurnAgent, ScriptedTurnAgent, parseTurnOutput } from "../src/harness/agents.ts";
+import { CopilotTurnAgent, ScriptedTurnAgent, classifyCapacity, parseTurnOutput } from "../src/harness/agents.ts";
 import type { Behavior, TurnAgent } from "../src/harness/agents.ts";
 import { Harness } from "../src/harness/harness.ts";
 import { loadPolicy } from "../src/harness/project.ts";
+import { blockers } from "../src/harness/select.ts";
 import { Sim } from "../src/harness/sim.ts";
 import { SimClock, SimJobs } from "../src/harness/world.ts";
 import type { EngagementDef, TodoDraft } from "../src/harness/types.ts";
@@ -196,4 +197,89 @@ console.log(JSON.stringify({ done: true, note: "used {braces} in a string", find
   for (const flag of ["--agent", "af-author", "--model", "plan-model-1", "--no-ask-user", "shell(git push)"]) assert.ok(args.includes(flag), flag);
   assert.ok(args[args.indexOf("-p") + 1].includes("Your todo t"), "the prompt carries the handoff packet");
   assert.deepEqual(parseTurnOutput('text {"a": "}"} more {"done": true, "note": "{x}"}'), { done: true, note: "{x}" });
+});
+
+// ---------- usage limits are capacity, not failure ----------
+
+test("capacity errors are recognised from the CLI's own words, with the reset time when it gives one", () => {
+  const now = Date.parse("2026-11-02T09:00:00Z");
+  const hour = 3_600_000;
+  assert.equal(classifyCapacity("Error: 429 Too Many Requests. Try again in 2 hours 5 minutes.", now)?.resetAt, now + 2 * hour + 5 * 60_000);
+  assert.equal(classifyCapacity("Rate limit exceeded. Retry after 90 seconds", now)?.resetAt, now + 90_000);
+  assert.equal(classifyCapacity("HTTP 429\nRetry-After: 120", now)?.resetAt, now + 120_000);
+  assert.equal(classifyCapacity("You've hit your usage limit. Resets at 2026-11-03T00:00:00Z.", now)?.resetAt, Date.parse("2026-11-03T00:00:00Z"));
+  assert.equal(classifyCapacity("Monthly premium request quota exhausted", now)?.resetAt, undefined, "a limit with no time still counts");
+  assert.equal(classifyCapacity("TypeError: cannot read properties of undefined", now), null);
+  assert.equal(classifyCapacity("Error: Model \"x\" from --model flag is not available.", now), null, "a wrong model name is a failure, not a wait");
+});
+
+test("a usage limit mid-run waits, counts nothing, and the same work runs once it resets", async () => {
+  const dir = tmp("cap");
+  const fake = path.join(dir, "copilot.js");
+  const counter = path.join(dir, "calls.txt");
+  fs.writeFileSync(fake, `const fs = require("node:fs");
+const f = ${JSON.stringify(counter)};
+const n = fs.existsSync(f) ? Number(fs.readFileSync(f, "utf8")) : 0;
+fs.writeFileSync(f, String(n + 1));
+if (n < 2) { console.error("Error: 429 rate limit exceeded. Try again in 2 hours."); process.exit(1); }
+fs.mkdirSync("work", { recursive: true });
+fs.writeFileSync("work/out.md", "done");
+console.log(JSON.stringify({ done: true }));
+`);
+  const agent = new CopilotTurnAgent({ bin: fake, fallback: { agent: "author", model: "model-a" }, profileDirs: null, timeoutMs: 30_000 });
+  const { hs, clock } = await machines(1, def([{ id: "t", lane: "build", text: "Add a rate limit to the API", writeScope: ["work"] }, { id: "u", lane: "build", text: "u", writeScope: ["other"] }]), agent);
+  const h = hs[0];
+  const t0 = clock.now();
+  let r = await h.tick({ id: "r1", capabilities: [] });
+  assert.equal(r.turns[0].result, "capacity", JSON.stringify(r.turns[0].reasons));
+  let s = await h.state();
+  assert.equal(s.turns.length, 0, "no turn is recorded");
+  assert.equal(s.goals.get("G")!.spent.turns, 0, "no budget is spent");
+  assert.equal(s.todos.get("t")!.failures, 0);
+  assert.equal(s.capacity.get("copilot")!.until, t0 + 2 * 3_600_000);
+  assert.equal(r.hint.at, t0 + 2 * 3_600_000, "the next wake is the reset");
+  assert.ok(blockers(s, s.todos.get("t")!, clock.now()).some((b) => b.startsWith("copilot usage limit")));
+  // Before the reset nothing starts, and the CLI isn't even called.
+  clock.advance(60);
+  r = await h.tick({ id: "r1", capabilities: [] });
+  assert.equal(r.turns.length, 0);
+  assert.equal(fs.readFileSync(counter, "utf8"), "1");
+  // After it, the limit is still on (second refusal): the wait escalates only without a time, here it names one.
+  clock.set(t0 + 2 * 3_600_000 + 1);
+  r = await h.tick({ id: "r1", capabilities: [] });
+  assert.equal(r.turns[0].result, "capacity");
+  s = await h.state();
+  assert.equal(s.capacity.get("copilot")!.streak, 2);
+  clock.set(s.capacity.get("copilot")!.until + 1);
+  r = await h.tick({ id: "r1", capabilities: [] });
+  assert.equal(r.turns[0].result, "completed");
+  s = await h.state();
+  assert.equal(s.capacity.get("copilot")!.streak, 0, "a model turn that ran ends the streak");
+  assert.deepEqual(s.turns.map((x) => x.result), ["completed"]);
+});
+
+test("a limit with no reset time backs off by the policy, doubling; an ordinary failure that mentions rate limits is still a failure", async () => {
+  const dir = tmp("cap2");
+  const fake = path.join(dir, "copilot.js");
+  fs.writeFileSync(fake, `console.error("usage limit reached"); process.exit(1);\n`);
+  const agent = new CopilotTurnAgent({ bin: fake, fallback: { agent: "author", model: "model-a" }, profileDirs: null, timeoutMs: 30_000 });
+  const { hs, clock } = await machines(1, def([{ id: "t", lane: "build", text: "t" }]), agent);
+  const h = hs[0];
+  const base = policy.capacity!.defaultBackoffMinutes * MIN;
+  let t = clock.now();
+  await h.tick({ id: "r1", capabilities: [] });
+  assert.equal((await h.state()).capacity.get("copilot")!.until, t + base);
+  clock.set(t + base + 1);
+  t = clock.now();
+  await h.tick({ id: "r1", capabilities: [] });
+  assert.equal((await h.state()).capacity.get("copilot")!.until, t + 2 * base, "twice as long the second time");
+
+  // A crash whose command line mentions "rate limit" (the todo's own words) is not capacity.
+  const crash = path.join(dir, "crash.js");
+  fs.writeFileSync(crash, `console.error("Error: spawn failed"); process.exit(1);\n`);
+  const agent2 = new CopilotTurnAgent({ bin: crash, fallback: { agent: "author", model: "model-a" }, profileDirs: null, timeoutMs: 30_000 });
+  const m2 = await machines(1, def([{ id: "t", lane: "build", text: "Handle 429 rate limit and quota errors in the client" }]), agent2);
+  const r = await m2.hs[0].tick({ id: "r1", capabilities: [] });
+  assert.equal(r.turns[0].result, "host_failure");
+  assert.equal((await m2.hs[0].state()).capacity.size, 0);
 });

@@ -1,0 +1,16 @@
+{
+  "about": "Two lanes on one goal: research finds the right rule among three documents (one a superseded draft), then build implements what research recorded. Tests the handoff between seats.",
+  "engagement": {
+    "id": "tax-research",
+    "title": "Tally: Ontario's mid-year tax change",
+    "principals": { "partner": "owner" },
+    "goals": [{
+      "id": "g", "title": "Ontario invoices taxed at the right rate", "objective": "Every Ontario invoice uses the rate in force on its date.", "owner": "partner",
+      "scope": ["notes", "src", "test"], "assumptions": [], "budget": { "turns": 8 },
+      "todos": [
+        { "id": "find-rate", "lane": "research", "text": "Find which tax table and rate apply to Ontario invoices dated 2026-07-01 or later, from the client's documents in docs/vendor/. Write notes/tax.md with the rate, the date it starts, and the file it comes from.", "writeScope": ["notes"] },
+        { "id": "apply-rate", "lane": "build", "after": ["find-rate"], "text": "Make Ontario tax follow notes/tax.md for every invoice date, with tests.", "writeScope": ["src", "test"] }
+      ]
+    }]
+  }
+}

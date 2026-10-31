@@ -17,9 +17,11 @@ import type { Git } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
 import { basisRef, currentBasis, readLockfile, writeBasis, writeLockfile, writeTask } from "../context.ts";
 import type { LogFn } from "../util.ts";
-import { sha256 } from "../util.ts";
+import { matchGlob, pathWithin, sha256 } from "../util.ts";
 import type { AgentRunner } from "../agents/runner.ts";
 import type { TurnAgent } from "./agents.ts";
+import { CapacityError, StoppedError } from "./agents.ts";
+import { LiveTurns } from "./live.ts";
 import { Claims, Pulse } from "./claims.ts";
 import type { Claim, PulseData } from "./claims.ts";
 import { buildPacket } from "./packet.ts";
@@ -31,7 +33,7 @@ import { answerEvents } from "./answers.ts";
 import type { Hint, Runner } from "./select.ts";
 import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.ts";
 import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
-import type { Budget, EngagementDef, Finding, HEvent, TurnRecord } from "./types.ts";
+import type { Budget, EngagementDef, Finding, HEvent, TodoDraft, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 import { criteriaHash, validateTurn } from "./validate.ts";
 import type { Clock, World } from "./world.ts";
@@ -62,10 +64,11 @@ export class Harness {
   pulse: Pulse;
   coord: Coordinator;
   log: LogFn;
+  live: LiveTurns | null; // running turns' markers, logs and stop requests, when there's a folder for them
   // What memory says about the people the engagement serves, as packet lines.
   about: (s: State) => string[];
 
-  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[] }) {
+  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string }) {
     if (opts.policy.claims.turnTimeoutMinutes >= opts.policy.claims.ttlMinutes) throw new Error("turn timeout must be shorter than the claim TTL, or a slow turn could outlive its claim");
     if (!safeId(opts.engagement)) throw new Error(`bad engagement id ${opts.engagement}`);
     this.control = opts.control;
@@ -78,6 +81,7 @@ export class Harness {
     this.pulse = new Pulse(opts.control, opts.engagement);
     this.log = opts.log ?? (() => {});
     this.about = opts.about ?? (() => []);
+    this.live = opts.turnsDir ? new LiveTurns(opts.turnsDir) : null;
     this.coord = new Coordinator({ control: opts.control, worktreeRoot: opts.worktreeRoot, runner: noRunner, concurrency: opts.slots ?? 2, log: this.log });
   }
 
@@ -163,6 +167,36 @@ export class Harness {
   // A new budget for a goal. When the harness has already asked about the budget, this
   // is the answer to that question (so it doesn't stay open); otherwise it's recorded
   // as a change made by the partner.
+  // New work from the partner: it needs no reason beyond theirs, but it stays inside the
+  // goal's scope (a wider reach is a change of goal, which the goal's owner answers) and
+  // off the harness's own files.
+  async addWork(goalId: string, d: { text: string; lane: string; writeScope?: string[]; tests?: string; priority?: number }, by = "partner"): Promise<string> {
+    const s = await this.state();
+    const g = s.goals.get(goalId);
+    if (!g) throw new Error(`no goal ${goalId}`);
+    if (g.status !== "active") throw new Error(`${goalId} is ${g.status}`);
+    const text = d.text?.trim();
+    if (!text || text.length > 600) throw new Error("say what the work is, in up to 600 characters");
+    if (!/^[a-z][a-z0-9-]{0,40}$/.test(d.lane ?? "")) throw new Error(`lane "${d.lane}" must be a short lowercase name such as build or research`);
+    for (const w of d.writeScope ?? []) {
+      if (w.includes("..") || path.isAbsolute(w) || w.startsWith("/")) throw new Error(`write scope ${w} must be a path inside the repo`);
+      if (!g.def.scope.some((sc) => pathWithin(w, sc))) throw new Error(`write scope ${w} is outside the goal's scope (${g.def.scope.join(", ")})`);
+      if (this.policy.protected.some((p) => matchGlob(p, w) || matchGlob(p, `${w}/x`))) throw new Error(`write scope ${w} is the harness's own`);
+    }
+    if (d.tests && !findAssumption(s, goalId, d.tests)) throw new Error(`goal ${goalId} has no assumption ${d.tests}`);
+    if (d.priority !== undefined && !(Number.isInteger(d.priority) && d.priority >= 0 && d.priority <= 3)) throw new Error("priority is 0 (urgent) to 3 (low)");
+    const now = this.clock.now();
+    const base = `p-${text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 28) || "work"}`;
+    let id = base;
+    for (let n = 2; s.todos.has(id); n++) id = `${base}-${n}`;
+    const todo: TodoDraft & { id: string; goal: string } = { id, goal: goalId, lane: d.lane, text, because: by, ...(d.writeScope?.length ? { writeScope: d.writeScope } : {}), ...(d.tests ? { tests: d.tests } : {}), ...(d.priority !== undefined ? { priority: d.priority } : {}) };
+    const e: HEvent = { id: eid("add", by, id, now), at: now, by, type: "todo_added", todo, provenance: by };
+    apply(s, e);
+    const follow = settle(s, now);
+    await appendEvents(this.control, this.engagement, [e, ...follow], `work for ${goalId}: ${text.slice(0, 60)}`, { "Changed-by": by });
+    return id;
+  }
+
   async setBudget(goalId: string, budget: Budget, by = "partner"): Promise<void> {
     for (const [k, v] of Object.entries(budget)) if (!(typeof v === "number" && Number.isFinite(v) && v >= 0)) throw new Error(`budget ${k} must be a number of 0 or more`);
     const s = await this.state();
@@ -462,64 +496,110 @@ export class Harness {
     // Path leases guard the files; the claim already guards the todo. A turn that
     // writes nothing gets a lease on a path of its own.
     const lockPaths = t.writeScope?.length ? t.writeScope : [`.agents/harness/${this.engagement}/turns/${turnId}`];
-    await this.coord.transaction({
-      id: turnId,
-      identity: { name: runner.id, email: `${runner.id}@agents.local` },
-      lockPaths,
-      leaseTtlMs: this.policy.claims.ttlMinutes * MIN,
-      work: async (wtDir, wt) => {
-        let about: string[] = [];
-        try {
-          about = this.about(s);
-        } catch (e) {
-          this.log("memory_unreadable", { error: (e as Error).message });
-        }
-        const packet = buildPacket(s, t, why, about);
-        const relevant = [...s.findings.values()].filter((f) => f.assumption && (f.assumption === t.tests || (t.assumes ?? []).includes(f.assumption)));
-        let output: TurnOutput | null = null;
-        let hostError = "";
-        try {
-          output = await withTimeout(
-            this.agent.run({ turn: turnId, agent: runner.id, now, packet, todo: t, goal: g.def, beliefs: beliefs(s, g.id), findings: relevant, wtDir, state: s, seat }),
-            this.policy.claims.turnTimeoutMinutes * MIN,
-          );
-        } catch (e) {
-          hostError = (e as Error).message.slice(0, 300);
-        }
-        const files = await wt.changedFiles();
-        let events: HEvent[];
-        if (!output) {
-          await discard(wt);
-          events = [turnEvent(turnId, t, runner.id, now, why, "host_failure", [hostError || "no output"], files, seat?.key)];
-        } else {
-          const { failures, checked } = await this.runCheckers(wtDir, t, files);
-          const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}), seat: seatState });
-          if (v.result === "validation_failed") await discard(wt);
-          else if (t.artifact && t.pins?.length && v.result === "completed") {
-            writeLockfile(wtDir, {
-              artifact: t.artifact, task: this.engagement, builtBy: `${runner.id}:${t.id}`, config: `todo:${t.id}`,
-              basis: t.pins.map((name) => basisRef(this.engagement, name, currentBasis(wtDir, this.engagement, name)?.version ?? 1)),
-              inputs: [], builtAt: new Date(now).toISOString(),
-            });
+    // The turn as it runs, for the panel: a marker, a log and a way to ask it to stop.
+    // Wall-clock times: these are about the real process, not the engagement's clock.
+    const turnMs = this.policy.claims.turnTimeoutMinutes * MIN;
+    const live = this.live?.start({ turn: turnId, todo: t.id, goal: t.goal, text: t.text, runner: runner.id, role: seat?.role, pid: process.pid, startedAt: Date.now(), until: Date.now() + turnMs + MIN });
+    try {
+      await this.coord.transaction({
+        id: turnId,
+        identity: { name: runner.id, email: `${runner.id}@agents.local` },
+        lockPaths,
+        leaseTtlMs: this.policy.claims.ttlMinutes * MIN,
+        work: async (wtDir, wt) => {
+          let about: string[] = [];
+          try {
+            about = this.about(s);
+          } catch (e) {
+            this.log("memory_unreadable", { error: (e as Error).message });
           }
-          events = v.events;
-        }
-        // A turn that outlived its claim must not overwrite whoever took over.
-        if (!(await this.claims.holds(claim))) {
-          await discard(wt);
-          events = [turnEvent(turnId, t, runner.id, now, why, "claim_lost", ["claim expired before writeback"], files, seat?.key)];
-        }
-        // Scratch never lands in history.
-        fs.rmSync(path.join(wtDir, ".agents", "session.json"), { force: true });
-        writeEventFiles(wtDir, this.engagement, events);
-        const rec = (events.find((e) => e.type === "turn") as Extract<HEvent, { type: "turn" }>).turn;
-        summary = { todo: t.id, result: rec.result, granularity: rec.granularity, reasons: rec.reasons };
-        return {
-          message: `turn ${t.id}: ${rec.result} (${rec.granularity})`,
-          trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, ...(seat ? { Seat: `${seat.key} ${seat.template}${seat.probation ? " (probation)" : ""}` } : {}), Result: rec.result },
-        };
-      },
-    });
+          const packet = buildPacket(s, t, why, about);
+          const relevant = [...s.findings.values()].filter((f) => f.assumption && (f.assumption === t.tests || (t.assumes ?? []).includes(f.assumption)));
+          let output: TurnOutput | null = null;
+          let hostError = "";
+          let capacity: CapacityError | null = null;
+          let stopped = false;
+          const ac = new AbortController();
+          const watch = live ? setInterval(() => {
+            if (!stopped && live.stopRequested()) {
+              stopped = true;
+              live.log("stop requested by the partner");
+              ac.abort();
+            }
+          }, 1_000) : null;
+          try {
+            output = await withTimeout(
+              this.agent.run({ turn: turnId, agent: runner.id, now, packet, todo: t, goal: g.def, beliefs: beliefs(s, g.id), findings: relevant, wtDir, state: s, seat, log: live?.log, signal: ac.signal }),
+              turnMs,
+              () => ac.abort(), // kill the agent too, not just stop waiting for it
+            );
+          } catch (e) {
+            hostError = (e as Error).message.slice(0, 300);
+            if (e instanceof CapacityError) capacity = e;
+            if (e instanceof StoppedError) stopped = true;
+          } finally {
+            if (watch) clearInterval(watch);
+          }
+          // A stop that arrived as the agent finished still counts: the partner saw
+          // something they didn't want kept.
+          if (!stopped && live?.stopRequested()) stopped = true;
+          const files = await wt.changedFiles();
+          let events: HEvent[];
+          if (stopped && !capacity) {
+            await discard(wt);
+            events = [turnEvent(turnId, t, runner.id, now, why, "stopped", ["stopped by the partner"], files, seat?.key)];
+          } else if (capacity) {
+            // The service said "not now": nothing was done, so nothing is kept or counted.
+            // The todo stays as it was, and the seats on that vendor wait for the reset.
+            await discard(wt);
+            const cap = this.policy.capacity ?? { defaultBackoffMinutes: 30, minBackoffMinutes: 1, maxBackoffHours: 24 };
+            const streak = (s.capacity.get(capacity.vendor)?.streak ?? 0) + 1;
+            const wait = capacity.resetAt !== undefined
+              ? capacity.resetAt - now
+              : cap.defaultBackoffMinutes * MIN * 2 ** Math.min(streak - 1, 10);
+            const until = now + Math.min(Math.max(wait, cap.minBackoffMinutes * MIN), cap.maxBackoffHours * 60 * MIN);
+            events = [{ id: eid("capacity", turnId), at: now, by: runner.id, type: "capacity", until, reason: capacity.message, streak, vendor: capacity.vendor, ...(capacity.models ? { models: capacity.models } : {}) }];
+            this.log("capacity", { todo: t.id, vendor: capacity.vendor, until: new Date(until).toISOString(), reason: capacity.message });
+          } else if (!output) {
+            await discard(wt);
+            events = [turnEvent(turnId, t, runner.id, now, why, "host_failure", [hostError || "no output"], files, seat?.key)];
+          } else {
+            const { failures, checked } = await this.runCheckers(wtDir, t, files);
+            const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}), seat: seatState });
+            if (v.result === "validation_failed") await discard(wt);
+            else if (t.artifact && t.pins?.length && v.result === "completed") {
+              writeLockfile(wtDir, {
+                artifact: t.artifact, task: this.engagement, builtBy: `${runner.id}:${t.id}`, config: `todo:${t.id}`,
+                basis: t.pins.map((name) => basisRef(this.engagement, name, currentBasis(wtDir, this.engagement, name)?.version ?? 1)),
+                inputs: [], builtAt: new Date(now).toISOString(),
+              });
+            }
+            events = v.events;
+          }
+          // A turn that outlived its claim must not overwrite whoever took over.
+          if (!capacity && !(await this.claims.holds(claim))) {
+            await discard(wt);
+            events = [turnEvent(turnId, t, runner.id, now, why, "claim_lost", ["claim expired before writeback"], files, seat?.key)];
+          }
+          // Scratch never lands in history.
+          fs.rmSync(path.join(wtDir, ".agents", "session.json"), { force: true });
+          writeEventFiles(wtDir, this.engagement, events);
+          const capEvent = events.find((e) => e.type === "capacity") as Extract<HEvent, { type: "capacity" }> | undefined;
+          if (capEvent) {
+            summary = { todo: t.id, result: "capacity", granularity: "none", reasons: [`${capEvent.reason}; ${capEvent.vendor} turns wait until ${new Date(capEvent.until).toISOString()}`] };
+            return { message: `${capEvent.vendor} usage limit: waiting until ${new Date(capEvent.until).toISOString()}`, trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, Result: "capacity" } };
+          }
+          const rec = (events.find((e) => e.type === "turn") as Extract<HEvent, { type: "turn" }>).turn;
+          summary = { todo: t.id, result: rec.result, granularity: rec.granularity, reasons: rec.reasons };
+          return {
+            message: `turn ${t.id}: ${rec.result} (${rec.granularity})`,
+            trailers: { Engagement: this.engagement, Turn: turnId, Todo: t.id, Agent: runner.id, ...(seat ? { Seat: `${seat.key} ${seat.template}${seat.probation ? " (probation)" : ""}` } : {}), Result: rec.result },
+          };
+        },
+      });
+    } finally {
+      live?.finish(`${summary.result}${summary.granularity !== "none" ? ` (${summary.granularity})` : ""}${summary.reasons.length ? `: ${summary.reasons.join("; ").slice(0, 300)}` : ""}`);
+    }
     // Consequences of the turn (a flipped belief, a spin streak) are settled on the
     // next tick's rules pass; nothing waits on them here.
     return summary;
@@ -591,12 +671,15 @@ async function discard(wt: Git): Promise<void> {
   await wt.tryAsync(["clean", "-q", "-fd"]);
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     p.finally(() => clearTimeout(timer)),
     new Promise<T>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`turn timed out after ${Math.round(ms / MIN)} min`)), ms);
+      timer = setTimeout(() => {
+        onTimeout?.();
+        reject(new Error(`turn timed out after ${Math.round(ms / MIN)} min`));
+      }, ms);
     }),
   ]);
 }

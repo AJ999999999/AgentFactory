@@ -1,0 +1,13 @@
+date,description,category,amount
+2026-01-03,Coffee beans,groceries,-18.40
+2026-01-05,"Rent, January",housing,"-1,450.00"
+2026-01-09,Salary,income,"3,200.00"
+2026-01-15,"Books ""Clean Code"" and more",education,-62.15
+2026-01-21,Bus pass,transport,-128.00
+2026-02-02,Groceries,groceries,-96.33
+2026-02-05,"Rent, February",housing,"-1,450.00"
+2026-02-09,Salary,income,"3,200.00"
+2026-02-14,Flowers,gifts,-45.00
+2026-02-20,Refund,groceries,12.50
+2026-03-01,Phone,utilities,-55.20
+2026-03-05,"Rent, March",housing,"-1,450.00"

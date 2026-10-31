@@ -7,7 +7,7 @@
 import { pathsOverlap } from "../util.ts";
 import type { PulseData } from "./claims.ts";
 import type { AskState, State, TodoState } from "./project.ts";
-import { beliefOf, findAssumption, goalChain, seatKey } from "./project.ts";
+import { beliefOf, capacityFor, findAssumption, goalChain, seatKey, seatOf } from "./project.ts";
 
 export type Runner = { id: string; capabilities: string[] };
 
@@ -51,6 +51,9 @@ export function blockers(s: State, t: TodoState, now: number, runner?: Runner): 
   // Paused: nothing new starts (turns, jobs, waits, people's tasks). What is already
   // running is still polled, so no result is lost.
   if (s.paused) why.push("paused");
+  // Only turns that call the model wait for capacity; jobs, waits and people's tasks don't.
+  const limit = t.kind === "task" ? capacityFor(s, seatOf(s, t)?.model, now) : undefined;
+  if (limit) why.push(`${limit.vendor} usage limit until ${new Date(limit.until).toISOString()}: ${limit.reason}`);
   why.push(...goalBlocks(s, t.goal));
   const chain = goalChain(s, t.goal);
   const g = chain[0];
@@ -229,6 +232,7 @@ export function nextWake(s: State, now: number, opts: { readyNow: boolean; pulse
     }
   }
   for (const at of opts.claimExpiries) timers.push({ at: at + 1, why: "claim expires" });
+  for (const c of s.capacity.values()) if (c.until > now) timers.push({ at: c.until, why: `${c.vendor} usage limit resets` });
   const cap = { at: now + s.policy.schedule.maxSleepMinutes * MIN, why: "recheck for answers" };
   const future = timers.filter((t) => t.at > now);
   const due = timers.filter((t) => t.at <= now);

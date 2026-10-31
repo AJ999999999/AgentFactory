@@ -1,8 +1,10 @@
 {
-  "comment": "How Copilot CLI runs a seat. The role comes from policy/library.json (lane -> role); each library role runs as the custom agent profile `<profilePrefix><role>` (install them with `npm run harness -- agents install`) unless `agents` maps it to another; generated roles run as `<profilePrefix><fallback.agent>` with their charter in the prompt. A profile that isn't installed is skipped (no --agent) rather than failing the turn. Tool flags come from the seat's catalog permissions through `tools`; a seat without a write permission also gets --deny-tool write. Tool names are placeholders to check against your CLI version. `models` maps the library's model placeholders to model ids your Copilot plan offers; an empty one is left out and Copilot uses its default (then judges share the workers' model). `lanes` applies only when the policy has no team.",
+  "comment": "How a seat's turn is run. The role comes from policy/library.json (lane -> role); each library role runs as the custom agent profile `<profilePrefix><role>` (install them with `npm run harness -- agents install`) unless `agents` maps it to another; generated roles run as `<profilePrefix><fallback.agent>` with their charter in the prompt. A profile that isn't installed is skipped (no --agent) rather than failing the turn; the other CLIs get the profile's text as standing instructions. `models` maps the library's model placeholders to what runs them: empty for Copilot's default model, a Copilot model id, or `<cli>:<model>` to run those seats in another CLI: `claude:opus`, `codex:<model>`, `pi:<provider/model>`, `omp:<model>` (`<cli>:` alone for that CLI's default). Some Copilot plans offer one model and refuse --model, so the judges' placeholder (model-b) goes to Claude by default: judges on the same model as the work they judge share its blind spots. Copilot tool flags come from the seat's catalog permissions through `tools` and `always`; a seat without a write permission also gets --deny-tool write. `cli` does the same for each other CLI, keyed by catalog permission (`repo:write:lease` stands for every repo:write:*): claude takes tool names as in --allowedTools, with `deny` and `noWrite`; codex takes -c settings (`config` for every turn, `windowsConfig` on Windows) and its sandbox follows the write permission, and `userProvider` keeps the model provider and default model from your own Codex config (the rest of that config is never loaded; an inline token is passed in an environment variable); pi and omp take tool names (`read`, `write`, `shell`, extra `tools`) and `commands`, the shell commands the turn gate lets through (`always` for every seat, \"git diff *\" for a prefix). `worker`: run every seat that does the work as one worker agent (profile af-worker) given its lane's skill, instead of a role per lane; judges keep their roles. `sessions`: \"todo\" or \"goal\" carries the worker's CLI session across turns of a todo or goal (Copilot and pi; judges always start fresh). `worker` is on: on Copilot it scored 0.99 against 0.96 for a role per lane (eval full-copilot-2, 2026-10-31), and it never did worse. `sessions` stays off: todos finish in about one turn, so it made no difference, and a goal-wide session cost Codex about two thirds more tokens. `lanes` applies only when the policy has no team.",
   "fallback": { "agent": "author", "model": "model-a" },
   "profilePrefix": "af-",
-  "models": { "model-a": "", "model-b": "", "model-c": "" },
+  "models": { "model-a": "", "model-b": "claude:opus", "model-c": "" },
+  "worker": true,
+  "sessions": "none",
   "agents": {},
   "tools": {
     "repo:write:lease": ["--allow-tool", "write"],
@@ -13,6 +15,42 @@
     "--allow-tool", "shell(git status)", "--allow-tool", "shell(git diff:*)",
     "--deny-tool", "shell(git push)", "--deny-tool", "shell(git commit:*)", "--deny-tool", "shell(rm:*)"
   ],
+  "cli": {
+    "claude": {
+      "bin": "claude",
+      "tools": {
+        "repo:write:lease": ["Edit", "Write"],
+        "shell:test": ["Bash(npm test)", "Bash(npm run build)"],
+        "web:read": ["WebFetch", "WebSearch"]
+      },
+      "always": ["Read", "Grep", "Glob", "Bash(git status)", "Bash(git diff *)"],
+      "deny": ["Bash(git push *)", "Bash(git commit *)", "Bash(rm *)"],
+      "noWrite": ["Edit", "Write", "NotebookEdit"]
+    },
+    "codex": {
+      "bin": "codex",
+      "tools": { "web:read": ["sandbox_workspace_write.network_access=true", "web_search=\"live\""] },
+      "config": [],
+      "windowsConfig": ["windows.sandbox=\"elevated\""],
+      "userProvider": true
+    },
+    "pi": {
+      "bin": "pi",
+      "read": ["read", "grep", "find", "ls"],
+      "write": ["write", "edit"],
+      "shell": ["bash", "powershell"],
+      "tools": {},
+      "commands": { "always": ["git status", "git diff *"], "shell:test": ["npm test", "npm run build"] }
+    },
+    "omp": {
+      "bin": "omp",
+      "read": ["read", "grep", "glob"],
+      "write": ["write", "edit"],
+      "shell": ["bash"],
+      "tools": { "web:read": ["web_search"] },
+      "commands": { "always": ["git status", "git diff *"], "shell:test": ["npm test", "npm run build"] }
+    }
+  },
   "lanes": {
     "replan": { "agent": "strategist", "model": "model-b" },
     "synthesis": { "agent": "strategist", "model": "model-b" },

@@ -9,7 +9,10 @@ import { importSnapshot, writeBasis, writeTask } from "../src/context.ts";
 import { cloneControl, decodeUnit, Git, initBare, leaseRef } from "../src/git.ts";
 import { MockAgent } from "../src/agents/mock.ts";
 import { Coordinator } from "../src/orchestrator.ts";
-import { ownerOf, recipientOf, triage } from "../src/policy.ts";
+import { AttentionBudget, ownerOf, recipientOf, triage } from "../src/policy.ts";
+import { EscalationLog } from "../src/escalation-log.ts";
+import type { DeliveredEvent, TriagedEvent } from "../src/escalation-log.ts";
+import { Index } from "../src/store.ts";
 import { planTeam, validateTeam } from "../src/factory.ts";
 import type { Catalog, Library, Requirements, TeamPlan } from "../src/factory.ts";
 import type { Policy, Proposal } from "../src/policy.ts";
@@ -61,6 +64,68 @@ describe("policy triage", () => {
   it("never_auto floor beats everything", () => {
     assert.equal(triage(policy, p({ kind: "policy_change" })).neverAuto, "kind:policy_change");
     assert.equal(triage(policy, p({ paths: [".agents/escalation-policy.json"] })).neverAuto, "path:.agents/escalation-policy.json");
+  });
+});
+
+describe("escalation log", () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "esc-"));
+
+  it("records triage with a feature snapshot and marks tunable-only escalations", () => {
+    const log = new EscalationLog(tmp());
+    const big = p({ id: "PR-1", diffLines: 900 });
+    const t = log.triaged(policy, big, triage(policy, big));
+    assert.equal(t.route, "escalate");
+    assert.equal(t.tunableOnly, true);
+    assert.equal(t.features.diffLines, 900);
+    assert.equal(t.policyVersion, policy.version);
+    const mig = p({ id: "PR-2", diffLines: 900, tags: ["data_migration"] });
+    assert.equal(log.triaged(policy, mig, triage(policy, mig)).tunableOnly, false);
+    const ok = p({ id: "PR-3" });
+    assert.equal(log.triaged(policy, ok, triage(policy, ok)).tunableOnly, false);
+    assert.deepEqual(log.list("PR-1").map((e) => e.type), ["triaged"]);
+    assert.equal(log.list().length, 3);
+  });
+
+  it("does not change routing", () => {
+    const log = new EscalationLog(tmp());
+    for (const over of [{}, { diffLines: 900 }, { tags: ["data_migration"] }, { precedent: "none" as const }]) {
+      const prop = p(over);
+      const before = triage(policy, prop);
+      log.triaged(policy, prop, before);
+      assert.deepEqual(triage(policy, prop), before);
+    }
+  });
+
+  it("records each brief's position in the day, interrupts, queueing and wait", () => {
+    const log = new EscalationLog(tmp());
+    const budget = new AttentionBudget(policy, log);
+    for (let i = 0; i < 9; i++) budget.submit({ id: `B${i}`, markdown: "", blockedTasks: i, interrupt: false, blind: i === 0 });
+    budget.submit({ id: "SEC", markdown: "", blockedTasks: 0, interrupt: true });
+    budget.nextDay();
+    const ev = log.list() as DeliveredEvent[];
+    const byBrief = (id: string) => ev.filter((e) => e.briefId === id);
+    assert.equal(byBrief("B0")[0].ordinal, 1);
+    assert.equal(byBrief("B0")[0].blind, true);
+    assert.equal(byBrief("B7")[0].ordinal, 8);
+    assert.deepEqual(byBrief("B8").map((e) => [e.mode, e.day, e.ordinal, e.waitedDays]), [["queued", 0, null, 0], ["delivered", 1, 1, 1]]);
+    assert.deepEqual(byBrief("SEC").map((e) => [e.mode, e.ordinal]), [["interrupt", null]]);
+  });
+
+  it("is indexed from committed files", () => {
+    const dir = tmp();
+    const git = new Git(dir);
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    const log = new EscalationLog(dir);
+    const prop = p({ id: "PR-9", diffLines: 900 });
+    log.triaged(policy, prop, triage(policy, prop));
+    new AttentionBudget(policy, log).submit({ id: "PR-9", markdown: "", blockedTasks: 1, interrupt: false });
+    execFileSync("git", ["add", "-A"], { cwd: dir });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "log"], { cwd: dir });
+    const idx = new Index().rebuild(git);
+    const events = idx.escalationEvents("PR-9");
+    assert.deepEqual(events.map((e) => e.type), ["triaged", "delivered"]);
+    assert.equal((events[0] as TriagedEvent).triggers.includes("threshold:diff_lines"), true);
+    idx.close();
   });
 });
 

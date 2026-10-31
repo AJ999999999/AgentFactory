@@ -1,5 +1,6 @@
 // Escalation policy: decides auto-resolve vs. escalate for every proposal, and caps
 // how many briefs reach the one human per day (with backpressure when over budget).
+import type { EscalationLog } from "./escalation-log.ts";
 import { matchGlob } from "./util.ts";
 
 export type Policy = {
@@ -22,6 +23,9 @@ export type Policy = {
   trust: { demote_when: { revert_rate_30d: number; missed_escalations: number } };
   decision_rights?: Record<string, string>; // decision type -> owner role
   profiles?: Record<string, { coordinator: boolean; max_workers: number; combined_digest_when_client_is_partner: boolean }>;
+  // k: one missed escalation costs as much as k unnecessary ones. A class of decisions is
+  // worth escalating when the chance the human changes the outcome is above 1/k.
+  escalation_quality?: { miss_cost_ratio: number };
 };
 
 // Who owns a decision. Unmapped decision types go to the partner: when the policy
@@ -110,30 +114,53 @@ export function triage(policy: Policy, p: Proposal): Triage {
 
 // ---------- attention budget ----------
 
-export type QueuedBrief = { id: string; markdown: string; blockedTasks: number; interrupt: boolean };
+// proposalId links the brief to its triage event; blind marks a brief sent without its
+// recommendation. Both only feed the escalation log.
+export type QueuedBrief = { id: string; markdown: string; blockedTasks: number; interrupt: boolean; proposalId?: string; blind?: boolean };
 
 export class AttentionBudget {
   maxPerDay: number;
   interruptTags: string[];
   deliveredToday: QueuedBrief[] = [];
   queue: QueuedBrief[] = [];
-  constructor(policy: Policy) {
+  day = 0;
+  log?: EscalationLog;
+  private queuedOn = new Map<string, number>();
+  constructor(policy: Policy, log?: EscalationLog) {
     this.maxPerDay = policy.attention_budget.max_briefs_per_day;
     this.interruptTags = policy.attention_budget.interrupt_immediately;
+    this.log = log;
   }
 
   submit(brief: QueuedBrief): "delivered" | "interrupt" | "queued" {
+    let mode: "delivered" | "interrupt" | "queued";
+    let ordinal: number | null = null;
     if (brief.interrupt) {
       this.deliveredToday.push(brief);
-      return "interrupt";
-    }
-    if (this.deliveredToday.filter((b) => !b.interrupt).length < this.maxPerDay) {
+      mode = "interrupt";
+    } else if (this.deliveredToday.filter((b) => !b.interrupt).length < this.maxPerDay) {
       this.deliveredToday.push(brief);
-      return "delivered";
+      ordinal = this.deliveredToday.filter((b) => !b.interrupt).length;
+      mode = "delivered";
+    } else {
+      this.queue.push(brief);
+      this.queue.sort((a, b) => b.blockedTasks - a.blockedTasks);
+      if (!this.queuedOn.has(brief.id)) this.queuedOn.set(brief.id, this.day);
+      mode = "queued";
     }
-    this.queue.push(brief);
-    this.queue.sort((a, b) => b.blockedTasks - a.blockedTasks);
-    return "queued";
+    const firstQueued = this.queuedOn.get(brief.id);
+    if (mode !== "queued") this.queuedOn.delete(brief.id);
+    this.log?.delivered({
+      proposalId: brief.proposalId ?? brief.id,
+      briefId: brief.id,
+      mode,
+      ordinal,
+      day: this.day,
+      blind: brief.blind ?? false,
+      blockedTasks: brief.blockedTasks,
+      waitedDays: mode === "queued" || firstQueued === undefined ? 0 : this.day - firstQueued,
+    });
+    return mode;
   }
 
   // When briefs are queued, agents switch to reversible prep work only.
@@ -143,6 +170,7 @@ export class AttentionBudget {
 
   // Daily digest, most-blocking first. Rolls the overflow into the next day.
   nextDay(): QueuedBrief[] {
+    this.day++;
     this.deliveredToday = [];
     const carry = this.queue.splice(0);
     for (const b of carry) this.submit(b);

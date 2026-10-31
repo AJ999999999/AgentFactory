@@ -432,3 +432,59 @@ describe("MCP server (stdio JSON-RPC)", () => {
     proc.kill();
   });
 });
+
+describe("merge queue", () => {
+  // x.txt and y.txt each pass alone; together they fail, the way two changes with
+  // disjoint leases can each be fine and still break main once both land.
+  const bothPresent = async (dir: string) => (fs.existsSync(path.join(dir, "x.txt")) && fs.existsSync(path.join(dir, "y.txt")) ? ["x and y clash"] : []);
+  const setup = async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "raee-recheck-"));
+    initBare(path.join(base, "origin.git"));
+    const seed = cloneControl(path.join(base, "origin.git"), path.join(base, "seed"));
+    fs.writeFileSync(path.join(seed.cwd, "README"), "seed\n");
+    await seed.commitAll("seed", {});
+    seed.run(["push", "-q", "origin", "HEAD:main"]);
+    const control = cloneControl(path.join(base, "origin.git"), path.join(base, "control"));
+    const events: Array<{ t: number; event: string; data?: Record<string, unknown> }> = [];
+    const coord = new Coordinator({ control, worktreeRoot: path.join(base, "wt"), runner: new MockAgent([1, 2]), concurrency: 2, log: makeLogger(events) });
+    const mainFiles = () => { control.run(["fetch", "-q", "origin"]); return control.listFiles("origin/main").sort(); };
+    return { coord, events, mainFiles };
+  };
+  const write = (name: string) => async (dir: string) => {
+    fs.writeFileSync(path.join(dir, name), "1\n");
+    return { message: `add ${name}`, trailers: {} };
+  };
+
+  it("checks a change again after rebasing it onto work that landed meanwhile, and lands the failure record instead", async () => {
+    const { coord, events, mainFiles } = await setup();
+    let releaseY!: () => void;
+    const yMayFinish = new Promise<void>((r) => (releaseY = r));
+    let yStarted!: () => void;
+    const started = new Promise<void>((r) => (yStarted = r));
+    const y = coord.transaction({
+      id: "y", identity: { name: "b", email: "b@x" }, lockPaths: ["y.txt"],
+      work: async (dir) => { yStarted(); await yMayFinish; return write("y.txt")(dir); },
+      recheck: { run: bothPresent, onFail: async (dir, _wt, failures) => { fs.writeFileSync(path.join(dir, "y-failed.txt"), failures.join("\n")); return { message: "y failed", trailers: {} }; } },
+    });
+    await started; // y's worktree is on the old main before x lands
+    const x = await coord.transaction({ id: "x", identity: { name: "a", email: "a@x" }, lockPaths: ["x.txt"], work: write("x.txt") });
+    assert.ok(x.sha);
+    releaseY();
+    const res = await y;
+    assert.deepEqual(res.recheckFailures, ["x and y clash"]);
+    assert.deepEqual(mainFiles(), ["README", "x.txt", "y-failed.txt"]);
+    assert.ok(events.some((e) => e.event === "recheck_failed"));
+  });
+
+  it("doesn't check again when main hasn't moved since the work started", async () => {
+    const { coord, mainFiles } = await setup();
+    let ran = 0;
+    const res = await coord.transaction({
+      id: "y", identity: { name: "b", email: "b@x" }, lockPaths: ["y.txt"], work: write("y.txt"),
+      recheck: { run: async () => { ran++; return ["would fail"]; }, onFail: async () => null },
+    });
+    assert.equal(ran, 0);
+    assert.equal(res.recheckFailures, undefined);
+    assert.deepEqual(mainFiles(), ["README", "y.txt"]);
+  });
+});

@@ -5,21 +5,24 @@
       {
         "type": "command",
         "bash": "node .agents/hooks/session-start.mjs",
-        "timeoutSec": 5
+        "timeoutSec": 5,
+        "powershell": "node .agents/hooks/session-start.mjs"
       }
     ],
     "preToolUse": [
       {
         "type": "command",
         "bash": "node .agents/hooks/pre-tool-use.mjs",
-        "timeoutSec": 5
+        "timeoutSec": 5,
+        "powershell": "node .agents/hooks/pre-tool-use.mjs"
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
         "bash": "node .agents/hooks/session-end.mjs",
-        "timeoutSec": 10
+        "timeoutSec": 10,
+        "powershell": "node .agents/hooks/session-end.mjs"
       }
     ]
   }

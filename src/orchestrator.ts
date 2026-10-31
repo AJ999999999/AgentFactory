@@ -38,6 +38,7 @@ export class Coordinator {
     id: string;
     identity: Identity;
     lockPaths: string[];
+    leaseTtlMs?: number; // must outlast the work, or another runner may reap the lease mid-turn
     // Return null for no change; set committed when the work made its own commit (e.g. git revert).
     work: (wtDir: string, wt: Git) => Promise<{ message: string; trailers: Record<string, string | string[]>; costTokens?: number; committed?: boolean } | null>;
   }): Promise<TxResult> {
@@ -50,6 +51,7 @@ export class Coordinator {
     const wtDir = path.join(this.worktreeRoot, `${t.id}-${n}`);
     try {
       lease = await this.leases.acquire(t.id, t.identity.name, t.lockPaths, {
+        ttlMs: t.leaseTtlMs,
         onWait: (conflicts) => {
           if (!waited) this.log("lease_wait", { task: t.id, conflicts });
           waited = true;

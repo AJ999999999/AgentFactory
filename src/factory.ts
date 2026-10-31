@@ -15,7 +15,28 @@ export type Library = {
   skills: { base: string[]; lead: string[]; coordinator: string[]; domain: Record<string, { source: string; status: string; note?: string }> };
   roles: Record<string, RoleTemplate>;
   moduleKinds: Record<string, string>;
+  // Long-running harness: which role does each lane of work, what a role generated for
+  // a lane the library doesn't cover may do, and which lanes judge other lanes' work
+  // (they must run on a different model from the work they judge).
+  lanes?: Record<string, string>;
+  generated?: { agent: string; model: string; permissions: string[] };
+  judgeLanes?: string[];
 };
+
+// What a template's permission list actually grants, through the catalog only. Entries
+// the factory can't grant are dropped (template drift never widens access); entries
+// that need a decision come back as pending.
+export function resolvePermissions(perms: string[], catalog: Catalog, writePaths: string[] = []): { granted: string[]; pending: Array<{ permission: string; decision: string }> } {
+  const granted: string[] = [];
+  const pending: Array<{ permission: string; decision: string }> = [];
+  for (const p of perms) {
+    const entry = catalog[p];
+    if (!entry || !entry.grantableByFactory || entry.never) continue;
+    if (entry.requiresDecision) pending.push({ permission: p, decision: entry.requiresDecision });
+    else granted.push(p === "repo:write:lease" && writePaths.length ? `repo:write:${writePaths.join(",")}` : p);
+  }
+  return { granted, pending };
+}
 
 export type Requirements = {
   engagement: string;
@@ -69,15 +90,10 @@ export function planTeam(req: Requirements, lib: Library, catalog: Catalog, poli
 
   const make = (id: string, templateName: string, module?: { id: string; paths: string[] }): Member => {
     const t = lib.roles[templateName];
-    const granted: string[] = [];
-    const pending: Member["pendingPermissions"] = [];
     const writePaths = module ? module.paths.map((p) => `${req.leaseRoot}/${p}`) : [];
-    for (const p of t.permissions) {
-      const entry = catalog[p];
-      if (!entry || !entry.grantableByFactory || entry.never) continue; // template drift never widens access
-      if (entry.requiresDecision) pending.push({ permission: p, decision: entry.requiresDecision });
-      else granted.push(p === "repo:write:lease" ? `repo:write:${writePaths.join(",")}` : p);
-    }
+    const { granted, pending } = resolvePermissions(t.permissions, catalog, writePaths);
+    // Keep the old shape for a member with no module: "repo:write:" with no paths.
+    for (const [i, g] of granted.entries()) if (g === "repo:write:lease") granted[i] = "repo:write:";
     const skills = [...lib.skills.base, ...(t.kind === "lead" ? lib.skills.lead : []), ...(t.kind === "coordinator" || (t.kind === "lead" && !profile.coordinator) ? lib.skills.coordinator : []), ...t.skills, ...(t.kind === "worker" || t.kind === "side" ? domain : [])];
     const usesGenerated = skills.some((s) => s.includes("(generated"));
     return { id, template: `${templateName}@v${t.version}`, kind: t.kind, module: module?.id, model: t.model, skills, permissions: granted, pendingPermissions: pending, writePaths, decisionRights: t.decisionRights, probation: usesGenerated };

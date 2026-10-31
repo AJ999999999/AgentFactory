@@ -178,6 +178,14 @@ describe("Copilot CLI hooks", () => {
     assert.equal(pre("bash", { command: "git reset --hard HEAD~3" })?.permissionDecision, "deny");
     assert.deepEqual(pre("bash", { command: "ls tools" }), { permissionDecision: "allow" });
   });
+  it("on Windows (PowerShell): blocks recursive deletes of roots, home and parents, and writes to protected paths; allows work inside the artifact", () => {
+    for (const command of ["Remove-Item -Recurse -Force C:\\", "rm -r ..", "rd /s /q ..\\other", "Remove-Item -Recurse -Force $env:USERPROFILE", "ri -r ~"]) {
+      assert.equal(pre("powershell", { command })?.permissionDecision, "deny", command);
+    }
+    assert.equal(pre("powershell", { command: "Set-Content -Path .agents\\escalation-policy.json -Value x" })?.permissionDecision, "deny");
+    assert.deepEqual(pre("powershell", { command: "Remove-Item -Recurse tools\\opportunity-analyzer\\tmp" }), { permissionDecision: "allow" });
+    assert.deepEqual(pre("powershell", { command: "Get-ChildItem tools" }), { permissionDecision: "allow" });
+  });
   it("accepts toolArgs as an object too (SDK style) and defers on read-only tools", () => {
     assert.deepEqual(runHook("pre-tool-use.mjs", { cwd: dir, toolName: "edit", toolArgs: { path: "tools/opportunity-analyzer/a.json" } }), { permissionDecision: "allow" });
     assert.equal(pre("view", { path: "anything" }), null);

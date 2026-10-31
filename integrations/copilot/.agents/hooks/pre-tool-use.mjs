@@ -49,9 +49,16 @@ if (SHELL_TOOLS.test(tool)) {
   if (/\bgit\s+push\b/.test(cmd)) out("deny", "raee: agents never push; the coordinator merges through the merge queue");
   if (/\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s|branch\s+-D|update-ref)\b/.test(cmd)) out("deny", "raee: destructive git command blocked in agent sessions");
   if (/\brm\s+-[a-z]*r[a-z]*f?\s+(\/|~|\.\.?\s*$)/.test(cmd)) out("deny", "raee: recursive delete outside the artifact blocked");
+  // Windows: Copilot CLI's shell is PowerShell there, with its own recursive deletes.
+  // Same rule as above: no recursive delete of a root, home, a parent or the cwd.
+  const recursive = /\b(remove-item|ri|rm|del|erase|rmdir|rd)\b[^|;&]*(\s-(r|recurse)\b|\s\/s\b)/i.test(cmd);
+  const wide = /(\s|^|["'])(\.\.?[\\/]?|~[\\/]?|[\\/]|[a-z]:[\\/]?|\$home|\$env:\w+)(["']|\s|$|[;|&])/i.test(cmd) || /\.\.[\\/]/.test(cmd);
+  if (recursive && wide) out("deny", "raee: recursive delete outside the artifact blocked");
+  const writes = /(>|\btee\b|sed\s+-i|\bmv\b|\bcp\b|\brm\b|set-content|add-content|out-file|copy-item|move-item|remove-item|new-item|\bcopy\b|\bmove\b|\bdel\b)/i;
   for (const g of session.protectedPaths ?? []) {
     const literal = g.replace(/\*\*?.*$/, "");
-    if (literal && cmd.includes(literal) && /(>|tee|sed\s+-i|mv|cp|rm)\b/.test(cmd)) out("deny", `raee: shell write to protected path ${g}`);
+    const variants = [literal, literal.replaceAll("/", "\\")];
+    if (literal && variants.some((v) => cmd.includes(v)) && writes.test(cmd)) out("deny", `raee: shell write to protected path ${g}`);
   }
   out("allow");
 }

@@ -4,6 +4,8 @@
   "mcp:context:author": { "grantableByFactory": true, "description": "Context layer tools for authors" },
   "mcp:context:lead": { "grantableByFactory": true, "description": "Context layer tools for leads, including spawn and charter" },
   "web:read": { "grantableByFactory": true, "description": "Read public web pages for research" },
+  "shell:test": { "grantableByFactory": true, "description": "Run the project's build and tests in the worktree" },
+  "data:private:read": { "grantableByFactory": true, "requiresDecision": "data_access", "description": "Read the client's private data (tickets, logs, customer records) inside the engagement" },
   "data:market:read": { "grantableByFactory": true, "requiresDecision": "new_vendor", "description": "Read from the market data vendor, once one is chosen" },
   "broker:read_positions": { "grantableByFactory": false, "description": "Read broker positions. Partner decision only" },
   "broker:trade": { "grantableByFactory": false, "never": true, "description": "Place orders. Never granted to agents" },

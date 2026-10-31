@@ -8,6 +8,7 @@
 // "tools/opportunity-analyzer" is held, closing the race on overlapping paths.
 import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { Mutex, pathsOverlap } from "./util.ts";
@@ -25,22 +26,30 @@ export class Git {
     this.identity = identity;
   }
 
+  // Long paths: worktrees under .af/ plus repo paths pass Windows' 260-character
+  // limit. (Repos the harness clones also get it, and no line-ending conversion, in
+  // their own config; see cloneControl.)
   private args(args: string[]): string[] {
-    return ["-c", `user.name=${this.identity.name}`, "-c", `user.email=${this.identity.email}`, "-c", "commit.gpgsign=false", ...args];
+    return ["-c", `user.name=${this.identity.name}`, "-c", `user.email=${this.identity.email}`, "-c", "commit.gpgsign=false", "-c", "core.longpaths=true", ...args];
   }
 
   run(args: string[]): string {
-    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
+  }
+
+  // Plumbing commands that read stdin (hash-object --stdin, mktree).
+  runInput(args: string[], input: string): string {
+    return execFileSync("git", this.args(args), { cwd: this.cwd, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }).trim();
   }
 
   async runAsync(args: string[]): Promise<string> {
-    const { stdout } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
     return stdout.trim();
   }
 
   async tryAsync(args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
     try {
-      const { stdout, stderr } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
+      const { stdout, stderr } = await execFileP("git", this.args(args), { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
       return { ok: true, out: stdout.trim(), err: stderr.trim() };
     } catch (e) {
       const err = e as { stdout?: string; stderr?: string; message: string };
@@ -51,7 +60,7 @@ export class Git {
   // Changed paths in the working tree (untracked included). Parsed from -z output
   // untrimmed: porcelain lines start with a status column that may be a space.
   async changedFiles(): Promise<string[]> {
-    const { stdout } = await execFileP("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileP("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: this.cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
     const parts = stdout.split("\0").filter(Boolean);
     const files: string[] = [];
     for (let i = 0; i < parts.length; i++) {
@@ -120,11 +129,14 @@ export function log(git: Git, rev = "HEAD"): CommitInfo[] {
 
 export function initBare(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
-  execFileSync("git", ["init", "-q", "--bare", "-b", "main", dir]);
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", dir], { windowsHide: true });
 }
 
+// The clone's own config: no line-ending conversion (Git for Windows converts by
+// default, and then files on disk stop matching what was committed and hashed), and
+// long paths. Worktrees share this config.
 export function cloneControl(remote: string, dir: string): Git {
-  execFileSync("git", ["clone", "-q", remote, dir], { stdio: "ignore" });
+  execFileSync("git", ["clone", "-q", "-c", "core.autocrlf=false", "-c", "core.longpaths=true", remote, dir], { stdio: "ignore", windowsHide: true });
   return new Git(dir);
 }
 
@@ -134,13 +146,115 @@ export function cloneControl(remote: string, dir: string): Git {
 // each other's half-written admin dirs. Agent sessions run in parallel; these short
 // admin operations are serialized per repository.
 
-const repoLocks = new Map<string, Mutex>();
-export function repoLock(git: Git): Mutex {
+//
+// The same goes across processes: the scheduled loop, `answer` typed in a terminal and
+// the panel all write through one checkout, and one process's `reset --hard` landing
+// between another's event write and its commit would silently drop an answer. So the
+// lock is also a file in the repository's git directory, held for the same short steps.
+
+export class RepoLock {
+  private mutex = new Mutex();
+  file: string;
+  constructor(file: string) {
+    this.file = file;
+  }
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    return this.mutex.run(async () => {
+      const release = await acquireFileLock(this.file);
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    });
+  }
+}
+
+const repoLocks = new Map<string, RepoLock>();
+const commonDirs = new Map<string, string>();
+export function repoLock(git: Git): RepoLock {
   // --git-common-dir may be relative to the repo's cwd (".git"), so resolve against it.
-  const key = path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"]));
+  // A directory's common dir never changes while it exists, so it's looked up once.
+  // realpath: on Windows the same directory can be spelled with a short 8.3 name
+  // (RUNNER~1) or a long one, and two spellings would mean two locks for one repo.
+  let key = commonDirs.get(git.cwd);
+  if (!key) commonDirs.set(git.cwd, (key = canonical(path.resolve(git.cwd, git.run(["rev-parse", "--git-common-dir"])))));
   let m = repoLocks.get(key);
-  if (!m) repoLocks.set(key, (m = new Mutex()));
+  if (!m) repoLocks.set(key, (m = new RepoLock(path.join(key, "agentfactory.lock"))));
   return m;
+}
+
+// A lock left by a process that died is taken over: at once if that process is gone
+// (same machine), otherwise once it is older than any step holds it.
+export const LOCK_STALE_MS = 10 * 60_000;
+type LockInfo = { pid?: number; host?: string; at: number; token?: string };
+
+function readLockInfo(file: string): LockInfo | null {
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    try {
+      return JSON.parse(raw) as LockInfo;
+    } catch {
+      // Created but not written yet: judge it by the file's age.
+      return { at: fs.statSync(file).mtimeMs };
+    }
+  } catch {
+    return null; // gone
+  }
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+export function lockIsStale(info: LockInfo, now = Date.now(), staleMs = LOCK_STALE_MS): boolean {
+  if (now - info.at > staleMs) return true;
+  return info.pid !== undefined && info.host === os.hostname() && info.pid !== process.pid && !alive(info.pid);
+}
+
+export async function acquireFileLock(file: string, staleMs = LOCK_STALE_MS): Promise<() => void> {
+  const token = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  for (let i = 0; ; i++) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now(), token }), { flag: "wx" });
+      return () => {
+        try {
+          if (readLockInfo(file)?.token === token) fs.unlinkSync(file);
+        } catch {
+          /* already gone */
+        }
+      };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const held = readLockInfo(file);
+    if (held && lockIsStale(held, Date.now(), staleMs)) {
+      // Take it over by renaming (atomic: of two processes doing this, one wins). If
+      // what got renamed isn't the stale lock we judged, someone took it over first:
+      // put theirs back.
+      const aside = `${file}.${token}`;
+      try {
+        fs.renameSync(file, aside);
+        if (readLockInfo(aside)?.token !== held.token) {
+          try {
+            fs.linkSync(aside, file);
+          } catch {
+            /* a third holder: theirs stands */
+          }
+        }
+        fs.rmSync(aside, { force: true });
+      } catch {
+        /* someone else took it over */
+      }
+      continue;
+    }
+    await new Promise((r) => setTimeout(r, Math.min(20 * 2 ** Math.min(i, 4), 250)));
+  }
 }
 
 export async function addWorktree(control: Git, dir: string, branch: string, base: string): Promise<Git> {
@@ -153,9 +267,28 @@ export async function addDetachedWorktree(control: Git, dir: string, rev: string
   return new Git(dir, control.identity);
 }
 
+function canonical(p: string): string {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return p;
+  }
+}
+
+// On Windows an antivirus scan or the search indexer can hold a file open for a moment,
+// and the removal fails. Retry, then delete the directory and prune git's record, so
+// worktrees don't pile up over months.
 export async function removeWorktree(control: Git, dir: string, branch?: string): Promise<void> {
   await repoLock(control).run(async () => {
-    await control.tryAsync(["worktree", "remove", "--force", dir]);
+    let removed = false;
+    for (let i = 0; i < 5 && !removed; i++) {
+      removed = (await control.tryAsync(["worktree", "remove", "--force", dir])).ok || !fs.existsSync(dir);
+      if (!removed) await new Promise((r) => setTimeout(r, 100 * 2 ** i));
+    }
+    if (!removed) {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      await control.tryAsync(["worktree", "prune"]);
+    }
     if (branch) await control.tryAsync(["branch", "-D", branch]);
   });
 }
@@ -232,11 +365,11 @@ export class LeaseManager {
     return { lease: { ...body, sha }, conflicts: [] };
   }
 
-  async acquire(task: string, agent: string, paths: string[], opts: { timeoutMs?: number; onWait?: (c: string[]) => void } = {}): Promise<Lease> {
+  async acquire(task: string, agent: string, paths: string[], opts: { timeoutMs?: number; ttlMs?: number; onWait?: (c: string[]) => void } = {}): Promise<Lease> {
     const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
     let delay = 25;
     for (;;) {
-      const { lease, conflicts } = await this.tryAcquire(task, agent, paths);
+      const { lease, conflicts } = await this.tryAcquire(task, agent, paths, opts.ttlMs);
       if (lease) return lease;
       opts.onWait?.(conflicts);
       if (Date.now() > deadline) throw new Error(`lease timeout for ${paths.join(",")}: held by ${conflicts.join(",")}`);

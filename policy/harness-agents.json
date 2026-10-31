@@ -1,0 +1,22 @@
+{
+  "comment": "How Copilot CLI runs a seat. The role comes from policy/library.json (lane -> role); each library role runs as the custom agent profile `<profilePrefix><role>` (install them with `npm run harness -- agents install`) unless `agents` maps it to another; generated roles run as `<profilePrefix><fallback.agent>` with their charter in the prompt. A profile that isn't installed is skipped (no --agent) rather than failing the turn. Tool flags come from the seat's catalog permissions through `tools`; a seat without a write permission also gets --deny-tool write. Tool names are placeholders to check against your CLI version. `models` maps the library's model placeholders to model ids your Copilot plan offers; an empty one is left out and Copilot uses its default (then judges share the workers' model). `lanes` applies only when the policy has no team.",
+  "fallback": { "agent": "author", "model": "model-a" },
+  "profilePrefix": "af-",
+  "models": { "model-a": "", "model-b": "", "model-c": "" },
+  "agents": {},
+  "tools": {
+    "repo:write:lease": ["--allow-tool", "write"],
+    "shell:test": ["--allow-tool", "shell(npm test)", "--allow-tool", "shell(npm run build)"],
+    "web:read": ["--allow-tool", "web_fetch"]
+  },
+  "always": [
+    "--allow-tool", "shell(git status)", "--allow-tool", "shell(git diff:*)",
+    "--deny-tool", "shell(git push)", "--deny-tool", "shell(git commit:*)", "--deny-tool", "shell(rm:*)"
+  ],
+  "lanes": {
+    "replan": { "agent": "strategist", "model": "model-b" },
+    "synthesis": { "agent": "strategist", "model": "model-b" },
+    "replicate": { "agent": "experimenter", "model": "model-c" },
+    "review": { "agent": "blind-reviewer", "model": "model-b" }
+  }
+}

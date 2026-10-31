@@ -27,7 +27,7 @@ npm run harness -- tick [--copilot <path>]   # one wake: maintenance, then at mo
 npm run harness -- status --packet         # beliefs, open work and why it waits, questions for the partner
 npm run harness -- answer <ask> --choice <id> [--result supports --metrics k=v --runs n --note ..]
 npm run harness -- pause | resume | budget <goal> turns=N
-npm run panel [-- --dir <folder>] [-- --demo]   # local page on 127.0.0.1:4700: questions, live turns with Stop
+npm run panel [-- --dir <folder> ...] [-- --demo]   # local page on 127.0.0.1:4700, over every folder `open` ran in: questions, live turns with Stop
 npm run mcp:partner -- --dir <folder>      # the partner's tools over MCP (status, open_questions, answer, add_work, pause, stop_turn)
 npm run memory -- add | view | render
 npm run demo:harness                       # six simulated cases, months in seconds
@@ -131,7 +131,7 @@ The pieces of `src/harness/`:
 - Seats can run in Copilot, Claude Code, Codex, pi or omp, chosen by model; judges in Claude Code by default.
 - The partner's MCP tools.
 
-**Branches and PRs.** PRs #1 to #7 are merged into `main` (foundation, harness, Windows, memory, panel, then two from other sessions: answers count as the partner's own unless relayed, and an escalation log). The work on real CLIs, usage limits, live turns, Claude judges, partner tools, worker mode and the eval is on branch `real-clis-eval`, based on `main`, open as PR #10. Open PRs #8 (panel across project folders, decision cards) and #9 (an animated architecture diagram, which duplicates `docs/architecture.gif`) touch the same files, so whichever merges second needs its conflicts resolved.
+**Branches and PRs.** PRs #1 to #8 are merged into `main` (foundation, harness, Windows, memory, panel, then two from other sessions: answers count as the partner's own unless relayed, and an escalation log). The work on real CLIs, usage limits, live turns, Claude judges, partner tools, worker mode and the eval is on branch `real-clis-eval`, based on `main`, open as PR #10. #8 (panel across project folders, decision cards) is merged into `main`, and `main` is merged into this branch. #9 (an animated overview diagram, `docs/architecture.svg`) is stacked on this branch; the README shows it at the top and this branch's one-turn walk-through (`docs/architecture.gif`) in the harness section.
 
 **What the first real runs showed (Windows, Copilot CLI 1.0.105, Claude Code 2.1.314, Codex CLI 0.166.0, pi 1.4.0)**
 - **Copilot has one model on this plan.** Its router reports only `gpt-6-luna`, and `--model` refuses every name, that one included. So `model-a` and `model-c` stay empty (Copilot's default), and `model-b`, the judges, is `claude:opus`.

@@ -17,6 +17,7 @@ import type { TurnOutput } from "../src/harness/validate.ts";
 import { answerEvents } from "../src/harness/answers.ts";
 import { buildPacket } from "../src/harness/packet.ts";
 import { criteriaHash } from "../src/harness/validate.ts";
+import { askView } from "../src/panel/view.ts";
 import type { AssumptionDef, Finding, GoalDef, HEvent, TodoDraft, TurnRecord } from "../src/harness/types.ts";
 
 // Most tests here check one mechanism at a time, without a team (nothing is staffed);
@@ -244,6 +245,41 @@ test("validation: agents can't mint strong evidence, invent busywork, or propose
   assert.ok(f && f.type === "finding" && f.finding.untrusted, "web content is marked untrusted");
   assert.equal(v.events.filter((e) => e.type === "todo_added").length, 1);
   assert.equal(v.granularity, "substantive", "a sourced finding and a proposed test are real progress");
+});
+
+test("a question can be answered from its card: the asker's recommendation and consequences travel with it, and the card says when to look first", () => {
+  const g = goal({ id: "G", assumptions: [A({ id: "D" })], scope: ["work"] });
+  const base = [g, todo("G", { id: "r", lane: "research", text: "r", tests: "D" })];
+  const ask = (output: TurnOutput, ...more: HEvent[]) => {
+    const v = validate(st(...base, ...more), "r", output);
+    const opened = v.events.find((e) => e.type === "ask_opened")!;
+    const s = st(...base, ...more, ...v.events);
+    return { v, view: askView(s, "e", s.asks.get(opened.type === "ask_opened" ? opened.ask.id : "")!) };
+  };
+  const easy = ask({ asks: [{
+    question: "Which onboarding first?",
+    options: [{ id: "short", label: "Short form", consequence: "ships Friday" }, { id: "long", label: "Long form", consequence: "two more weeks", huge: "x".repeat(10_000) } as never],
+    recommend: { option: "short", why: "cheaper to learn from" },
+  }] });
+  assert.deepEqual(easy.view.recommend, { option: "short", label: "Short form", why: "cheaper to learn from", by: "r1" });
+  assert.deepEqual(easy.view.options.map((o) => [o.id, o.consequence, o.confirm ?? false]), [["short", "ships Friday", false], ["long", "two more weeks", false]]);
+  assert.deepEqual(easy.view.lookFirst, [], "nothing in it argues against answering from the card");
+  assert.ok(!JSON.stringify(easy.v.events).includes("xxxx"), "only the fields the page knows are kept");
+
+  const final = ask({ asks: [{ question: "Drop the long form?", options: [{ id: "drop", label: "Drop it", irreversible: true }, { id: "keep", label: "Keep it" }], recommend: { option: "drop", why: "nobody uses it" } }] });
+  assert.deepEqual(final.view.lookFirst, ["what it recommends can't be undone"]);
+  assert.ok(final.view.options.every((o) => o.confirm), "no one-click answers on a card that says to look first");
+  assert.equal(final.view.options[0].irreversible, true);
+
+  const f1 = finding({ goal: "G", assumption: "D", direction: "supports", grade: "measured", id: "f-yes" });
+  const f2 = finding({ goal: "G", assumption: "D", direction: "refutes", grade: "reported", id: "f-no" }, T0 + 2);
+  const opened: HEvent = { id: "ask-split", at: T0 + 3, by: "harness", type: "ask_opened", ask: { id: "ask-split", goal: "G", to: "partner", kind: "decision", question: "Keep D?", origin: "rule:x", evidence: ["f-yes", "f-no"], options: [{ id: "y", label: "Yes" }, { id: "n", label: "No" }] } };
+  const split = st(...base, f1, f2, opened);
+  assert.deepEqual(askView(split, "e", split.asks.get("ask-split")!).lookFirst, ["the evidence points both ways"]);
+
+  const bad = ask({ asks: [{ question: "Pick one?", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }], recommend: { option: "c", why: "c is best" } }] });
+  assert.equal(bad.view.recommend, undefined);
+  assert.ok(bad.v.reasons.some((r) => r.includes("recommendation names no option")));
 });
 
 test("validation: a test can't move a pre-registered threshold, and an unregistered one must be stated up front", () => {

@@ -9,7 +9,7 @@
   "tools": {
     "repo:write:lease": ["--allow-tool", "write"],
     "shell:test": ["--allow-tool", "shell(npm test)", "--allow-tool", "shell(npm run build)"],
-    "web:read": ["--allow-tool", "web_fetch"]
+    "web:read": ["--allow-tool", "web_fetch", "--allow-all-urls"]
   },
   "always": [
     "--allow-tool", "shell(git status)", "--allow-tool", "shell(git diff:*)",

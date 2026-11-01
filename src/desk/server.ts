@@ -9,16 +9,23 @@
 //
 // The page waits on /api/state for a change instead of polling on a timer: browsers
 // slow timers in background tabs to once a minute, but not a pending request.
+//
+// The desk also runs the sessions it drives (driven.ts): Copilot over ACP, started,
+// prompted, stopped and answered from the page or from a window attached to it. The
+// token is in page.json too, for those windows: it guards against web pages, and the
+// file is only readable by you.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { runCommand } from "../proc.ts";
-import { answer, type Choice, loadConfig, modesFile, pageFile, pending, readJson, type Rule, rulesFile, writeJson } from "./hold.ts";
+import { Driver, type DrivenView, NAME } from "./driven.ts";
+import { answer, type Choice, configFile, loadConfig, modesFile, pageFile, pending, readJson, type Rule, rulesFile, writeJson } from "./hold.ts";
 import { confirm, guesses, knowledgeDir, commit, reject, repoNameOf, summary } from "./knowledge.ts";
 import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnConfig, toLearn } from "./learn.ts";
 import { deskHome, readLog } from "./log.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
+import { terminals as openTerminals } from "./mcp.ts";
 import { sessionFile, sessionTail } from "./session.ts";
 import { deskView } from "./view.ts";
 
@@ -37,10 +44,40 @@ const CHOICES: Choice[] = ["allow", "deny", "terminal", "always"];
 
 class BadRequest extends Error {}
 
-export type DeskOptions = { home?: string; port?: number; log?: (line: string) => void; jump?: (title: string) => Promise<boolean>; analyst?: Analyst; learnEveryMs?: number };
+export type DeskOptions = {
+  home?: string;
+  port?: number;
+  log?: (line: string) => void;
+  jump?: (title: string) => Promise<boolean>;
+  // Open a console window attached to a driven session.
+  window?: (name: string, cwd: string) => Promise<boolean>;
+  analyst?: Analyst;
+  learnEveryMs?: number;
+  // The Copilot the desk drives, and its ACP arguments; tests use a fake. Default: the
+  // config's `copilot` and `acpArgs`, else `copilot --acp --stdio`.
+  copilot?: string;
+  acpArgs?: string[];
+};
+
+const CLI = path.join(import.meta.dirname, "cli.ts");
+
+// A new console window running `npm run desk -- attach <name>` in the session's folder.
+// Start-Process gives a console program its own window; the values travel in
+// environment variables, never inside the command text, and the name is plain
+// (driven.ts's NAME). [char]34 quotes the script's path without a `"` in the command
+// line, which would have to survive two parsers.
+export async function openWindow(name: string, cwd: string): Promise<boolean> {
+  if (process.platform !== "win32" || !NAME.test(name)) return false;
+  try {
+    await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Start-Process -FilePath $env:AF_DESK_NODE -WorkingDirectory $env:AF_DESK_CWD -ArgumentList ('--no-warnings ' + [char]34 + $env:AF_DESK_CLI + [char]34 + ' attach ' + $env:AF_DESK_NAME)"], { env: { ...process.env, AF_DESK_NODE: process.execPath, AF_DESK_CWD: cwd, AF_DESK_CLI: CLI, AF_DESK_NAME: name }, timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type Learning = { running?: { session: string; repo: string; since: number }; queued: number; recent: Analysis[] };
-export type Desk = { url: string; port: number; token: string; close: () => Promise<void> };
+export type Desk = { url: string; port: number; token: string; drive: Driver; close: () => Promise<{ working: string[] }> };
 
 // Bring a terminal's window forward by the title `copilot-here.ps1` gave it. The title
 // travels in an environment variable, never inside the script text.
@@ -73,7 +110,7 @@ export function recentAnalyses(dir: string, n = 6): Analysis[] {
   }
 }
 
-export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }) {
+export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }, driven: Array<DrivenView & { attached?: boolean }> = []) {
   const cfg = loadConfig(home);
   // An ask the hook left behind (Copilot killed it, the PC slept) is past its wait.
   const asks = pending(home).filter((a) => now - a.at < cfg.holdSec * 1000);
@@ -82,7 +119,10 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
   const log = readLog(home);
   const dir = knowledgeDir(home);
   const notes = recentNotes(home);
-  const terminals = deskView(log, asks, rules, modes, now).map((t) => {
+  // A driven session has its own block; its hook rows (if hooks fire under ACP) would
+  // only repeat it. Handed to Copilot's own screen, the hook row is the live one.
+  const mine = new Set(driven.filter((d) => d.session && d.state !== "in its own screen").map((d) => d.session));
+  const terminals = deskView(log, asks, rules, modes, now).filter((t) => !mine.has(t.session)).map((t) => {
     const repo = repoNameOf(t.cwd);
     const transcript = log.find((e) => e.session === t.session && e.transcript)?.transcript;
     const tail = t.state === "closed" ? [] : cached(`tail:${t.session}`, 1500, now, () => {
@@ -91,7 +131,9 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
     });
     return { ...t, repo, tail, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)), notes: notes.filter((n) => n.to === t.name || n.from === t.name).slice(0, 6) };
   });
-  return { now, holdSec: cfg.holdSec, knowledgeDir: dir, terminals, guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
+  const drivenOut = driven.map((d) => ({ ...d, repo: repoNameOf(d.cwd), rules: rules.filter((r) => r.terminal === d.name), knowledge: cached(`know:${repoNameOf(d.cwd)}`, 3000, now, () => summary(dir, repoNameOf(d.cwd), now)), notes: notes.filter((n) => n.to === d.name || n.from === d.name).slice(0, 6) }));
+  const folders = [...new Set([...driven.map((d) => d.cwd), ...log.map((e) => e.cwd)])].slice(-30);
+  return { now, holdSec: cfg.holdSec, knowledgeDir: dir, terminals, driven: drivenOut, folders, guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
 }
 
 // Changes the page cares about; the clock alone isn't one.
@@ -110,6 +152,12 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
   const jump = opts.jump ?? jumpWindows;
   const log = opts.log ?? (() => {});
   const token = randomBytes(24).toString("hex");
+  const cfg = readJson<{ copilot?: string; acpArgs?: string[] }>(configFile(home), {});
+  const drive = new Driver({ home, log, copilot: opts.copilot ?? cfg.copilot ?? "copilot", args: opts.acpArgs ?? cfg.acpArgs ?? ["--acp", "--stdio"] });
+  const window = opts.window ?? openWindow;
+  // When a window last followed each session: one that did lately is open.
+  const watched = new Map<string, number>();
+  const driven = () => drive.list().map((v) => ({ ...v, attached: Date.now() - (watched.get(v.name) ?? 0) < 30_000 }));
   let port = 0;
   const hosts = () => new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const send = (res: http.ServerResponse, status: number, body: string, type: string) => {
@@ -124,6 +172,57 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
     res.end(body);
   };
   const json = (res: http.ServerResponse, status: number, v: unknown) => send(res, status, JSON.stringify(v), "application/json; charset=utf-8");
+
+  // What the page and attached windows ask of the sessions the desk drives.
+  const driveCall = async (what: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const name = str(body.name, "name", 40);
+    const text = (k: string, max: number) => (typeof body[k] === "string" ? (body[k] as string).slice(0, max) : undefined);
+    try {
+      switch (what) {
+        case "start": {
+          const view = await drive.start(name, str(body.cwd, "folder", 1000), text("prompt", 20_000));
+          return { session: view.session };
+        }
+        case "prompt":
+          return drive.prompt(name, str(body.text, "prompt", 20_000));
+        case "stop":
+          drive.stop(name);
+          return {};
+        case "answer":
+          drive.answer(name, str(body.ask, "ask", 200), { ...(typeof body.option === "string" ? { option: body.option } : {}), always: body.always === true, deny: body.deny === true, ...(text("note", 1000)?.trim() ? { note: text("note", 1000)!.trim() } : {}) });
+          return {};
+        case "reply": {
+          const action = body.action === "accept" || body.action === "decline" ? body.action : "cancel";
+          drive.reply(name, str(body.ask, "ask", 200), action, body.content && typeof body.content === "object" && !Array.isArray(body.content) ? (body.content as Record<string, unknown>) : undefined);
+          return {};
+        }
+        case "set":
+          await drive.setOption(name, str(body.option, "option", 100), str(body.value, "value", 200));
+          return {};
+        case "seen":
+          drive.seen(name);
+          return {};
+        case "close":
+          await drive.close(name);
+          return {};
+        case "handoff":
+          return drive.handoff(name);
+        case "back":
+          drive.back(name);
+          return {};
+        case "window": {
+          const v = drive.get(name);
+          if (!v) throw new Error(`no session named ${name}`);
+          if (!(await window(name, v.cwd))) throw new Error("couldn't open a window: run `npm run desk -- attach " + name + "` in a terminal");
+          return {};
+        }
+        default:
+          throw new Error(`no such action ${what}`);
+      }
+    } catch (e) {
+      throw e instanceof BadRequest ? e : new BadRequest((e as Error).message.split("\n")[0]);
+    }
+  };
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -140,10 +239,23 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         const since = url.searchParams.get("since");
         const until = Date.now() + Math.min(Number(url.searchParams.get("wait") ?? 25_000) || 0, 25_000);
         for (;;) {
-          const snap = snapshot(home, Date.now(), learning());
+          const snap = snapshot(home, Date.now(), learning(), driven());
           const version = fingerprint(snap);
           if (version !== since || Date.now() >= until || req.destroyed) return json(res, 200, { ...snap, version });
-          await new Promise((r) => setTimeout(r, 400));
+          await drive.next(400);
+        }
+      }
+      if (req.method === "GET" && url.pathname === "/api/drive/watch") {
+        // An attached window following one session: what changed after `rev`.
+        const name = url.searchParams.get("name") ?? "";
+        const rev = Number(url.searchParams.get("rev") ?? 0) || 0;
+        const until = Date.now() + Math.min(Number(url.searchParams.get("wait") ?? 25_000) || 0, 25_000);
+        for (;;) {
+          const got = drive.since(name, rev);
+          if (!got) return json(res, 404, { error: `no session named ${name}` });
+          watched.set(name, Date.now());
+          if (got.view.rev > rev || Date.now() >= until || req.destroyed) return json(res, 200, got);
+          await drive.next(Math.max(0, Math.min(1000, until - Date.now())));
         }
       }
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
@@ -199,7 +311,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         }
         case "/api/note": {
           // From you, to a terminal's session (read during its work) or to all of them.
-          const known = deskView(readLog(home), [], [], {}).filter((t) => t.state !== "closed").map((t) => t.name);
+          const known = openTerminals(home).map((t) => t.name);
           try {
             sendNote(YOU, str(body.to, "to", 100), typeof body.text === "string" ? body.text : "", { home, known });
           } catch (e) {
@@ -225,6 +337,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
           break;
         }
         default:
+          if (url.pathname.startsWith("/api/drive/")) return json(res, 200, { ok: true, ...(await driveCall(url.pathname.slice("/api/drive/".length), body)) });
           return json(res, 404, { error: "not found" });
       }
       return json(res, 200, { ok: true });
@@ -294,23 +407,25 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
   const learner = setInterval(() => void pass(), opts.learnEveryMs ?? 30_000);
   const first = setTimeout(() => void pass(), Math.min(opts.learnEveryMs ?? 5_000, 5_000));
 
-  const beat = () => writeJson(pageFile(home), { at: Date.now(), pid: process.pid, url: `http://127.0.0.1:${port}/` });
+  const beat = () => writeJson(pageFile(home), { at: Date.now(), pid: process.pid, url: `http://127.0.0.1:${port}/`, token });
   beat();
   const beating = setInterval(beat, 5_000);
   return {
     url: `http://127.0.0.1:${port}/`,
     port,
     token,
+    drive,
     close: () =>
-      new Promise<void>((r) => {
+      new Promise((r) => {
         // Stop holding at once rather than after the beat goes stale.
         clearInterval(beating);
         clearInterval(learner);
         clearTimeout(first);
         closed = true;
         fs.rmSync(pageFile(home), { force: true });
+        const working = drive.shutdown();
         server.closeAllConnections?.();
-        server.close(() => r());
+        server.close(() => r({ working }));
       }),
   };
 }

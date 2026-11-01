@@ -133,7 +133,7 @@ Each guide is its own file, so a change to one feature touches only its own page
 - [Which CLI and model run a seat](docs/models.md): Copilot, Claude Code, Codex, pi or omp, and how each is held to its grant
 - [Usage limits](docs/usage-limits.md): a limit is a wait, not a failure
 - [The panel](docs/panel.md): the partner's page over every engagement
-- [The desk](docs/desk.md): one page for all your Copilot CLI terminals, notes between them, and what their sessions teach kept in git (company-setup branch)
+- [The desk](docs/desk.md): one page that runs and answers all your Copilot CLI sessions, notes between them, and what their sessions teach kept in git (company-setup branch)
 - [From your own Copilot or Claude Code session](docs/partner-tools.md): the partner's MCP tools
 - [Memory about the people you serve](docs/memory.md): typed memory, what it may be used for, and how it expires
 - [What testing found](docs/testing-findings.md)

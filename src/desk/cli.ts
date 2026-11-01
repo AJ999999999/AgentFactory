@@ -1,8 +1,11 @@
 // The desk on the command line.
 //
 //   npm run desk -- install          hook every Copilot CLI session on this PC (one file in ~/.copilot/hooks)
-//   npm run desk                     the page: every terminal, and its permission asks held for you
-//                                    [--port 4710] [--no-open] [--demo: three simulated terminals, nothing real touched]
+//   npm run desk                     the page: every session, what it asks, and the sessions it drives
+//                                    [--port 4710] [--no-open] [--demo: simulated sessions, nothing real touched]
+//   npm run desk -- attach [<name>] [--folder <dir>]   this window on a session the desk drives
+//                                    (started here if new; Copilot's own screen if the desk isn't running)
+//   npm run desk -- sessions         the sessions the desk drives
 //   npm run desk -- learn [--session <id>] [--force]   learn from ended sessions now (or one session)
 //   npm run desk -- knows [<folder>]  what a new session in that folder is told
 //   npm run desk -- note <terminal|all> <text>   a note to a terminal's session, read during its work
@@ -31,19 +34,21 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     const demo = all.includes("--demo");
     let home: string | undefined;
     let analyst;
-    if (demo) {
+    const d = demo ? await import("./demo.ts") : undefined;
+    if (d) {
       home = fs.mkdtempSync(path.join(os.tmpdir(), "af-desk-demo-"));
       process.env.AF_DESK_HOME = home;
-      const d = await import("./demo.ts");
       await d.makeDemo(home);
       analyst = d.demoAnalyst;
       console.log(`a demo desk in ${home}`);
     }
-    const desk = await startDesk({ ...(home ? { home } : {}), ...(analyst ? { analyst } : {}), port: i >= 0 ? Number(all[i + 1]) : 4710, log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
+    const desk = await startDesk({ ...(home ? { home } : {}), ...(analyst ? { analyst } : {}), ...(d ? { copilot: d.DEMO_COPILOT, acpArgs: ["--acp"] } : {}), port: i >= 0 ? Number(all[i + 1]) : 4710, log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
+    if (d && home) await d.driveDemo(desk.drive, home);
     console.log(`desk: ${desk.url}  (Ctrl+C to stop; while it runs, permission asks wait here instead of in the terminals)`);
     if (!all.includes("--no-open")) openBrowser(desk.url);
     const stop = async () => {
-      await desk.close();
+      const { working } = await desk.close();
+      if (working.length) console.log(`stopped ${working.join(", ")} mid-turn; Copilot saved them, and the next prompt reloads each`);
       if (home) fs.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
       process.exit(0);
     };
@@ -92,13 +97,34 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     console.log(`sent to ${notes.map((n) => n.to).join(", ")}; delivered after its next tool call`);
     break;
   }
+  case "attach": {
+    const { attach, copilotScreen } = await import("./attach.ts");
+    const { readJson, configFile } = await import("./hold.ts");
+    const cwd = path.resolve(flag("folder") ?? process.cwd());
+    const given = args[0] && !args[0].startsWith("--") ? args[0] : path.basename(cwd);
+    const name = given.replace(/[^\w.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 40) || "copilot";
+    const copilot = readJson<{ copilot?: string }>(configFile(), {}).copilot ?? "copilot";
+    const end = await attach(name, cwd, { copilot });
+    if ((end === "no-desk" || end === "failed") && !args.includes("--no-fallback")) {
+      console.log(end === "no-desk" ? "the desk isn't running (npm run desk): Copilot's own screen here instead" : "Copilot's own screen here instead");
+      process.exit((await copilotScreen(copilot)([], cwd, name)) ?? 1);
+    }
+    process.exit(end === "failed" || end === "no-desk" ? 1 : 0);
+  }
+  case "sessions": {
+    const { readDriven } = await import("./driven.ts");
+    const all = readDriven();
+    if (!all.length) console.log("the desk drives no session yet: start one on the page, or npm run desk -- attach <name> in a repo's folder");
+    for (const d of all) console.log(`${d.name.padEnd(16)} ${d.state.padEnd(18)} ${new Date(d.since).toLocaleString()}  ${d.cwd}`);
+    break;
+  }
   case "tail": {
     const n = Number(flag("n") ?? 20);
     for (const e of readLog().slice(-n)) console.log(`${new Date(e.at).toLocaleTimeString()}  ${path.basename(e.cwd).padEnd(20).slice(0, 20)}  ${e.event}${e.kind ? `:${e.kind}` : ""}${e.tool ? `  ${e.tool}` : ""}${e.detail ? `  ${e.detail}` : e.message ? `  ${e.message}` : ""}`);
     break;
   }
   default:
-    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all> <text> | report [--days 7] | tail [--n 20]\nstate: ${deskHome()}`);
+    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | attach [name] [--folder dir] | sessions | learn [--session id] | knows [folder] | note <terminal|all> <text> | report [--days 7] | tail [--n 20]\nstate: ${deskHome()}`);
     process.exit(1);
 }
 

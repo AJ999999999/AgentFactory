@@ -6,7 +6,6 @@
 // sessions you're driving, and shouldn't write to the ones you are.
 import * as path from "node:path";
 import { serveMcp, type McpTool } from "../mcp-rpc.ts";
-import { readDriven } from "./driven.ts";
 import { pending, terminalOf } from "./hold.ts";
 import { deskHome, readLog } from "./log.ts";
 import { send, YOU } from "./notes.ts";
@@ -14,22 +13,8 @@ import { deskView } from "./view.ts";
 
 export const DESK_SERVER = "af-desk";
 
-export type OpenTerminal = { name: string; cwd: string; state: string; since: number; said?: string };
-
-// Every open session: the ones you type into (seen through hooks) and the ones the desk
-// drives. A driven session's own hook rows, if any, are the same session.
-export function terminals(home = deskHome(), now = Date.now()): OpenTerminal[] {
-  const driven = readDriven(home).filter((d) => d.state !== "closed");
-  const mine = new Set(driven.filter((d) => d.state !== "in its own screen").map((d) => d.session));
-  const names = new Set(driven.map((d) => d.name));
-  const hooked = deskView(readLog(home), pending(home), [], {}, now).filter((t) => t.state !== "closed" && !mine.has(t.session) && !names.has(t.name));
-  return [
-    ...hooked.map((t) => ({ name: t.name, cwd: t.cwd, state: t.state, since: t.since, ...(t.said ? { said: t.said } : {}) })),
-    ...driven.map((d) => {
-      const said = [...d.items].reverse().find((i) => i.type === "agent")?.text;
-      return { name: d.name, cwd: d.cwd, state: d.state === "idle" || d.state === "done" ? "waiting for your next prompt" : d.state, since: d.since, ...(said ? { said: said.slice(-300) } : {}) };
-    }),
-  ];
+export function terminals(home = deskHome(), now = Date.now()) {
+  return deskView(readLog(home), pending(home), [], {}, now).filter((t) => t.state !== "closed");
 }
 
 export function deskTools(me: string, home = deskHome()): McpTool[] {

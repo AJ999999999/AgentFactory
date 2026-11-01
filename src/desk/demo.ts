@@ -1,20 +1,15 @@
-// A throwaway desk for `npm run desk -- --demo`: three simulated terminals typed into by
-// hand (a permission ask waiting, a question, an idle session, one already learned
-// from), two sessions the desk drives through a stand-in for Copilot (demo-copilot.mjs:
-// one asking to run a migration, one ending on a question), and a canned analyst.
-// Nothing here touches your real Copilot folder or knowledge repo.
+// A throwaway desk with three simulated terminals, for `npm run desk -- --demo`: a
+// permission ask waiting, a question, an idle session, a finished one already learned
+// from, and a canned analyst in place of Copilot. Nothing here touches your real
+// Copilot folder or knowledge repo.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { hold, writeJson } from "./hold.ts";
 import { recordProposals, commit, ensureRepo } from "./knowledge.ts";
-import type { Driver } from "./driven.ts";
 import type { Analyst } from "./learn.ts";
 import { append, type DeskEvent } from "./log.ts";
 
 const line = (type: string, data: Record<string, unknown>, at: number) => JSON.stringify({ type, data, id: `${type}-${at}`, timestamp: new Date(at).toISOString() });
-
-// The Copilot the demo desk drives.
-export const DEMO_COPILOT = path.join(import.meta.dirname, "demo-copilot.mjs");
 
 export const demoAnalyst: Analyst = async () =>
   JSON.stringify({ items: [
@@ -27,7 +22,7 @@ export async function makeDemo(home: string): Promise<void> {
   process.env.COPILOT_HOME = copilot;
   const now = Date.now();
   const repos = path.join(home, "work");
-  for (const r of ["billing", "web", "etl", "api", "payments"]) fs.mkdirSync(path.join(repos, r, ".git"), { recursive: true });
+  for (const r of ["billing", "web", "etl"]) fs.mkdirSync(path.join(repos, r, ".git"), { recursive: true });
   const at = (minAgo: number) => now - minAgo * 60_000;
   const session = (id: string, lines: string[]) => {
     fs.mkdirSync(path.join(copilot, "session-state", id), { recursive: true });
@@ -90,11 +85,4 @@ export async function makeDemo(home: string): Promise<void> {
   const ask: DeskEvent = { at: Date.now(), event: "permissionRequest", session: "b1111111-demo", cwd: billing, terminal: "billing", tool: "powershell", detail: JSON.stringify({ command: "npm run migrate -- --env staging" }) };
   append(ask, home);
   void hold(ask, { home }, "npm run migrate -- --env staging");
-}
-
-// Once the desk runs: the sessions it drives.
-export async function driveDemo(drive: Driver, home: string): Promise<void> {
-  const repos = path.join(home, "work");
-  await drive.start("payments", path.join(repos, "payments"), "Backfill the corrected totals on staging, then run npm run migrate -- --env staging");
-  await drive.start("api", path.join(repos, "api"), "Add an endpoint for refunds. Where should the table live?");
 }

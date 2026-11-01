@@ -41,34 +41,6 @@ header .spacer { flex: 1; }
 .send input { flex: 1; min-width: 0; border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--paper); border-radius: 2px; padding: 4px 8px; font-size: 13.5px; }
 .send button { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 3px 10px; font-size: 13px; }
 .live .learn-now { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 2px 10px; font-size: 13px; }
-.start { padding: 0 0 18px; }
-.start .send input:last-child { flex: 0 1 200px; }
-.prompt { display: flex; gap: 6px; margin-top: 8px; align-items: flex-end; }
-.prompt textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 220px; resize: vertical; border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--paper); border-radius: 2px; padding: 6px 8px; font-size: 14px; line-height: 1.4; }
-.prompt .opt { flex: none; }
-.settings { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--ink-2); flex: 1; min-width: 0; }
-.settings select, .field select { font: inherit; color: inherit; border: 1px solid var(--rule); background: var(--paper); border-radius: 2px; padding: 2px 4px; }
-.toggle.stop { border-color: var(--bad); color: var(--bad); }
-.toggle.armed { background: var(--bad); border-color: var(--bad); color: var(--paper); }
-.convo { margin-top: 12px; max-height: 480px; overflow: auto; padding: 4px 12px 4px 0; border-left: 3px solid var(--action); padding-left: 12px; font-size: 14px; }
-.drive.st-working .convo, .drive.st-starting .convo { border-left-color: var(--action); }
-.drive.st-waiting .convo, .drive.st-done .convo { border-left-color: var(--approval); }
-.drive.st-idle .convo, .drive.st-asleep .convo, .drive.st-closed .convo, .drive.st-away .convo { border-left-color: var(--rule); }
-.drive.st-failed .convo { border-left-color: var(--bad); }
-.convo .m { margin: 7px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.convo .m.you { font-weight: 600; }
-.convo .m.you::before { content: "› "; color: var(--ink-3); }
-.convo .m.you.queued, .convo .m.you.dropped { color: var(--ink-3); font-weight: 500; }
-.convo .m .tag { font-weight: 400; color: var(--ink-3); font-size: 13px; }
-.convo .m.thought { color: var(--ink-3); font-style: italic; font-size: 13px; }
-.convo .m.tool, .convo .m.ask, .convo .m.sys { margin: 2px 0; font: 12.5px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink-2); }
-.convo .m.tool.failed, .convo .m.err { color: var(--bad); }
-.convo .m.ask { color: var(--approval); }
-.convo .m.plan { font-size: 13px; color: var(--ink-2); border-left: 2px solid var(--rule); padding-left: 8px; }
-.said { white-space: pre-wrap; max-height: 18em; overflow: auto; }
-.field { display: grid; gap: 3px; font-size: 14px; }
-.field input[type=text], .field input[type=number] { border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--rack); border-radius: 2px; padding: 6px 8px; }
-.ways { color: var(--ink-3); font-size: 13px; margin-top: 18px; }
 </style>
 </head>
 <body>
@@ -86,7 +58,7 @@ header .spacer { flex: 1; }
 <script>
 "use strict";
 const TOKEN = "__TOKEN__";
-const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), armed: null };
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, seen: new Set(), err: {} };
 
 async function api(path, body) {
   const res = await fetch(path, body === undefined
@@ -121,40 +93,25 @@ function ago(ms, now) {
 const cmdOf = (detail) => {
   try { const v = JSON.parse(detail); return v.command || v.path || v.url || detail; } catch { return detail || ""; }
 };
-const lastLine = (t) => (t || "").trim().split("\n").filter((l) => l.trim()).pop() || "";
 
 // ---------- actions ----------
 
-// `clear`: the boxes to empty once it went through (what you typed stays if it failed).
-async function act(path, body, errKey, clear) {
+async function act(path, body, errKey) {
   ui.sending = true;
-  let ok = false;
   try {
     await api(path, body);
     delete ui.err[errKey];
-    for (const k of [].concat(clear || [])) ui.drop.add(k);
-    ok = true;
+    return true;
   } catch (e) {
     ui.err[errKey] = e.message;
+    return false;
   } finally {
     ui.sending = false;
     render();
   }
-  return ok;
 }
 const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); render(); };
 const jump = (name) => act("/api/jump", { terminal: name }, `t:${name}`);
-const drive = (what, body, k, clear) => act(`/api/drive/${what}`, body, k, clear);
-// A second click within a few seconds does it: for what can't be taken back.
-function armed(key, label, sure, run) {
-  const on = ui.armed === key;
-  return h("button", { class: `toggle${on ? " armed" : ""}`, onclick: () => {
-    if (on) { ui.armed = null; run(); return; }
-    ui.armed = key;
-    render();
-    setTimeout(() => { if (ui.armed === key) { ui.armed = null; render(); } }, 4000);
-  } }, on ? sure : label);
-}
 
 // ---------- the rack: what is waiting on you ----------
 
@@ -169,20 +126,12 @@ function stripEl(k, kind, who, sub, q, rec, at, now, body, fresh) {
     h("div", { class: "body" }, body, ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null));
 }
 
-// A strip opens the first time it's shown, so one click answers it.
-function firstSight(k) {
-  const fresh = !ui.seen.has(k);
-  if (fresh) ui.open.add(k);
-  ui.seen.add(k);
-  return fresh;
-}
-
 function askStrip(t, a, now, holdSec) {
   const k = `ask:${a.id}`;
-  const fresh = firstSight(k);
+  if (!ui.seen.has(k)) ui.open.add(k); // a new ask opens, so one click answers it
   const cmd = cmdOf(a.detail);
   const left = Math.max(0, Math.round((a.at + holdSec * 1000 - now) / 60000));
-  const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": `${k}:note` });
+  const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": k });
   const body = [
     cmd.length > 100 ? h("code", { class: "cmd" }, cmd) : null,
     h("div", { class: "options" },
@@ -190,10 +139,10 @@ function askStrip(t, a, now, holdSec) {
       a.always ? h("button", { class: "opt", onclick: () => act("/api/answer", { ask: a.id, choice: "always" }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : a.tool} in ${t.name} from now on`) : null,
       h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal")),
     h("div", { class: "form row" }, note,
-      h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k, `${k}:note`) }, "Deny")),
+      h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k) }, "Deny")),
   ];
   const urgent = now - a.at > 5 * 60_000;
-  return stripEl(k, urgent ? "approval urgent" : "approval", t.name, a.tool, h("span", null, h("code", { class: "cmd" }, cmd || a.tool)), `goes to the terminal in ${left} min if you don't answer`, a.at, now, body, fresh);
+  return stripEl(k, urgent ? "approval urgent" : "approval", t.name, a.tool, h("span", null, h("code", { class: "cmd" }, cmd || a.tool)), `goes to the terminal in ${left} min if you don't answer`, a.at, now, body, !ui.seen.has(k));
 }
 
 function waitStrip(t, now) {
@@ -228,200 +177,45 @@ function guessStrip(g, now) {
 
 function noteStrip(n, now) {
   const k = `note:${n.id}`;
-  const fresh = !ui.seen.has(k);
-  ui.seen.add(k);
   const body = [
     h("div", { class: "why" }, n.text),
     h("div", { class: "options" },
       h("button", { class: "opt rec", onclick: () => act("/api/read", { note: n.id }, k) }, "Got it"),
       h("button", { class: "opt", onclick: () => jump(n.from) }, `Go to ${n.from}`)),
   ];
-  return stripEl(k, "action", n.from, "tells you", n.text, null, n.at, now, body, fresh);
-}
-
-const KIND = { execute: "runs a command", edit: "edits a file", delete: "deletes", move: "moves a file", read: "reads", search: "searches", fetch: "fetches a page", other: "uses a tool" };
-
-// A permission a driven session waits on, with Copilot's own options.
-function driveAskStrip(d, a, now) {
-  const k = `dask:${a.id}`;
-  const fresh = firstSight(k);
-  const what = a.command || a.title;
-  const note = h("input", { type: "text", placeholder: "Why not, and what to do instead (sent as your next prompt)", "data-k": `${k}:note` });
-  const body = [
-    a.detail ? h("code", { class: "cmd" }, a.detail) : what.length > 100 ? h("code", { class: "cmd" }, what) : null,
-    h("div", { class: "options" },
-      a.options.map((o, i) => h("button", { class: `opt ${o.kind.startsWith("allow") ? "allow" : "deny"}${i === 0 ? " rec" : ""}`, onclick: () => drive("answer", { name: d.name, ask: a.id, option: o.optionId }, k) }, o.name)),
-      a.always ? h("button", { class: "opt", title: "A standing answer on the desk, for this session's name, until you take it back", onclick: () => drive("answer", { name: d.name, ask: a.id, always: true }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : `every ${a.tool}`} in ${d.name} from now on`) : null),
-    h("div", { class: "form row" }, note,
-      h("button", { class: "opt deny", onclick: () => drive("answer", { name: d.name, ask: a.id, deny: true, note: note.value }, k, `${k}:note`) }, "Deny and tell it")),
-  ];
-  return stripEl(k, now - a.at > 5 * 60_000 ? "approval urgent" : "approval", d.name, KIND[a.tool] || a.tool, h("span", null, h("code", { class: "cmd" }, what)), "waits for you, here or in its window", a.at, now, body, fresh);
-}
-
-// A form Copilot sent (if it sends them over ACP).
-function driveQuestionStrip(d, a, now) {
-  const k = `dq:${a.id}`;
-  const fresh = firstSight(k);
-  const inputs = [];
-  const fields = Object.entries(a.fields).map(([key, f]) => {
-    const opts = f.enum ? f.enum.map((v, i) => [v, (f.enumNames && f.enumNames[i]) || v]) : f.oneOf ? f.oneOf.map((o) => [o.const, o.title || o.const]) : null;
-    const dk = `${k}:${key}`;
-    const el = opts ? h("select", { "data-k": dk }, opts.map(([v, t]) => h("option", { value: String(v) }, String(t))))
-      : f.type === "boolean" ? h("input", { type: "checkbox", "data-k": dk })
-      : h("input", { type: f.type === "number" || f.type === "integer" ? "number" : "text", "data-k": dk, value: f.default !== undefined ? String(f.default) : undefined });
-    inputs.push([key, el, f]);
-    return h("label", { class: "field" }, h("span", null, f.title || key, a.required.includes(key) ? " *" : ""), el, f.description ? h("span", { class: "subject" }, f.description) : null);
-  });
-  const content = () => {
-    const c = {};
-    for (const [key, el, f] of inputs) {
-      const v = el.type === "checkbox" ? el.checked : el.value;
-      if (v === "") continue;
-      c[key] = f.type === "number" || f.type === "integer" ? Number(v) : v;
-    }
-    return c;
-  };
-  const body = [
-    h("div", { class: "form" }, fields),
-    h("div", { class: "options" },
-      h("button", { class: "opt rec", onclick: () => drive("reply", { name: d.name, ask: a.id, action: "accept", content: content() }, k) }, "Answer"),
-      h("button", { class: "opt quiet-opt", onclick: () => drive("reply", { name: d.name, ask: a.id, action: "decline" }, k) }, "Decline")),
-  ];
-  return stripEl(k, "decision", d.name, "asks you", a.message, null, a.at, now, body, fresh);
-}
-
-// A driven session finished its turn and you haven't looked yet: what it said, its
-// options as buttons when it ended on a numbered list, and a reply box.
-function driveDoneStrip(d, now) {
-  const k = `ddone:${d.name}:${d.since}`;
-  const fresh = firstSight(k);
-  const said = ([...d.items].reverse().find((i) => i.type === "agent") || {}).text || "";
-  const body = [
-    said ? h("div", { class: "why said" }, said.length > 3000 ? `…${said.slice(-3000)}` : said) : null,
-    d.choices.length ? h("div", { class: "options" }, d.choices.map((c, i) => h("button", { class: `opt${i === 0 ? " rec" : ""}`, onclick: () => drive("prompt", { name: d.name, text: `${i + 1}. ${c}` }, k) }, `${i + 1}. ${c}`))) : null,
-    promptBox(d, d.choices.length ? "Or answer in your words" : `Your next prompt to ${d.name}`, "rack"),
-    h("div", { class: "options" }, h("button", { class: "opt quiet-opt", onclick: () => drive("seen", { name: d.name }, k) }, "Seen, nothing to add now")),
-  ];
-  const question = said.split("\n").map((l) => l.trim()).filter((l) => l.endsWith("?")).pop();
-  return stripEl(k, d.choices.length ? "decision" : "action", d.name, d.choices.length ? "asks you" : "finished", (d.choices.length && question) || lastLine(said).replace(/\*\*/g, "") || "finished its turn", null, d.since, now, body, fresh);
+  return stripEl(k, "action", n.from, "tells you", n.text, null, n.at, now, body, !ui.seen.has(k));
 }
 
 function rack(d) {
   const now = d.now;
-  const dv = d.driven || [];
   const out = [];
-  for (const s of dv) for (const a of s.asks) if (a.kind === "permission") out.push(driveAskStrip(s, a, now));
   for (const t of d.terminals) for (const a of t.asks) out.push(askStrip(t, a, now, d.holdSec));
-  for (const s of dv) for (const a of s.asks) if (a.kind === "question") out.push(driveQuestionStrip(s, a, now));
   for (const t of d.terminals) if (t.state === "asking you" || t.state === "waiting for permission") out.push(waitStrip(t, now));
   for (const n of d.forYou) out.push(noteStrip(n, now));
-  for (const s of dv) if (s.state === "done") out.push(driveDoneStrip(s, now));
   for (const g of d.guesses) out.push(guessStrip(g, now));
   for (const t of d.terminals) if (t.state === "waiting for your next prompt") out.push(waitStrip(t, now));
+  for (const t of d.terminals) for (const a of t.asks) ui.seen.add(`ask:${a.id}`);
+  for (const n of d.forYou) ui.seen.add(`note:${n.id}`);
   if (!out.length) out.push(h("div", { class: "quiet" }, "Nothing is waiting on you."));
   return out;
 }
 
-// ---------- the console: one block per session ----------
+// ---------- the console: one block per terminal ----------
 
 function beat(t) {
   const cls = t.state === "closed" ? "off" : t.state === "working" ? "ok" : "late";
   return h("span", { class: `beat ${cls}` }, h("i"), `${t.state} · ${ago(t.since, ui.data.now)}`);
 }
 
-const DRIVE_BEAT = { starting: "ok", working: "ok", "waiting on you": "late", done: "late", idle: "", asleep: "off", failed: "dead", "in its own screen": "ok", closed: "off" };
-const DRIVE_SAYS = { done: "finished, your turn", idle: "waiting for your prompt", asleep: "asleep: your next prompt wakes it", "in its own screen": "in Copilot's own screen" };
-const DRIVE_CLASS = { "waiting on you": "waiting", "in its own screen": "away" };
-function driveBeat(d) {
-  return h("span", { class: `beat ${DRIVE_BEAT[d.state] || ""}` }, h("i"), `${DRIVE_SAYS[d.state] || d.state} · ${ago(d.since, ui.data.now)}`);
-}
-
-function promptBox(d, placeholder, where) {
-  const k = `prompt:${d.name}:${where}`;
-  const busy = d.state === "working" || d.state === "waiting on you" || d.state === "starting";
-  const go = () => { if (ta.value.trim()) drive("prompt", { name: d.name, text: ta.value }, k, k); };
-  // Enter sends, Shift+Enter is a new line; not while an input method is composing.
-  const ta = h("textarea", { rows: 2, placeholder, "data-k": k, onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); go(); } } });
-  return [h("div", { class: "prompt" }, ta, h("button", { class: "opt rec", title: busy ? "Sent when the running turn ends" : "Enter sends; Shift+Enter for a new line", onclick: go }, busy ? "Queue" : "Send")), ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null];
-}
-
-function settingsEl(d) {
-  const k = `d:${d.name}`;
-  const sel = (id, label, cur, opts) => h("label", null, `${label} `, h("select", { onchange: (e) => { e.target.blur(); drive("set", { name: d.name, option: id, value: e.target.value }, k); } }, opts.map(([v, n]) => h("option", { value: v, selected: v === cur }, n))));
-  const cfg = (d.config || []).filter((o) => o.type === "select" && Array.isArray(o.options));
-  const out = cfg.map((o) => sel(o.id, o.name, o.currentValue, o.options.flatMap((x) => (x.options ? x.options.map((y) => [y.value, y.name]) : [[x.value, x.name]]))));
-  if (!cfg.some((o) => o.category === "mode") && d.modes && d.modes.availableModes.length) out.push(sel("mode", "Mode", d.modes.currentModeId, d.modes.availableModes.map((m) => [m.id, m.name])));
-  return h("span", { class: "settings" }, out);
-}
-
-function itemEl(i) {
-  switch (i.type) {
-    case "you": return h("div", { class: `m you${i.queued ? " queued" : ""}${i.status ? " dropped" : ""}` }, i.text, i.queued ? h("span", { class: "tag" }, " · sent when this turn ends") : i.status ? h("span", { class: "tag" }, ` · ${i.status}`) : null);
-    case "agent": return h("div", { class: "m agent" }, i.text);
-    case "thought": return h("div", { class: "m thought" }, i.text.length > 300 ? `…${i.text.slice(-300)}` : i.text);
-    case "tool": return h("div", { class: `m tool ${i.status || ""}` }, `${i.status === "completed" ? "✓" : i.status === "failed" ? "✗" : "▸"} ${i.text}`);
-    case "plan": return h("div", { class: "m plan" }, i.text);
-    case "ask": return h("div", { class: "m ask" }, `? ${i.text}${i.status ? ` · ${i.status}` : ""}`);
-    case "note": return h("div", { class: "m sys" }, /note/.test(i.text.slice(0, 16)) ? `✉ ${i.text}` : `· ${i.text}`);
-    case "end": return h("div", { class: "m sys" }, i.text === "end_turn" ? "· finished" : i.text === "cancelled" ? "· stopped" : `· ended: ${i.text}`);
-    case "error": return h("div", { class: "m err" }, i.text);
-    default: return null;
-  }
-}
-
-function convoEl(d) {
-  const last = d.items[d.items.length - 1];
-  const items = d.items.filter((i) => i.type !== "thought" || i === last).slice(-60);
-  return items.length ? h("div", { class: "convo", "data-scroll": d.name }, items.map(itemEl)) : null;
-}
-
-function knowsEl(t) {
-  const kn = t.knowledge;
-  return h("div", { class: "knows" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
-      h("span", { class: "v" }, kn.confirmed + kn.guesses ? `${kn.confirmed} confirmed · ${kn.guesses} to check` : "nothing yet")),
-    kn.items.length ? h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it in the left column" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))) : null);
-}
-
-function rulesEl(t, k) {
-  return t.rules.length ? h("div", { class: "team", title: "Allowed here without asking" },
-    t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
-      h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null;
-}
-
-function drivenEl(d) {
-  const k = `d:${d.name}`;
-  const busy = d.state === "working" || d.state === "waiting on you" || d.state === "starting";
-  const away = d.state === "in its own screen";
-  const closed = d.state === "closed";
-  return h("div", { class: `eng drive st-${DRIVE_CLASS[d.state] || d.state}` },
-    h("div", { class: "eng-head" }, h("h2", null, h("span", { class: "call" }, d.name), h("span", { class: "folder" }, d.cwd)), driveBeat(d)),
-    !closed && !away ? h("div", { class: "eng-head", style: "margin-top:8px" },
-      settingsEl(d),
-      h("span", { class: "acts" },
-        busy ? h("button", { class: "toggle stop", title: "Stop this turn, like Esc in Copilot", onclick: () => drive("stop", { name: d.name }, k) }, "Stop") : null,
-        d.attached ? h("button", { class: "toggle", title: "Bring its window forward", onclick: () => act("/api/jump", { terminal: d.name }, k) }, "Go to its window")
-          : h("button", { class: "toggle", title: "A PowerShell window on this session: type there, or /tui for Copilot's own screen", onclick: () => drive("window", { name: d.name }, k) }, "Open a window"),
-        armed(`close:${d.name}`, "Close", "Close it?", () => drive("close", { name: d.name }, k)))) : null,
-    away ? h("div", { class: "about", style: "margin-top:8px" }, "Open in Copilot's own screen in its window. Quit Copilot there to drive it from here again. ",
-      h("button", { class: "toggle", onclick: () => drive("back", { name: d.name }, k) }, "That window is closed: take it back")) : null,
-    d.state === "failed" && d.error ? h("div", { class: "eng-err" }, `${d.error} · your next prompt tries again`) : null,
-    ui.err[k] ? h("div", { class: "eng-err" }, ui.err[k]) : null,
-    convoEl(d),
-    !closed && !away ? promptBox(d, busy ? "Queued until this turn ends (Stop interrupts it)" : d.state === "asleep" ? "Your prompt (wakes its Copilot and reloads the session)" : `Your prompt to ${d.name}`, "block") : null,
-    knowsEl(d),
-    notesEl(d),
-    rulesEl(d, k));
-}
-
 function terminalEl(t) {
   const k = `t:${t.name}`;
+  const kn = t.knowledge;
   return h("div", { class: "eng" },
     h("div", { class: "eng-head" },
       h("h2", null, h("span", { class: "call" }, t.name), h("span", { class: "folder" }, t.cwd)),
       beat(t)),
     h("div", { class: "eng-head", style: "margin-top:8px" },
-      h("span", { class: "n", style: "flex:1" }, `typed in its terminal · ${t.stopsToday} stop${t.stopsToday === 1 ? "" : "s"} today`),
+      h("span", { class: "n", style: "flex:1" }, `${t.stopsToday} stop${t.stopsToday === 1 ? "" : "s"} today`),
       h("span", { class: "acts" },
         h("button", { class: "toggle", title: "Where this terminal's permission asks are answered", onclick: () => act("/api/mode", { terminal: t.name, mode: t.mode === "desk" ? "terminal" : "desk" }, k) }, t.mode === "desk" ? "Asks: here" : "Asks: in the terminal"),
         t.state !== "closed" ? h("button", { class: "toggle", onclick: () => jump(t.name) }, "Go to terminal") : null)),
@@ -430,9 +224,14 @@ function terminalEl(t) {
       h("div", { class: "live-head" }, h("span", { class: "t" }, `Session ${t.session.slice(0, 8)}`),
         h("button", { class: "learn-now", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
       h("pre", null, t.tail.join("\n"))) : null,
-    knowsEl(t),
+    h("div", { class: "knows" },
+      h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
+        h("span", { class: "v" }, kn.confirmed + kn.guesses ? `${kn.confirmed} confirmed · ${kn.guesses} to check` : "nothing yet")),
+      kn.items.length ? h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it in the left column" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))) : null),
     notesEl(t),
-    rulesEl(t, k));
+    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
+      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
+        h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null);
 }
 
 function noteLine(n, now, here) {
@@ -442,8 +241,8 @@ function noteLine(n, now, here) {
 
 function sendBox(to, label) {
   const k = `send:${to}`;
-  const go = () => { if (input.value.trim()) act("/api/note", { to, text: input.value }, k, k); };
-  const input = h("input", { type: "text", placeholder: label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) go(); } });
+  const input = h("input", { type: "text", placeholder: label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter") go(); } });
+  const go = () => { if (input.value.trim()) act("/api/note", { to, text: input.value }, k).then((ok) => { if (ok) { input.value = ""; input.blur(); } }); };
   return [h("div", { class: "send" }, input, h("button", { onclick: go }, "Send")), ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null];
 }
 
@@ -451,28 +250,7 @@ function notesEl(t) {
   if (t.state === "closed" && !t.notes.length) return null;
   return h("div", { class: "notes" },
     t.notes.map((n) => noteLine(n, ui.data.now, t.name)),
-    t.state !== "closed" ? sendBox(t.name, `A note for ${t.name} (it reads it while it works)`) : null);
-}
-
-function startEl(d) {
-  const k = "start";
-  const folder = h("input", { type: "text", list: "af-folders", placeholder: "Folder, e.g. C:\\work\\billing", "data-k": "start:folder" });
-  const name = h("input", { type: "text", placeholder: "Name (else the folder's)", "data-k": "start:name" });
-  const first = h("textarea", { rows: 2, placeholder: "First prompt (optional)", "data-k": "start:prompt" });
-  const btn = h("button", { class: "opt rec", onclick: () => {
-    const f = folder.value.trim();
-    if (!f) { ui.err[k] = "Which folder?"; return render(); }
-    const n = name.value.trim() || f.replace(/[\\/]+$/, "").split(/[\\/]/).pop().replace(/[^\w.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 40);
-    btn.disabled = true;
-    btn.textContent = "Starting…";
-    drive("start", { name: n, cwd: f, prompt: first.value }, k, ["start:folder", "start:name", "start:prompt"]);
-  } }, "Start");
-  return h("div", { class: "start" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Start a Copilot session"), h("span", { class: "v" }, "run from here: prompts, Stop, every ask")),
-    h("datalist", { id: "af-folders" }, (d.folders || []).map((f) => h("option", { value: f }))),
-    h("div", { class: "send" }, folder, name),
-    h("div", { class: "prompt" }, first, btn),
-    ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null);
+    t.state !== "closed" ? sendBox(t.name, `A note for ${t.name}'s session (it reads it while it works)`) : null);
 }
 
 function learningEl(d) {
@@ -491,71 +269,29 @@ function render() {
   const d = ui.data;
   if (!d) return;
   const f = document.activeElement;
-  // A request on its way, an open dropdown, or a word half-typed in an input method
-  // (pinyin): wait, then draw.
-  if (ui.sending || ui.composing || (f && f.tagName === "SELECT")) { ui.pending = true; return; }
+  if (ui.sending || (f && f.tagName === "INPUT")) { ui.pending = true; return; }
   ui.pending = false;
-  // Redrawn as Copilot streams, so keep what you're typing, your cursor, and where
-  // each conversation is scrolled (at the bottom stays at the bottom).
-  const typed = {};
-  for (const el of document.querySelectorAll("[data-k]")) typed[el.dataset.k] = el.type === "checkbox" ? el.checked : el.value;
-  const focus = f && f.dataset && f.dataset.k ? { k: f.dataset.k, s: f.selectionStart, e: f.selectionEnd } : null;
-  const scroll = {};
-  for (const el of document.querySelectorAll("[data-scroll]")) scroll[el.dataset.scroll] = el.scrollHeight - el.scrollTop - el.clientHeight < 30 ? -1 : el.scrollTop;
-
-  const dv = d.driven || [];
-  const waiting = d.terminals.reduce((n, t) => n + t.asks.length, 0) + dv.reduce((n, s) => n + s.asks.length, 0);
+  const waiting = d.terminals.reduce((n, t) => n + t.asks.length, 0);
   document.title = waiting ? `(${waiting}) AgentFactory desk` : "AgentFactory desk";
-  document.getElementById("sub").textContent = `desk · ${dv.filter((s) => s.state !== "closed").length + d.terminals.filter((t) => t.state !== "closed").length} sessions`;
+  document.getElementById("sub").textContent = `desk · ${d.terminals.filter((t) => t.state !== "closed").length} terminals`;
   document.getElementById("rack").replaceChildren(...rack(d));
   const con = document.getElementById("console");
-  const open = d.terminals.filter((t) => t.state !== "closed").length + dv.filter((s) => s.state !== "closed").length;
-  con.replaceChildren(...[
-    startEl(d),
-    ...dv.map(drivenEl),
-    ...d.terminals.map(terminalEl),
-    !dv.length && !d.terminals.length ? h("div", { class: "empty" },
-      h("p", null, "No Copilot session yet. Start one above, or in a terminal:"),
-      h("p", null, h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), " runs a session the desk drives, in that window. ", h("code", null, "-Native"), " runs Copilot's own screen, seen through its hooks (", h("code", null, "npm run desk -- install"), " once).")) : null,
-    open > 1 ? h("div", { class: "learning" }, h("div", { class: "goal-head" }, h("span", { class: "call" }, "All sessions")), sendBox("all", "A note for every open session")) : null,
-    learningEl(d)].filter(Boolean));
-
-  for (const el of document.querySelectorAll("[data-k]")) {
-    const k = el.dataset.k;
-    if (ui.drop.has(k) || !(k in typed)) continue;
-    if (el.type === "checkbox") el.checked = typed[k];
-    else el.value = typed[k];
-  }
-  ui.drop.clear();
-  if (focus) {
-    const el = [...document.querySelectorAll("[data-k]")].find((x) => x.dataset.k === focus.k);
-    if (el) {
-      el.focus();
-      try { el.setSelectionRange(focus.s, focus.e); } catch { /* not a text box */ }
-    }
-  }
-  for (const el of document.querySelectorAll("[data-scroll]")) {
-    const was = scroll[el.dataset.scroll];
-    el.scrollTop = was === undefined || was === -1 ? el.scrollHeight : was;
-  }
+  con.replaceChildren(...(d.terminals.length ? d.terminals.map(terminalEl) : [h("div", { class: "empty" },
+    h("p", null, "No Copilot CLI session yet."),
+    h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once, then start Copilot in each repo's terminal with ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."))]),
+    d.terminals.filter((t) => t.state !== "closed").length > 1 ? h("div", { class: "learning" }, h("div", { class: "goal-head" }, h("span", { class: "call" }, "All terminals")), sendBox("all", "A note for every open session")) : null,
+    learningEl(d));
   announce(d);
 }
 document.addEventListener("focusout", () => setTimeout(() => { if (ui.pending) render(); }, 0));
-document.addEventListener("compositionstart", () => { ui.composing = true; });
-document.addEventListener("compositionend", () => { ui.composing = false; setTimeout(() => { if (ui.pending) render(); }, 0); });
 
-// A new ask while you're elsewhere: a system notification, if you allowed them.
+// A new ask while you're in a terminal: a system notification, if you allowed them.
 const told = new Set();
 function announce(d) {
-  const tell = (id, title, body) => {
-    if (told.has(id)) return;
-    told.add(id);
-    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") new Notification(title, { body, tag: id });
-  };
-  for (const t of d.terminals) for (const a of t.asks) tell(a.id, `${t.name} wants to run ${a.tool}`, cmdOf(a.detail));
-  for (const s of d.driven || []) {
-    for (const a of s.asks) tell(a.id, a.kind === "permission" ? `${s.name} asks to ${a.title}` : `${s.name} asks you`, a.kind === "permission" ? a.command || a.title : a.message);
-    if (s.state === "done") tell(`done:${s.name}:${s.since}`, `${s.name} finished`, lastLine(([...s.items].reverse().find((i) => i.type === "agent") || {}).text));
+  for (const t of d.terminals) for (const a of t.asks) {
+    if (told.has(a.id)) continue;
+    told.add(a.id);
+    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") new Notification(`${t.name} wants to run ${a.tool}`, { body: cmdOf(a.detail), tag: a.id });
   }
 }
 if ("Notification" in window && Notification.permission === "default") {
@@ -584,7 +320,6 @@ async function loop() {
 }
 setInterval(() => { if (ui.data) { ui.data.now = Date.now(); render(); } }, 15000);
 loop();
-
 </script>
 </body>
 </html>

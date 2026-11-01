@@ -10,87 +10,168 @@
 <style>
 /*__PANEL_CSS__*/
 
-/* ---------- the desk's own pieces, in the panel's vocabulary ---------- */
-header .sub { color: var(--ink-2); font-size: 14px; }
+/* ---------- the desk's own pieces, in the panel's vocabulary ----------
+   One loud thing: a command waiting for your yes is drawn the way its PowerShell
+   window draws it. Everything else stays in the panel's quiet strips. */
+:root { --ps: #012456; --ps-ink: #eeedf0; --ps-dim: #9fb0cc; --namew: 128px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+code, .ps, pre { font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; }
+
+/* the header is the status line: how many threads are in each state */
+header { flex-wrap: wrap; row-gap: 8px; }
 header .spacer { flex: 1; }
-.cmd { display: block; margin-top: 3px; font: 13px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6em; overflow: hidden; }
-.body .cmd { max-height: 16em; overflow: auto; background: var(--rack); padding: 8px 10px; border-radius: 2px; }
-.subject { display: block; font-size: 13px; color: var(--ink-2); font-stretch: 87%; }
+.tally { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; color: var(--ink-2); }
+.tally span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tally i { width: 9px; height: 9px; border-radius: 1px; background: var(--kind, var(--ink-3)); }
+.tally b { color: var(--ink); font-weight: 650; }
+.tally .t-approval { --kind: var(--approval); }
+.tally .t-action { --kind: var(--action); }
+.tally .new-key i { border-radius: 50%; background: var(--focus); }
+.start-btn { border: 0; background: var(--ink); color: var(--rack); border-radius: 2px; padding: 5px 12px; font-size: 13.5px; font-weight: 600; }
+.start-btn[aria-pressed="true"] { background: none; color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2); }
+
+/* groups */
+.group { display: flex; align-items: baseline; gap: 8px; margin: 22px 0 4px; font-size: 14px; font-weight: 400; color: var(--ink-2); }
+.group:first-child { margin-top: 0; }
+.group .call { font-size: 16px; color: var(--ink); }
+.calm { margin: 0 0 4px; padding: 10px 14px; color: var(--ink-2); font-size: 14px; border: 1px dashed var(--rule); border-radius: 2px; }
+
+/* a thread: name and where on the left, what it's about, how long, and the way to its terminal */
+.th.k-working { --kind: var(--ink-3); }
+.th.k-closed { --kind: var(--rule); }
+.th-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; padding-left: 7px; }
+.th-head { display: grid; grid-template-columns: var(--namew) minmax(0, 1fr); gap: 0 14px; min-width: 0; padding: 10px 0 10px 14px; border: 0; background: none; text-align: left; }
+.th-name { display: flex; flex-direction: column; min-width: 0; font-size: 14px; line-height: 1.3; }
+.th-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-name .call { font-size: 15px; }
+.th-name .where { color: var(--ink-2); font-size: 13px; font-stretch: 87%; }
+.th-name .dot { display: inline-block; width: 7px; height: 7px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--focus); vertical-align: middle; }
+.th-text { min-width: 0; }
+.th-title { display: block; font-size: 15.5px; line-height: 1.35; font-weight: 550; }
+.th-line { display: block; margin-top: 2px; font-size: 13.5px; line-height: 1.4; color: var(--ink-2); }
+.th-line code { font-size: 12.5px; color: var(--ink); }
+.th-line.mail { color: var(--action); }
+.compact .th-title, .compact .th-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-closed .th-title { font-weight: 400; color: var(--ink-2); }
+.th-age { padding: 12px 12px 0 10px; font-size: 13px; color: var(--ink-2); font-stretch: 87%; white-space: nowrap; }
+.th-age.waiting { color: var(--ink); font-weight: 600; }
+.th-go { align-self: start; margin: 6px 8px 0 -4px; width: 32px; height: 30px; border: 1px solid transparent; border-radius: 2px; background: none; color: var(--ink-2); font-size: 16px; line-height: 1; }
+.th-go:hover { border-color: var(--ink-2); color: var(--ink); background: var(--paper-hi); }
+.th-head:hover .th-title { text-decoration: underline; text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
+.th .body, .th-now, .th-err { padding: 0 18px 14px calc(7px + 14px + var(--namew) + 14px); }
+.th .body { padding-top: 12px; border-top: 1px dashed var(--rule); }
+.th-err { padding-bottom: 10px; }
+.th-now > * + * { margin-top: 10px; }
+
+/* what a thread that needs you is waiting on, without opening it */
+.ps { display: block; background: var(--ps); color: var(--ps-ink); padding: 9px 12px; border-radius: 2px; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9.5em; overflow: auto; }
+.ps .p { color: var(--ps-dim); }
+.asked { margin: 0; padding: 1px 0 1px 12px; border-left: 3px solid var(--kind); font-size: 15px; max-width: 70ch; }
+.th-now .options { margin-top: 10px; }
+.go-btn { border: 0; background: var(--ink); color: var(--paper); border-radius: 2px; padding: 7px 14px; font-size: 14px; font-weight: 600; }
+.go-btn:hover { background: var(--ink-2); }
+.hint { color: var(--ink-2); font-size: 13.5px; }
 .opt.allow { border-color: var(--good); color: var(--good); }
 .opt.deny { border-color: var(--bad); color: var(--bad); }
 .opt.quiet-opt { border-color: transparent; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
-.form.row { display: flex; gap: 8px; align-items: center; max-width: none; }
+.form.row { display: flex; gap: 8px; align-items: center; max-width: none; margin-top: 8px; }
 .form.row input[type=text] { flex: 1; min-width: 160px; }
-.eng-head .acts { display: flex; gap: 6px; flex: none; }
+
+/* inside an open thread */
+.mode { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-2); margin-right: 8px; }
+.mode .seg button { padding: 3px 10px; font-size: 13px; }
+.did { font-size: 13.5px; color: var(--ink-2); }
+.did b { color: var(--ink); font-weight: 550; }
+.did .files { display: block; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; margin-top: 2px; }
+.said { white-space: pre-wrap; max-height: 16em; overflow: auto; }
+.th .live { margin-top: 12px; }
 .knows { margin-top: 16px; }
 .knows .work li.k-guess .g { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ink-2); }
 .knows .work li.k-sure .g { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
 .knows .work li.k-guess span { color: var(--ink-2); }
 .seat button { border: 0; background: none; padding: 0 0 0 2px; color: var(--ink-3); }
 .seat button:hover { color: var(--bad); }
-.learning { margin-top: 22px; padding-top: 14px; border-top: 2px solid var(--ink); font-size: 14px; }
-.learning .row { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; gap: 10px; color: var(--ink-2); }
-.learning .row.bad span:nth-child(2) { color: var(--bad); }
-.learning .where { font-size: 13px; color: var(--ink-3); overflow-wrap: anywhere; margin-top: 8px; }
 .notes { margin-top: 14px; font-size: 14px; }
 .notes .note { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; color: var(--ink-2); }
 .notes .note b { color: var(--ink); font-weight: 550; }
 .notes .note.waiting span:last-child::after { content: " · waits for its next tool call"; color: var(--ink-3); }
 .notes .note.unread span:last-child::after { content: " · unread"; color: var(--ink-3); }
 .send { display: flex; gap: 6px; margin-top: 8px; }
-.send input { flex: 1; min-width: 0; border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--paper); border-radius: 2px; padding: 4px 8px; font-size: 13.5px; }
-.send button { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 3px 10px; font-size: 13px; }
-.live .learn-now { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 2px 10px; font-size: 13px; }
-/* threads */
-.group { display: flex; align-items: baseline; gap: 8px; margin: 18px 0 2px; font-size: 14px; color: var(--ink-2); }
-.group:first-child { margin-top: 0; }
-.group .call { font-size: 15px; color: var(--ink); }
-.strip.k-working { --kind: var(--ink-3); }
-.strip.k-closed { --kind: var(--rule); }
-.strip.k-closed .q { color: var(--ink-2); font-size: 15px; }
-.q .title { display: block; font-weight: 550; }
-.k-closed .q .title { font-weight: 400; }
-.q .rec.now { font-style: italic; }
-.q .rec .mail { color: var(--action); font-style: normal; font-weight: 550; }
-.holds .go { font-size: 13px; padding: 2px 8px; border: 1px solid var(--ink-2); border-radius: 2px; white-space: nowrap; background: var(--paper); }
-.holds .go:hover { border-color: var(--ink); background: var(--paper-hi); }
-.did { font-size: 13.5px; color: var(--ink-2); }
-.did b { color: var(--ink); font-weight: 550; }
-.did .files { display: block; font: 12.5px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink-2); overflow-wrap: anywhere; }
-.said { white-space: pre-wrap; max-height: 16em; overflow: auto; }
-.body .live { margin-top: 12px; }
-.side { padding: 0 0 20px; }
-.side + .side { padding-top: 14px; border-top: 2px solid var(--ink); }
+.send input, .send select { flex: 1; min-width: 0; border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--paper); border-radius: 2px; padding: 5px 8px; font-size: 14px; }
+.send select { flex: 0 1 auto; }
+.send button { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 4px 12px; font-size: 13.5px; }
+.send button:hover { border-color: var(--ink); }
+
+/* a new thread, opened from the header */
+.start { background: var(--paper); box-shadow: var(--shadow); border-radius: 2px; padding: 14px 18px 16px; margin-bottom: 18px; }
+.start .send input { background: var(--rack); }
+.start .about { font-size: 13.5px; margin-top: 8px; }
+.send .cancel { border: 0; padding: 4px 6px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
+.start + .group { margin-top: 0; }
+.send .go-btn { border: 0; background: var(--ink); color: var(--paper); font-weight: 600; }
+.send .go-btn:hover { background: var(--ink-2); }
+.th .form.row input[type=text] { background: var(--paper); padding: 6px 10px; }
+
+/* the right column */
+.side { padding: 0 0 22px; }
+.side + .side { padding-top: 16px; border-top: 2px solid var(--ink); }
 .side .about { font-size: 13.5px; margin-top: 6px; }
-.side .send select { border: 1px solid var(--rule); background: var(--paper); border-radius: 2px; font-size: 13.5px; }
-.talk { margin-top: 10px; font-size: 14px; display: grid; gap: 4px; }
-.talk .note { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; color: var(--ink-2); }
-.talk .note b { color: var(--ink); font-weight: 550; }
+.side .th { --namew: 92px; }
+.side .th + .th { margin-top: 8px; }
+.talk { margin-top: 12px; font-size: 14px; display: grid; gap: 6px; }
+.talk .note { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; color: var(--ink-2); }
+.talk .note b { color: var(--ink); font-weight: 600; }
 .talk .note.unread { color: var(--ink); }
 .talk .note.unread b { color: var(--action); }
+.talk .note .dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--focus); vertical-align: middle; }
 .talk .note button { border: 1px solid var(--action); color: var(--action); background: none; border-radius: 2px; padding: 0 8px; font-size: 12.5px; margin-left: 6px; }
 .talk .note .st { color: var(--ink-3); }
-.side .strip + .strip { margin-top: 8px; }
-.side .strip .head { grid-template-columns: 96px minmax(0, 1fr) auto 40px; }
-.side .strip .body { padding-left: 21px; }
+.learning { margin-top: 14px; font-size: 13.5px; color: var(--ink-2); }
+.learning .row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px; }
+.learning .row.bad span:nth-child(2) { color: var(--bad); }
+.learning .where { font-size: 12.5px; color: var(--ink-3); overflow-wrap: anywhere; margin-top: 6px; }
+
+@media (max-width: 620px) {
+  .th-head { grid-template-columns: minmax(0, 1fr); }
+  .th-name { flex-direction: row; gap: 10px; align-items: baseline; }
+  .th .body, .th-now, .th-err { padding-left: 21px; }
+  .compact .th-title { white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .strip.fresh { animation: none; }
+}
 </style>
 </head>
 <body>
 <header>
-  <h1 class="call">AgentFactory</h1>
-  <span class="sub" id="sub">desk</span>
+  <h1 class="call">AgentFactory desk</h1>
+  <span class="tally" id="tally" role="status"></span>
   <span id="offline" hidden></span>
   <span class="spacer"></span>
   <button class="toggle" id="notify" hidden>Notify me when a thread needs me</button>
+  <button class="start-btn" id="start" aria-pressed="false">New thread</button>
 </header>
 <main>
   <section id="rack" aria-label="Threads"></section>
-  <section id="console" aria-label="Start, talk, learn"></section>
+  <section id="console" aria-label="Notes between threads, and what sessions taught"></section>
 </main>
 <script>
 "use strict";
 const TOKEN = "__TOKEN__";
-const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set() };
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0 };
+
+// "New since you last looked": when you left the page, kept in this browser only, so
+// the desk stays a view of the log with no state of its own.
+const LOOKED = "af-desk-looked";
+const lookedAt = () => { try { return Number(localStorage.getItem(LOOKED)) || 0; } catch { return 0; } };
+const leave = () => { try { localStorage.setItem(LOOKED, String(Date.now())); } catch { /* private window */ } };
+ui.looked = lookedAt();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") leave();
+  else { ui.looked = lookedAt(); render(); }
+});
+addEventListener("pagehide", leave);
+const isNew = (at) => ui.looked > 0 && at > ui.looked;
 
 async function api(path, body) {
   const res = await fetch(path, body === undefined
@@ -150,21 +231,39 @@ async function act(path, body, errKey, clear) {
 const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); render(); };
 const jump = (name, k) => act("/api/jump", { terminal: name }, k || `t:${name}`);
 
-function stripEl(k, kind, who, sub, q, at, now, body, fresh, go) {
-  const isOpen = ui.open.has(k);
-  return h("div", { class: `strip k-${kind}${isOpen ? " open" : ""}${fresh ? " fresh" : ""}` },
-    h("button", { class: "head", "aria-expanded": String(isOpen), onclick: (e) => (go && e.target.closest(".go") ? go() : toggle(k)) },
-      h("span", { class: "who" }, h("span", { class: "call" }, who), sub ? h("span", { class: "gid" }, sub) : null),
-      h("span", { class: "q" }, q),
-      h("span", { class: "holds" }, go ? h("span", { class: "go", title: "Go to its terminal" }, "Go to ↗") : null),
-      h("span", { class: "age" }, ago(at, now))),
-    h("div", { class: "body" }, body, ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null));
+// One row: who and where on the left, what it's about, how long, and a way to its
+// terminal. The head opens the rest; the terminal button is its own button, not
+// something inside the head.
+function rowEl(o) {
+  const isOpen = ui.open.has(o.k);
+  return h("div", { class: `strip th k-${o.kind}${o.compact ? " compact" : ""}${isOpen ? " open" : ""}${o.fresh ? " fresh" : ""}` },
+    h("div", { class: "th-row" },
+      h("button", { class: "th-head", "aria-expanded": String(isOpen), title: o.tip, onclick: () => toggle(o.k) },
+        h("span", { class: "th-name" },
+          h("span", { class: "call" }, o.isNew ? h("i", { class: "dot", title: "New since you last looked" }) : null, o.isNew ? h("span", { class: "sr" }, "New: ") : null, o.name),
+          o.where ? h("span", { class: "where" }, o.where) : null),
+        h("span", { class: "th-text" },
+          h("span", { class: "th-title" }, o.title),
+          o.lines)),
+      h("span", { class: `th-age${o.waiting ? " waiting" : ""}`, title: o.ageTip }, o.age),
+      o.go ? h("button", { class: "th-go", title: `Go to ${o.name}'s terminal`, "aria-label": `Go to ${o.name}'s terminal`, onclick: o.go }, "↗") : null),
+    o.now ? h("div", { class: "th-now" }, o.now) : null,
+    ui.err[o.k] ? h("div", { class: "th-err err" }, ui.err[o.k]) : null,
+    h("div", { class: "body" }, o.body));
 }
 
 // ---------- the threads ----------
 
 const KIND = { "needs you": "approval", "your turn": "action", working: "working", closed: "closed" };
+const GROUPS = ["needs you", "your turn", "working", "closed"];
 const GROUP_SAYS = { "needs you": "Needs you", "your turn": "Your turn", working: "Working", closed: "Closed today" };
+
+// How PowerShell shows the prompt: the folder, shortened to its last two parts.
+const psPath = (cwd) => {
+  const parts = String(cwd || "").split(/[\\/]/).filter(Boolean);
+  return parts.length > 3 ? `…\\${parts.slice(-2).join("\\")}` : cwd;
+};
+const psLine = (cwd, cmd) => h("code", { class: "ps" }, h("span", { class: "sr" }, "Wants to run: "), h("span", { class: "p", "aria-hidden": "true" }, `PS ${psPath(cwd)}> `), cmd);
 
 // A permission ask held here (for a terminal you chose to answer on the desk).
 function askEl(t, a, now, holdSec) {
@@ -172,12 +271,12 @@ function askEl(t, a, now, holdSec) {
   const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": `ask:${a.id}:note` });
   const left = Math.max(0, Math.round((a.at + holdSec * 1000 - now) / 60000));
   return h("div", { class: "ask" },
-    h("code", { class: "cmd" }, cmdOf(a.detail) || a.tool),
-    h("div", { class: "about" }, `${a.tool} · goes to its terminal in ${left} min if you don't answer`),
+    psLine(t.cwd, cmdOf(a.detail) || a.tool),
     h("div", { class: "options" },
       h("button", { class: "opt rec allow", onclick: () => act("/api/answer", { ask: a.id, choice: "allow" }, k) }, "Allow"),
       a.always ? h("button", { class: "opt", onclick: () => act("/api/answer", { ask: a.id, choice: "always" }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : a.tool} in ${t.name} from now on`) : null,
-      h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal")),
+      h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal"),
+      h("span", { class: "hint" }, `Goes back to the terminal in ${left} min if you don't answer.`)),
     h("div", { class: "form row" }, note,
       h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k, `ask:${a.id}:note`) }, "Deny")));
 }
@@ -189,16 +288,16 @@ function didEl(t) {
   if (t.commands) bits.push(`ran ${plural(t.commands, "command")}`);
   if (t.failed) bits.push(`${t.failed} failed`);
   if (!bits.length) return null;
-  return h("div", { class: "did" }, h("b", null, "Did "), bits.join(" · "), t.branch ? ` · on ${t.branch}` : "",
-    t.files.length ? h("span", { class: "files" }, t.files.slice(-8).map(base).join("  ")) : null);
+  return h("div", { class: "did" }, h("b", null, "So far: "), bits.join(", "), t.branch ? `, on ${t.branch}` : "",
+    t.files.length ? h("code", { class: "files" }, t.files.slice(-8).join("  ")) : null);
 }
 
 function knowsEl(t) {
   const kn = t.knowledge;
   if (!kn.items.length) return null;
   return h("div", { class: "knows" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
-      h("span", { class: "v" }, `${kn.confirmed} confirmed · ${kn.guesses} to check`)),
+    h("div", { class: "goal-head" }, h("span", { class: "call" }, "What it was told about "), h("span", { class: "t" }, t.repo),
+      h("span", { class: "v" }, `${kn.confirmed} confirmed, ${kn.guesses} to check`)),
     h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it on the right" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))));
 }
 
@@ -210,30 +309,49 @@ function noteLine(n, now, here) {
 function sendBox(to, label, k) {
   k = k || `send:${to}`;
   const go = () => { if (input.value.trim()) act("/api/note", { to: typeof to === "function" ? to() : to, text: input.value }, k, k); };
-  const input = h("input", { type: "text", placeholder: label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) go(); } });
+  const input = h("input", { type: "text", placeholder: label, "aria-label": label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) go(); } });
   return [input, h("button", { onclick: go }, "Send")];
 }
 
-function threadStrip(t, d) {
+// Where this terminal's permission asks are answered: a switch, so it reads as a state.
+function modeEl(t, k) {
+  const set = (mode) => () => { if (t.mode !== mode) act("/api/mode", { terminal: t.name, mode }, k); };
+  return h("span", { class: "mode" }, "Permission asks:",
+    h("span", { class: "seg" },
+      h("button", { "aria-pressed": String(t.mode !== "desk"), onclick: set("terminal") }, "in its terminal"),
+      h("button", { "aria-pressed": String(t.mode === "desk"), onclick: set("desk") }, "here")));
+}
+
+// What a thread that needs you is waiting on, shown without opening it.
+function needsEl(t, d, k) {
+  const go = h("button", { class: "go-btn", onclick: () => jump(t.name, k) }, `Go to ${t.name} ↗`);
+  if (t.asks.length) return [t.asks.map((a) => askEl(t, a, d.now, d.holdSec))];
+  if (t.state === "waiting for permission") return [t.wants ? psLine(t.cwd, t.wants) : h("p", { class: "asked" }, t.why), h("div", { class: "options" }, go, h("span", { class: "hint" }, "It asks in its terminal."))];
+  return [h("p", { class: "asked" }, h("span", { class: "sr" }, "It asks: "), t.why), h("div", { class: "options" }, go, h("span", { class: "hint" }, "Answer it there."))];
+}
+
+function threadRow(t, d) {
   const now = d.now;
   const k = `thread:${t.name}:${t.session}`;
-  const fresh = t.thread === "needs you" && !ui.seen.has(`${k}:${t.since}`);
+  const needs = t.thread === "needs you";
+  const fresh = needs && !ui.seen.has(`${k}:${t.since}`);
   ui.seen.add(`${k}:${t.since}`);
-  // An ask you can answer here opens, so one click answers it.
-  for (const a of t.asks) if (!ui.seen.has(a.id)) { ui.seen.add(a.id); ui.open.add(k); }
-  const mail = d.forYou.filter((n) => n.from === t.name);
-  const line = t.thread === "working" ? t.now : t.thread === "closed" ? null : t.why;
-  const q = h("span", null,
-    h("span", { class: "title" }, t.title),
-    line ? h("span", { class: `rec${t.thread === "working" ? " now" : ""}` }, line) : null,
-    mail.length ? h("span", { class: "rec" }, h("span", { class: "mail" }, "✉ tells you: "), mail[mail.length - 1].text) : null);
   const open = t.state !== "closed";
+  const mail = d.forYou.filter((n) => n.from === t.name);
+  const edited = t.files.length ? `Edited ${t.files.slice(-3).map(base).join(", ")}${t.files.length > 3 ? ` and ${t.files.length - 3} more` : ""}` : null;
+  const line = t.thread === "your turn" ? t.why : t.thread === "working" ? t.now : t.thread === "closed" ? edited : null;
+  const lines = [
+    line ? h("span", { class: "th-line" }, line) : null,
+    mail.length ? h("span", { class: "th-line mail" }, `To you: ${mail[mail.length - 1].text}`) : null,
+  ];
+  const age = t.thread === "needs you" || t.thread === "your turn"
+    ? { age: `waiting ${ago(t.since, now)}`, ageTip: `Waiting for you since ${new Date(t.since).toLocaleTimeString()}`, waiting: needs }
+    : t.thread === "working" ? { age: `${ago(t.lastAt, now)} ago`, ageTip: "Its last step" }
+    : { age: `${ago(t.since, now)} ago`, ageTip: `Closed at ${new Date(t.since).toLocaleTimeString()}` };
   const body = [
     h("div", { class: "options" },
-      open ? h("button", { class: "opt rec", onclick: () => jump(t.name, k) }, `Go to ${t.name}`) : null,
-      open ? h("button", { class: "opt", title: "Where this terminal's permission asks are answered", onclick: () => act("/api/mode", { terminal: t.name, mode: t.mode === "desk" ? "terminal" : "desk" }, k) }, t.mode === "desk" ? "Its asks: answered here" : "Its asks: in its terminal") : null,
+      open ? modeEl(t, k) : null,
       h("button", { class: "opt quiet-opt", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
-    t.asks.map((a) => askEl(t, a, now, d.holdSec)),
     (t.thread === "your turn" || t.state === "asking you") && (t.lastSaid || t.said) ? h("div", { class: "why said" }, t.lastSaid || t.said) : null,
     didEl(t),
     t.tail && t.tail.length ? h("div", { class: "live" }, h("pre", null, t.tail.join("\n"))) : null,
@@ -244,84 +362,109 @@ function threadStrip(t, d) {
       ui.err[`send:${t.name}`] ? h("div", { class: "err" }, ui.err[`send:${t.name}`]) : null) : null,
     t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
       t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
-        h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null,
+        h("button", { title: "Ask again", "aria-label": `Ask again before ${r.prefix || r.tool}`, onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null,
   ];
-  const kind = t.thread === "needs you" && t.state === "asking you" ? "decision" : KIND[t.thread];
-  return stripEl(k, kind, t.name, [t.repo !== t.name ? t.repo : null, t.branch].filter(Boolean).join(" · "), q, t.thread === "working" ? t.lastAt : t.since, now, body, fresh, open ? () => jump(t.name, k) : null);
+  return rowEl({
+    k, kind: needs && t.state === "asking you" ? "decision" : KIND[t.thread],
+    name: t.name, where: t.branch || (t.repo !== t.name ? t.repo : null),
+    title: t.title, tip: t.title, lines, ...age,
+    compact: !needs, fresh, isNew: t.thread !== "working" && isNew(t.since),
+    go: open && !needs ? () => jump(t.name, k) : null,
+    now: needs ? needsEl(t, d, k) : null,
+    body,
+  });
 }
 
 function threadsEl(d) {
   const out = [];
-  for (const g of ["needs you", "your turn", "working", "closed"]) {
-    const ts = d.threads.filter((t) => t.thread === g);
-    if (!ts.length) continue;
-    out.push(h("div", { class: "group" }, h("span", { class: "call" }, GROUP_SAYS[g]), h("span", null, String(ts.length))));
-    for (const t of ts) out.push(threadStrip(t, d));
+  if (ui.starting) out.push(startEl(d));
+  if (!d.threads.length) {
+    out.push(h("div", { class: "quiet" },
+      h("p", null, "No Copilot session yet. Click New thread, or in a repo's terminal run ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."),
+      h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once first, so the desk sees every session.")));
+    return out;
   }
-  if (!out.length) out.push(h("div", { class: "quiet" },
-    h("p", null, "No Copilot session yet. Start a thread on the right, or in a repo's terminal run ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."),
-    h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once first, so the desk sees every session.")));
+  for (const g of GROUPS) {
+    const ts = d.threads.filter((t) => t.thread === g);
+    if (!ts.length && g !== "needs you") continue;
+    out.push(h("h2", { class: "group" }, h("span", { class: "call" }, GROUP_SAYS[g]), ts.length ? h("span", null, String(ts.length)) : null));
+    if (!ts.length) out.push(h("p", { class: "calm" }, "Nothing waits on you."));
+    for (const t of ts) out.push(threadRow(t, d));
+  }
   return out;
 }
 
-// ---------- the side: start a thread, the talk between threads, what was learned ----------
+// ---------- a new thread; the talk between threads; what was learned ----------
 
 function startEl(d) {
   const k = "start";
-  const folder = h("input", { type: "text", list: "af-folders", placeholder: "Folder, e.g. C:\\work\\billing", "data-k": "start:folder" });
-  const name = h("input", { type: "text", placeholder: "Name (else the folder's)", "data-k": "start:name", style: "flex:0 1 180px" });
-  const go = () => {
+  const folder = h("input", { type: "text", list: "af-folders", placeholder: "Folder, e.g. C:\\work\\billing", "aria-label": "Folder", "data-k": "start:folder" });
+  const name = h("input", { type: "text", placeholder: "Name (else the folder's)", "aria-label": "Name", "data-k": "start:name", style: "flex:0 1 190px" });
+  const go = async () => {
     if (!folder.value.trim()) { ui.err[k] = "Which folder?"; return render(); }
-    act("/api/start", { folder: folder.value.trim(), name: name.value.trim() }, k, ["start:folder", "start:name"]);
+    if (await act("/api/start", { folder: folder.value.trim(), name: name.value.trim() }, k, ["start:folder", "start:name"])) { ui.starting = false; render(); }
   };
-  return h("div", { class: "side" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Start a thread")),
+  const enter = (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) go(); else if (e.key === "Escape") startOpen(false); };
+  folder.addEventListener("keydown", enter);
+  name.addEventListener("keydown", enter);
+  return h("div", { class: "start" },
+    h("h2", { class: "goal-head", style: "margin:0" }, h("span", { class: "call" }, "New thread")),
     h("datalist", { id: "af-folders" }, (d.folders || []).map((f) => h("option", { value: f }))),
-    h("div", { class: "send" }, folder, name, h("button", { onclick: go }, "Open")),
-    h("div", { class: "about" }, "Opens a PowerShell window in that folder with Copilot, named for the desk. Type your first prompt there."),
+    h("div", { class: "send" }, folder, name, h("button", { class: "go-btn", onclick: go }, "Open"), h("button", { class: "cancel", onclick: () => startOpen(false) }, "Cancel")),
+    h("div", { class: "about" }, "Opens a PowerShell window in that folder running Copilot, named for the desk. Type your first prompt there."),
     ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null);
 }
+function startOpen(on) {
+  ui.starting = on;
+  delete ui.err.start;
+  render();
+  const b = document.getElementById("start");
+  if (on) document.querySelector('[data-k="start:folder"]')?.focus(); else b.focus();
+}
+document.getElementById("start").onclick = () => startOpen(!ui.starting);
 
 function talkEl(d) {
   const open = d.threads.filter((t) => t.state !== "closed").map((t) => t.name);
   const k = "send:talk";
-  const sel = h("select", { "data-k": "talk:to" }, [...open, ...(open.length > 1 ? ["all"] : [])].map((n) => h("option", { value: n }, n === "all" ? "every thread" : n)));
+  const sel = h("select", { "data-k": "talk:to", "aria-label": "To" }, [...open, ...(open.length > 1 ? ["all"] : [])].map((n) => h("option", { value: n }, n === "all" ? "every thread" : n)));
   return h("div", { class: "side" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Between threads"), h("span", { class: "v" }, "notes are read during a session's work, and never start it")),
+    h("h2", { class: "goal-head", style: "margin:0" }, h("span", { class: "call" }, "Between threads")),
+    h("div", { class: "about" }, "A note is read while a session works. It never starts one."),
     open.length ? h("div", { class: "send" }, sel, sendBox(() => sel.value, "A note…", k)) : null,
     ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null,
     h("div", { class: "talk" }, d.notes.length ? d.notes.slice(0, 20).map((n) => {
       const unread = n.to === "you" && !n.delivered;
       return h("div", { class: `note${unread ? " unread" : ""}` },
         h("span", null, ago(n.at, d.now)),
-        h("span", null, h("b", null, `${n.from} → ${n.to === "you" ? "you" : n.to}`), " ", n.text,
+        h("span", null, isNew(n.at) ? h("i", { class: "dot", title: "New since you last looked" }) : null,
+          h("b", null, `${n.from} → ${n.to === "you" ? "you" : n.to}`), " ", n.text,
           unread ? h("button", { onclick: () => act("/api/read", { note: n.id }, k) }, "Got it")
             : !n.delivered ? h("span", { class: "st" }, " · waits for its next tool call") : null));
-    }) : h("div", { class: "about" }, "No notes yet. A session can send one with its send_note tool; so can you, above.")));
+    }) : h("div", { class: "about" }, "No notes yet. A session sends one with its send_note tool; you can above.")));
 }
 
-function guessStrip(g, now) {
+function guessRow(g, now) {
   const k = `know:${g.principal}:${g.entry}`;
   const repo = g.principal === "you" ? "you" : g.principal.replace(/^repo\./, "");
-  const mine = h("input", { type: "text", value: g.text, "data-k": k });
-  const why = h("input", { type: "text", placeholder: "What's wrong with it (optional)", "data-k": `${k}:why` });
+  const mine = h("input", { type: "text", value: g.text, "aria-label": "In your words", "data-k": k });
+  const why = h("input", { type: "text", placeholder: "What's wrong with it (optional)", "aria-label": "What's wrong with it", "data-k": `${k}:why` });
   const body = [
     g.because ? h("div", { class: "why" }, g.because, g.session ? h("div", { class: "by" }, `from session ${g.session.slice(0, 8)}`) : null) : null,
     h("div", { class: "options" }, h("button", { class: "opt rec allow", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right" }, k) }, "Right")),
     h("div", { class: "form row" }, mine, h("button", { class: "opt", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right", text: mine.value }, k) }, "Right, in these words")),
     h("div", { class: "form row" }, why, h("button", { class: "opt deny", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "wrong", text: why.value }, k) }, "Wrong")),
   ];
-  return stripEl(k, "review", repo, g.kind, h("span", null, h("span", { class: "subject" }, g.subject), g.text), g.at, now, body, false, null);
+  return rowEl({ k, kind: "review", name: repo, where: g.kind, title: g.text, lines: h("span", { class: "th-line" }, h("code", null, g.subject)), age: ago(g.at, now), isNew: isNew(g.at), body });
 }
 
 function learnedEl(d) {
   const l = d.learning;
   return h("div", { class: "side" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Learned, to check"),
-      h("span", { class: "v" }, d.guesses.length ? "new sessions get these as guesses until you confirm them" : "nothing waiting")),
-    d.guesses.length ? h("div", { style: "margin-top:10px" }, d.guesses.map((g) => guessStrip(g, d.now))) : null,
-    h("div", { class: "learning", style: "border-top:0; margin-top:12px; padding-top:0" },
-      h("div", { class: "goal-head" }, h("span", { class: "call" }, "Learning"), h("span", { class: "t" }, l.running ? `reading ${l.running.repo || "a"} session ${l.running.session.slice(0, 8)}…` : l.queued ? `${l.queued} sessions waiting to be read` : "each finished session is read once")),
+    h("h2", { class: "goal-head", style: "margin:0" }, h("span", { class: "call" }, "Learned, to check")),
+    h("div", { class: "about" }, d.guesses.length ? "New sessions get these as guesses until you confirm them." : "Nothing to check."),
+    d.guesses.length ? h("div", { style: "margin-top:12px" }, d.guesses.map((g) => guessRow(g, d.now))) : null,
+    h("div", { class: "learning" },
+      h("div", null, l.running ? `Reading ${l.running.repo || "a"} session ${l.running.session.slice(0, 8)}…` : l.queued ? `${plural(l.queued, "session")} waiting to be read.` : "Each finished session is read once."),
       l.recent.map((a) => h("div", { class: `row${a.ok ? "" : " bad"}` },
         h("span", null, ago(a.at, d.now)),
         h("span", null, a.error ? `${a.repo}: ${a.error}` : `${a.repo}: ${a.kept.length} learned${a.dropped.length ? `, ${a.dropped.length} left out` : ""}`),
@@ -344,12 +487,19 @@ function render() {
   for (const el of document.querySelectorAll("[data-k]")) typed[el.dataset.k] = el.value;
   const focus = f && f.dataset && f.dataset.k ? { k: f.dataset.k, s: f.selectionStart, e: f.selectionEnd } : null;
 
-  const needs = d.threads.filter((t) => t.thread === "needs you").length;
-  const open = d.threads.filter((t) => t.state !== "closed").length;
+  const count = (g) => d.threads.filter((t) => t.thread === g).length;
+  const needs = count("needs you");
   document.title = needs ? `(${needs}) AgentFactory desk` : "AgentFactory desk";
-  document.getElementById("sub").textContent = `desk · ${plural(open, "thread")} open${needs ? ` · ${needs} need${needs === 1 ? "s" : ""} you` : ""}`;
+  const fresh = d.threads.some((t) => t.thread !== "working" && isNew(t.since)) || d.notes.some((n) => isNew(n.at)) || d.guesses.some((g) => isNew(g.at));
+  document.getElementById("tally").replaceChildren(...[
+    ...[["needs you", "approval", "need you"], ["your turn", "action", "your turn"], ["working", "working", "working"]]
+      .filter(([g]) => count(g)).map(([g, kind, says]) => h("span", { class: `t-${kind}` }, h("i"), h("b", null, String(count(g))), says)),
+    d.threads.some((t) => t.state !== "closed") ? null : h("span", null, "No thread open"),
+    fresh ? h("span", { class: "new-key" }, h("i"), "new since you last looked") : null,
+  ].filter(Boolean));
+  document.getElementById("start").setAttribute("aria-pressed", String(ui.starting));
   document.getElementById("rack").replaceChildren(...threadsEl(d));
-  document.getElementById("console").replaceChildren(startEl(d), talkEl(d), learnedEl(d));
+  document.getElementById("console").replaceChildren(talkEl(d), learnedEl(d));
 
   for (const el of document.querySelectorAll("[data-k]")) {
     const k = el.dataset.k;

@@ -23,21 +23,23 @@ Start each session with a name, in the repo's terminal:
 C:\workspace\AgentFactory\scripts\windows\copilot-here.ps1 -Name billing   # any copilot flags after it
 ```
 
-or from the page: "Start a thread" opens a PowerShell window in the folder you pick, running the same thing; you type your first prompt there. The name becomes the window title and the thread's name; without it the repo folder's name is used. Click "Notify me" once to get a system notification when a thread needs you while you're elsewhere.
+or from the page: "New thread" opens a PowerShell window in the folder you pick, running the same thing; you type your first prompt there. The name becomes the window title and the thread's name; without it the repo folder's name is used. Click "Notify me" once to get a system notification when a thread needs you while you're elsewhere.
 
 ## The page
 
+**The top line** counts the threads that need you, that are your turn, and that are working.
+
 **Left: the threads**, grouped the way a Claude project groups its threads.
-- **Needs you** (amber for a permission ask, blue for a question), longest waiting first: what it wants to run, or what it asked. "Go to ↗" brings its terminal forward; answer there.
+- **Needs you**, longest waiting first, each open so you see what it waits on without a click: the command it wants to run, drawn the way its PowerShell window shows it, or the question it asked (blue edge). "Go to billing ↗" brings its terminal forward; answer there. When nothing needs you, it says so.
 - **Your turn** (green): it finished and waits for your next prompt, with the last thing it said.
 - **Working** (grey), most recently active first: what it's doing now (what Copilot says it's doing, and the command it's running).
-- **Closed today**, muted.
+- **Closed today**, muted, with the files it edited.
 
-Each thread shows its title (the first sentence of your first prompt), its repo and branch, and a note it sent you, if unread. Open one for the rest: what it did (prompts, files edited, commands run, failures), the end of its session as it happens, what's known about its repo (filled dots are confirmed, hollow ones are guesses), its notes, and its standing answers with × to take one back.
+Each row is one line: the thread's name and branch, its title (the first sentence of your first prompt), how long it has waited or when it last moved, and ↗ to go to its terminal. A blue dot marks what changed since you last left the page (kept in your browser only). Click a row for the rest: where its permission asks are answered, what it did so far (prompts, files edited, commands run, failures), the end of its session as it happens, what its repo's sessions are told (filled dots are confirmed, hollow ones are guesses), its notes, and its standing answers with × to take one back.
 
-**Right:** start a thread; the notes between threads, with a box to send one to any thread or all of them, and "Got it" for one sent to you; what sessions taught, to check (Right, Right in your own words, or Wrong); what learning is doing.
+**Right:** the notes between threads, with a box to send one to any thread or all of them, and "Got it" for one sent to you; what sessions taught, to check (Right, Right in your own words, or Wrong); what learning is doing.
 
-**Permission asks are answered in the terminal**, where you work. The desk shows which thread is waiting and on what. For a terminal you'd rather answer from the desk (say, one you leave running in the background), open its thread and switch "Its asks" to "answered here", or set `"asks": "desk"` in `%USERPROFILE%\.af\desk\config.json` for all of them; see below.
+**Permission asks are answered in the terminal**, where you work. The desk shows which thread is waiting and on what. For a terminal you'd rather answer from the desk (say, one you leave running in the background), open its thread and switch "Permission asks" to "here", or set `"asks": "desk"` in `%USERPROFILE%\.af\desk\config.json` for all of them; see below.
 
 ## Notes between threads
 
@@ -73,7 +75,7 @@ npm run desk -- knows C:\work\billing    # what a new session there is told
 
 ## Asks answered on the desk
 
-For a terminal set to "answered here", Copilot CLI runs a `permissionRequest` hook before it would ask you, and takes what the hook prints as the answer. The desk's hook writes the ask under `%USERPROFILE%\.af\desk\asks\` and waits for your answer from the page.
+For a terminal whose asks are answered "here", Copilot CLI runs a `permissionRequest` hook before it would ask you, and takes what the hook prints as the answer. The desk's hook writes the ask under `%USERPROFILE%\.af\desk\asks\` and waits for your answer from the page.
 
 - **One place at a time.** While an ask waits on the page, the terminal shows no prompt for it. That's why there's "answer in the terminal", and why nothing is held when the desk isn't running: stop `npm run desk` and every terminal asks for itself again within seconds. An ask nobody answers goes to the terminal after 20 minutes (`holdSec`).
 - **Reads aren't held.** The hook runs before Copilot's own rules, so read-only tools (`view`, `grep`, `glob` and the like; `passThrough` in the config) go straight to them. Everything else is held, including tools your own Copilot settings would have allowed; answer those once with "from now on".

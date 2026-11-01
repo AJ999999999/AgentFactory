@@ -75,6 +75,7 @@ test("threads are grouped by what they need from you: longest waiting first, the
   assert.deepEqual(ts.map((t) => [t.name, t.thread]), [["etl", "needs you"], ["ops", "needs you"], ["web", "your turn"], ["api", "working"], ["docs", "closed"]]);
   const [etl, ops, web, api, docs] = ts;
   assert.equal(etl.why, "wants to run npm run migrate");
+  assert.equal(etl.wants, "npm run migrate", "a shell command, as its terminal shows it");
   assert.equal(ops.why, "Which region?");
   assert.equal(web.title, "Validate the email field.");
   assert.equal(web.why, "Want tests too?", "your turn: the last thing it said");

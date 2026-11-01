@@ -15,6 +15,8 @@ export type Thread = TerminalView & {
   title: string;
   // What it needs from you, or for "your turn", what it said last.
   why?: string;
+  // The command (or tool and file) it waits for permission to run, as the terminal shows it.
+  wants?: string;
   // What it's doing now, while it works.
   now?: string;
   // The end of what it said last, from its session file.
@@ -47,6 +49,13 @@ const commandIn = (detail?: string) => {
     return detail;
   }
 };
+// A shell command stands alone; anything else reads as the tool and what it touches.
+const wantsOf = (tool?: string, detail?: string) => {
+  try {
+    if (detail && typeof (JSON.parse(detail) as Record<string, unknown>).command === "string") return commandIn(detail);
+  } catch { /* not JSON: the detail as it is */ }
+  return [tool, commandIn(detail)].filter(Boolean).join(" ") || undefined;
+};
 const lastLine = (t?: string) => t?.trim().split("\n").filter((l) => l.trim()).pop()?.replace(/\*\*/g, "").trim();
 
 export function threads(
@@ -73,10 +82,14 @@ export function threads(
     const s = summaryOf(t.session, transcript.get(t.session));
     const thread = GROUP[t.state];
     let why: string | undefined;
-    if (t.asks.length) why = `wants to run ${commandIn(t.asks[0].detail) ?? t.asks[0].tool}`;
-    else if (t.state === "waiting for permission") {
+    let wants: string | undefined;
+    if (t.asks.length) {
+      why = `wants to run ${commandIn(t.asks[0].detail) ?? t.asks[0].tool}`;
+      wants = wantsOf(t.asks[0].tool, t.asks[0].detail);
+    } else if (t.state === "waiting for permission") {
       const a = lastAsk.get(t.session);
       why = a ? `wants to run ${commandIn(a.detail) ?? a.tool ?? "a tool"}` : "asks for permission in its terminal";
+      wants = a && wantsOf(a.tool, a.detail);
     } else if (t.state === "asking you") why = t.said ?? lastLine(s?.said) ?? "asks you something in its terminal";
     else if (t.state === "waiting for your next prompt") why = lastLine(s?.said) ?? t.said;
     return {
@@ -84,6 +97,7 @@ export function threads(
       thread,
       title: s?.title ?? `New session in ${t.cwd.split(/[\\/]/).filter(Boolean).pop() ?? t.cwd}`,
       ...(why ? { why } : {}),
+      ...(wants ? { wants } : {}),
       ...(thread === "working" && s?.now ? { now: s.now } : {}),
       ...(s?.said ? { lastSaid: s.said.length > 2000 ? `…${s.said.slice(-2000)}` : s.said } : {}),
       ...(s?.branch ? { branch: s.branch } : {}),

@@ -83,7 +83,7 @@ For a terminal whose asks are answered "here", Copilot CLI runs a `permissionReq
 - **Questions and new prompts stay in the terminal.** Copilot's hooks can't answer its multiple-choice questions or type your next instruction into a waiting session. The page shows them and takes you to the window.
 
 **Go to** finds a terminal's window by the title `copilot-here.ps1` gave it ("copilot: billing"), so keep one window per repo: Windows can't bring a particular Windows Terminal tab forward from outside.
-- **If the hook breaks, Copilot goes on as usual.** It always exits cleanly; at worst Copilot asks in the terminal and the session starts without what's known.
+- **If the hook breaks, Copilot goes on as usual.** It always exits cleanly; at worst Copilot asks in the terminal and the session starts without what's known. The one exception is a hook whose script is gone: the hooks file points at this folder, so run `npm run desk -- uninstall` before you move or delete it.
 
 ## The record
 
@@ -92,7 +92,7 @@ Every event of every session goes to `%USERPROFILE%\.af\desk\events.jsonl`, with
 ```powershell
 npm run desk -- report [--days 7]   # per repo: how often a session stopped for you, answered on the desk, settled by a standing answer, median wait
 npm run desk -- tail                # the last events, to check the hook fires
-npm run desk -- uninstall          # the hook (and the af-desk MCP tools, if you installed them)
+npm run desk -- uninstall          # the hook (and the af-desk MCP tools, if you installed them); run it before you move or delete this folder
 ```
 
 ## Checked against

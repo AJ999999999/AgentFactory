@@ -239,3 +239,53 @@ export function summarize(events: Ev[]): Summary {
   s.files = [...files].slice(-30);
   return s;
 }
+
+export type Turn = { k: "you" | "said" | "run" | "now"; text: string; ok?: boolean; running?: boolean };
+
+// A session as it goes, for following a terminal from the desk: your prompts, what
+// Copilot said (not its sub-agents), each tool call with how it ended, and what it says
+// it's doing. Its tools' output stays in the terminal.
+export function conversation(events: Ev[], max = 200): Turn[] {
+  const out: Turn[] = [];
+  const open = new Map<string, Turn>();
+  for (const e of events) {
+    const x = e.data ?? {};
+    switch (e.type) {
+      case "user.message": {
+        const t = typeof x.content === "string" ? x.content : typeof x.text === "string" ? x.text : "";
+        if (t.trim()) out.push({ k: "you", text: t.trim() });
+        break;
+      }
+      case "assistant.message":
+        if (!x.parentToolCallId && typeof x.content === "string" && x.content.trim()) out.push({ k: "said", text: x.content.trim() });
+        break;
+      case "tool.execution_start": {
+        const name = String(x.toolName ?? x.name ?? "tool");
+        const a = x.arguments ?? x.args ?? x.input;
+        if (name === "report_intent") {
+          const intent = typeof a === "string" ? a : a?.intent;
+          if (typeof intent === "string" && intent.trim()) out.push({ k: "now", text: intent.trim() });
+          break;
+        }
+        // A patch reads as the files it touches.
+        const patch = typeof a === "string" ? a : typeof a?.patch === "string" ? a.patch : typeof a?.input === "string" ? a.input : "";
+        const files = [...patch.matchAll(PATCHED)].map((m) => m[1].trim());
+        const what = files.length ? files.join(", ") : typeof a === "string" ? a : a?.command ?? a?.path ?? a?.file_path ?? a?.url ?? "";
+        const t: Turn = { k: "run", text: SHELL.test(name) && what ? String(what) : `${name}${what ? ` ${String(what).split("\n")[0]}` : ""}`, running: true };
+        out.push(t);
+        if (x.toolCallId) open.set(String(x.toolCallId), t);
+        break;
+      }
+      case "tool.execution_complete": {
+        const t = open.get(String(x.toolCallId));
+        if (!t) break;
+        open.delete(String(x.toolCallId));
+        const exit = x.shellExecution?.exitCode;
+        t.running = false;
+        t.ok = !(x.success === false || (typeof exit === "number" && exit !== 0));
+        break;
+      }
+    }
+  }
+  return out.slice(-max).map((t) => (t.text.length > 4000 ? { ...t, text: `${t.text.slice(0, 4000)}…` } : t));
+}

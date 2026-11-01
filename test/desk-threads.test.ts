@@ -85,7 +85,7 @@ test("threads are grouped by what they need from you: longest waiting first, the
   assert.equal(etl.mode, "terminal", "asks are answered in the terminal unless you choose the desk");
 });
 
-test("you start a thread from the desk: a terminal opens in that folder, under a name no open thread has", async (t) => {
+test("you can still start a thread in a window of its own, under a name no open thread has", async (t) => {
   const home = tmp("start");
   const work = path.join(home, "work", "billing");
   fs.mkdirSync(work, { recursive: true });
@@ -94,9 +94,9 @@ test("you start a thread from the desk: a terminal opens in that folder, under a
   const desk = await startDesk({ home, port: 0, launch: async (folder, name) => (opened.push([folder, name]), true) });
   t.after(() => desk.close());
   const post = (body: object) => fetch(new URL("/api/start", desk.url), { method: "POST", headers: { "x-desk-token": desk.token, "content-type": "application/json" }, body: JSON.stringify(body) });
-  assert.equal((await post({ folder: work })).status, 200);
+  assert.equal((await post({ folder: work, where: "window" })).status, 200);
   assert.deepEqual(opened, [[work, "billing"]], "named for the folder");
-  assert.match((await (await post({ folder: work, name: "web" })).json()).error, /web is already open/);
+  assert.match((await (await post({ folder: work, name: "web", where: "window" })).json()).error, /web is already open/);
   assert.match((await (await post({ folder: path.join(home, "nope") })).json()).error, /no folder/);
   assert.match((await (await post({ folder: work, name: "a b" })).json()).error, /a name is letters/);
   const state = await (await fetch(new URL("/api/state?wait=0", desk.url), { headers: { "x-desk-token": desk.token } })).json();

@@ -2,7 +2,7 @@
 
 This branch is a variant for one setup: a Windows PC where Copilot CLI is the only agent, with several PowerShell terminals open, each in a different repo, each running an interactive `copilot` session you work in by hand. The desk works the way a Claude project does: the main page lists every session as a thread, and the work happens in the thread itself, here the terminal. On top of Copilot it adds:
 
-- **Every session as a thread.** Each is titled by what you first asked it, and grouped by what it needs from you: needs you, your turn, working, closed. A working thread says what it's doing now; each says what it changed. One click takes you to its terminal.
+- **Every session as a thread.** Each is titled by what you first asked it, and grouped by what it needs from you: needs you, your turn, working, closed. A working thread says what it's doing now; each says what it changed. Its terminal sits on the right of the same page, so you switch terminals with one click instead of hunting for a tab.
 - **Notes between threads.** You, or the session in one terminal, can send another session a note ("I renamed the API field you call"). It's read while that session works, marked with whose words it is, and a session can see what the others were asked to do.
 - **What your sessions teach, kept.** Each finished session is read from Copilot's own session file, analysed, and what will still be true next time (how to run the tests, a rule you corrected Copilot on, a trap and its fix, how you like to work) goes into a git repo of shared memory. The next session in that repo is told it before your first prompt.
 
@@ -23,21 +23,27 @@ Start each session with a name, in the repo's terminal:
 C:\workspace\AgentFactory\scripts\windows\copilot-here.ps1 -Name billing   # any copilot flags after it
 ```
 
-or from the page: "New thread" opens a PowerShell window in the folder you pick, running the same thing; you type your first prompt there. The name becomes the window title and the thread's name; without it the repo folder's name is used. Click "Notify me" once to get a system notification when a thread needs you while you're elsewhere.
+or from the page: "New thread" starts the same thing in the folder you pick, in a terminal on the page itself (tick "In a window of its own instead" for a separate PowerShell window). You type your first prompt there. The name becomes the thread's name and the window title; without it the repo folder's name is used. Click "Notify me" once to get a system notification when a thread needs you while you're elsewhere.
 
 ## The page
 
 **The top line** counts the threads that need you, that are your turn, and that are working.
 
-**Left: the threads**, grouped the way a Claude project groups its threads.
-- **Needs you**, longest waiting first, each open so you see what it waits on without a click: the command it wants to run, drawn the way its PowerShell window shows it, or the question it asked (blue edge). "Go to billing ↗" brings its terminal forward; answer there. When nothing needs you, it says so.
+The page has three parts. The left side is for keeping track: the list of threads on top, and under it the thread you picked. The right side is for working: one terminal, big, the one you chose to focus on.
+
+**Top left: every thread, one line each**, grouped the way a Claude project groups its threads.
+- **Needs you**, longest waiting first, with what it waits on in the row: the command it wants to run, drawn the way its PowerShell window shows it, or the question it asked.
 - **Your turn** (green): it finished and waits for your next prompt, with the last thing it said.
-- **Working** (grey), most recently active first: what it's doing now (what Copilot says it's doing, and the command it's running).
+- **Working** (grey), most recently active first: what Copilot says it's doing, and the command it's running. A terminal you just opened shows here as "Copilot is starting" until its session begins.
 - **Closed today**, muted, with the files it edited.
 
-Each row is one line: the thread's name and branch, its title (the first sentence of your first prompt), how long it has waited or when it last moved, and ↗ to go to its terminal. A blue dot marks what changed since you last left the page (kept in your browser only). Click a row for the rest: where its permission asks are answered, what it did so far (prompts, files edited, commands run, failures), the end of its session as it happens, what its repo's sessions are told (filled dots are confirmed, hollow ones are guesses), its notes, and its standing answers with × to take one back.
+Each row has the thread's name and branch, its title (the first sentence of your first prompt), how long it has waited or when it last moved, and a terminal button. A blue dot marks what changed since you last left the page (kept in your browser only). The tabs above the list switch to the notes between threads, and to what sessions taught, to check.
 
-**Right:** the notes between threads, with a box to send one to any thread or all of them, and "Got it" for one sent to you; what sessions taught, to check (Right, Right in your own words, or Wrong); what learning is doing.
+**Bottom left: the thread you picked.** Click a row's text to pick it. You see what it waits on with the answer buttons when its asks come to the desk, what it's doing now, what it did so far (prompts, files edited, commands run, failures), what its repo's sessions are told (filled dots are confirmed, hollow ones are guesses), its notes with a box to send one, where its permission asks are answered, and its standing answers with × to take one back.
+
+**Right: one terminal.** Click a row's terminal button, or "Show its terminal" in the picked thread, to put that thread's terminal here. It stays until you choose another, so you can read one thread on the left while you work in another on the right. Until you choose, the right follows the thread you picked. Reloading the page keeps both.
+- **A thread started from the page** runs in a terminal the desk holds: the same Copilot screen you'd see in Windows Terminal, and you type into it here. Close ends it, after one confirm, since Copilot stops with it. Closing the browser leaves it running. **Stopping `npm run desk` closes these terminals**, so keep the desk's window open while you work in them.
+- **A thread in a terminal of your own** (started with `copilot-here.ps1` in Windows Terminal) is followed on the right from its session file: your prompts, what Copilot said, and each step with how it ended. To type into it, "Type in its tab ↗" selects its tab in Windows Terminal and brings that window forward.
 
 **Permission asks are answered in the terminal**, where you work. The desk shows which thread is waiting and on what. For a terminal you'd rather answer from the desk (say, one you leave running in the background), open its thread and switch "Permission asks" to "here", or set `"asks": "desk"` in `%USERPROFILE%\.af\desk\config.json` for all of them; see below.
 
@@ -82,7 +88,7 @@ For a terminal whose asks are answered "here", Copilot CLI runs a `permissionReq
 - **Reads aren't held.** The hook runs before Copilot's own rules, so read-only tools (`view`, `grep`, `glob` and the like; `passThrough` in the config) go straight to them. Everything else is held, including tools your own Copilot settings would have allowed; answer those once with "from now on".
 - **Questions and new prompts stay in the terminal.** Copilot's hooks can't answer its multiple-choice questions or type your next instruction into a waiting session. The page shows them and takes you to the window.
 
-**Go to** finds a terminal's window by the title `copilot-here.ps1` gave it ("copilot: billing"), so keep one window per repo: Windows can't bring a particular Windows Terminal tab forward from outside.
+**Type in its tab** finds the terminal by the title `copilot-here.ps1` gave it ("copilot: billing"). Windows Terminal shows each tab to Windows' accessibility interface (UI Automation) by its title, so the desk selects that tab, then brings its window forward. A plain PowerShell window is found by its title alone. If Copilot renames the tab while it runs, the desk can't find it; threads started on the page don't need this.
 - **If the hook breaks, Copilot goes on as usual.** It always exits cleanly; at worst Copilot asks in the terminal and the session starts without what's known. The one exception is a hook whose script is gone: the hooks file points at this folder, so run `npm run desk -- uninstall` before you move or delete it.
 
 ## The record
@@ -98,3 +104,5 @@ npm run desk -- uninstall          # the hook (and the af-desk MCP tools, if you
 ## Checked against
 
 Copilot CLI 1.0.105's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference). Neither the `permissionRequest` input nor the session file's format is documented in full: the hook reads `toolName`/`toolInput` and their snake_case forms, and the session reader follows the `{type, data}` lines `copilot --output-format json` prints (the same reader as the harness's turn logs). On the first day, check with `tail` that asks are recorded with their tool names, with `learn --session <id>` that a real session's digest reads well (it's kept in `knowledge\sessions\`), with a note from the desk's page that a working session mentions it after its next tool call (the `postToolUse` hook's `additionalContext`), and by asking a new session "which other terminals are open?" that it was told at its start (`sessionStart`'s `additionalContext`).
+
+**Terminals on the page** use Windows' own pseudo-console (ConPTY, Windows 10 1809 or later), the same one Windows Terminal is built on, through `scripts\windows\conpty.ps1`. That script compiles a little C# when it starts, so nothing is installed, but it needs PowerShell's full language mode. On a PC locked to constrained mode the terminal on the page shows PowerShell's error instead; check with `$ExecutionContext.SessionState.LanguageMode` (it should say `FullLanguage`), and start threads in a window of their own if it doesn't. The page draws terminals with [xterm.js](https://xtermjs.org/), kept in `src/desk/vendor/` (MIT licence), so nothing is fetched from the internet. On Mac and Linux the desk uses python3's `pty` instead (`scripts/pty-bridge.py`).

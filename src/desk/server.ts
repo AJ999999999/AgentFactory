@@ -1,8 +1,9 @@
 // The desk's page: every Copilot CLI session on this PC as a thread, the way a Claude
 // project lists its threads, grouped by what each needs from you; the notes between
 // them; what finished sessions taught, for you to confirm. The work happens in each
-// terminal, and the page takes you there. It also runs the learning: each ended
-// session is analysed once.
+// terminal: one the desk opened is on the page itself (terminal.ts), one of your own
+// windows is followed there and brought forward when you want to type. It also runs
+// the learning: each ended session is analysed once.
 //
 // Same guards as the partner's panel: it listens on 127.0.0.1 only, answers only
 // requests addressed to that host, and every call carries a token only the served page
@@ -22,10 +23,17 @@ import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnC
 import { deskHome, readLog } from "./log.ts";
 import { terminals } from "./others.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
-import { readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
+import { conversation, readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
+import { type Bridge, HostedTerminals, type HostedView } from "./terminal.ts";
 import { threads } from "./threads.ts";
 
 const PAGE = path.join(import.meta.dirname, "page.html");
+// xterm.js draws a hosted terminal on the page; it's kept in the repo, not installed.
+const VENDOR: Record<string, [string, string]> = {
+  "/vendor/xterm.js": ["xterm.js", "text/javascript; charset=utf-8"],
+  "/vendor/addon-fit.js": ["addon-fit.js", "text/javascript; charset=utf-8"],
+  "/vendor/xterm.css": ["xterm.css", "text/css; charset=utf-8"],
+};
 const PANEL_PAGE = path.join(import.meta.dirname, "..", "panel", "page.html");
 
 // The desk wears the partner's panel's styles, taken from its page each time, so the
@@ -45,8 +53,10 @@ export type DeskOptions = {
   port?: number;
   log?: (line: string) => void;
   jump?: (title: string) => Promise<boolean>;
-  // Open a new terminal with Copilot in a folder; tests replace it.
+  // Open a new terminal window with Copilot in a folder; tests replace it.
   launch?: (folder: string, name: string) => Promise<boolean>;
+  // How a terminal on the desk starts; tests replace it.
+  bridge?: Bridge;
   analyst?: Analyst;
   learnEveryMs?: number;
 };
@@ -71,13 +81,15 @@ export async function launchWindows(folder: string, name: string): Promise<boole
 export type Learning = { running?: { session: string; repo: string; since: number }; queued: number; recent: Analysis[] };
 export type Desk = { url: string; port: number; token: string; close: () => Promise<void> };
 
-// Bring a terminal's window forward by the title `copilot-here.ps1` gave it. The title
-// travels in an environment variable, never inside the script text.
+// Bring a terminal forward by the title `copilot-here.ps1` gave it, selecting its tab
+// first when it's one of several in a Windows Terminal window (focus-tab.ps1). The
+// title travels in an environment variable, never inside the script text.
+const FOCUS_TAB = path.join(import.meta.dirname, "..", "..", "scripts", "windows", "focus-tab.ps1");
 export async function jumpWindows(title: string): Promise<boolean> {
   if (process.platform !== "win32") return false;
   try {
-    const { stdout } = await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(New-Object -ComObject WScript.Shell).AppActivate($env:AF_DESK_JUMP)"], { env: { ...process.env, AF_DESK_JUMP: title }, timeout: 10_000 });
-    return stdout.trim().toLowerCase() === "true";
+    const { stdout } = await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", FOCUS_TAB], { env: { ...process.env, AF_DESK_JUMP: title }, timeout: 15_000 });
+    return /\btrue\s*$/i.test(stdout.trim());
   } catch {
     return false;
   }
@@ -118,7 +130,7 @@ export function summaryFor(session: string, transcript?: string, now = Date.now(
   return value;
 }
 
-export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }) {
+export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }, hosted: HostedView[] = []) {
   const cfg = loadConfig(home);
   // An ask the hook left behind (Copilot killed it, the PC slept) is past its wait.
   const asks = pending(home).filter((a) => now - a.at < cfg.holdSec * 1000);
@@ -134,10 +146,11 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
       const f = sessionFile(t.session, transcript);
       return f ? sessionTail(f, 10) : [];
     });
-    return { ...t, repo, tail, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)), notes: notes.filter((n) => n.to === t.name || n.from === t.name).slice(0, 6) };
+    const onDesk = hosted.some((h) => h.name === t.name && !h.exited);
+    return { ...t, repo, tail, onDesk, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)), notes: notes.filter((n) => n.to === t.name || n.from === t.name).slice(0, 6) };
   });
   const folders = [...new Set(log.map((e) => e.cwd))].slice(-30);
-  return { now, holdSec: cfg.holdSec, askMode: cfg.asks, knowledgeDir: dir, threads: list, folders, notes: notes.slice(0, 30), guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
+  return { now, holdSec: cfg.holdSec, askMode: cfg.asks, knowledgeDir: dir, threads: list, hosted, folders, notes: notes.slice(0, 30), guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
 }
 
 // Changes the page cares about; the clock alone isn't one.
@@ -156,6 +169,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
   const jump = opts.jump ?? jumpWindows;
   const launch = opts.launch ?? launchWindows;
   const log = opts.log ?? (() => {});
+  const terms = new HostedTerminals({ ...(opts.bridge ? { bridge: opts.bridge } : {}) });
   const token = randomBytes(24).toString("hex");
   let port = 0;
   const hosts = () => new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -166,7 +180,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     });
     res.end(body);
   };
@@ -177,6 +191,8 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
       if (!hosts().has(req.headers.host ?? "")) return send(res, 403, "wrong host", "text/plain");
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
       if (req.method === "GET" && url.pathname === "/") return send(res, 200, page().replace("__TOKEN__", token), "text/html; charset=utf-8");
+      const v = req.method === "GET" ? VENDOR[url.pathname] : undefined;
+      if (v) return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, "vendor", v[0]), "utf8"), v[1]);
       if (!url.pathname.startsWith("/api/")) return send(res, 404, "not found", "text/plain");
       const origin = req.headers.origin;
       if (origin !== undefined && !hosts().has(origin.replace(/^http:\/\//, ""))) return json(res, 403, { error: "wrong origin" });
@@ -187,11 +203,29 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         const since = url.searchParams.get("since");
         const until = Date.now() + Math.min(Number(url.searchParams.get("wait") ?? 25_000) || 0, 25_000);
         for (;;) {
-          const snap = snapshot(home, Date.now(), learning());
+          const snap = snapshot(home, Date.now(), learning(), terms.list());
           const version = fingerprint(snap);
           if (version !== since || Date.now() >= until || req.destroyed) return json(res, 200, { ...snap, version });
           await new Promise((r) => setTimeout(r, 400));
         }
+      }
+      if (req.method === "GET" && url.pathname === "/api/term") {
+        // A terminal on the desk, as the bytes it draws: what's kept first, then as it comes.
+        const name = str(url.searchParams.get("name"), "name", 40);
+        if (!terms.list().some((h) => h.name === name)) return json(res, 404, { error: `no terminal named ${name} on the desk` });
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+        res.flushHeaders();
+        const stop = terms.watch(name, (b) => res.write(b));
+        req.on("close", () => stop());
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/api/session") {
+        // A session in a terminal of your own, as it goes, to follow it from the desk.
+        const id = str(url.searchParams.get("id"), "id", 200);
+        if (!/^[\w.-]+$/.test(id)) return json(res, 400, { error: "bad session id" });
+        const transcript = readLog(home).find((e) => e.session === id && e.transcript)?.transcript;
+        const f = sessionFile(id, transcript);
+        return json(res, 200, { turns: f ? cached(`talk:${id}:${fs.statSync(f, { throwIfNoEntry: false })?.size ?? 0}`, 1000, Date.now(), () => conversation(readEvents(f))) : [] });
       }
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
       if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "send JSON" });
@@ -267,14 +301,44 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
           break;
         }
         case "/api/start": {
-          // A new thread: a terminal in that folder, with Copilot under that name.
+          // A new thread: a terminal in that folder with Copilot under that name, on the
+          // desk (the default) or in a window of its own.
           const folder = path.resolve(str(body.folder, "folder", 1000));
           if (!fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) throw new BadRequest(`no folder ${folder}`);
           const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : path.basename(folder).replace(/[^\w.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "");
           if (!NAME.test(name)) throw new BadRequest("a name is letters, digits, '.', '-' or '_', up to 40");
-          if (terminals(home).some((t) => t.name === name)) throw new BadRequest(`${name} is already open: go to it, or pick another name`);
-          if (!(await launch(folder, name))) throw new BadRequest(`couldn't open a window: in a terminal, cd to ${folder} and run scripts\\windows\\copilot-here.ps1 -Name ${name}`);
-          log(`opened ${name} in ${folder}`);
+          if (terminals(home).some((t) => t.name === name) || terms.running(name)) throw new BadRequest(`${name} is already open: go to it, or pick another name`);
+          if (body.where === "window") {
+            if (!(await launch(folder, name))) throw new BadRequest(`couldn't open a window: in a terminal, cd to ${folder} and run scripts\\windows\\copilot-here.ps1 -Name ${name}`);
+          } else {
+            const n = (v: unknown, d: number) => (typeof v === "number" && v > 0 ? v : d);
+            terms.close(name); // one that ended under this name
+            terms.open(name, folder, n(body.cols, 120), n(body.rows, 32));
+          }
+          log(`opened ${name} in ${folder}${body.where === "window" ? " (its own window)" : ""}`);
+          break;
+        }
+        case "/api/term/in": {
+          const data = typeof body.data === "string" ? body.data : "";
+          try {
+            terms.write(str(body.name, "name", 40), data);
+          } catch (e) {
+            throw new BadRequest((e as Error).message);
+          }
+          break;
+        }
+        case "/api/term/size": {
+          try {
+            terms.resize(str(body.name, "name", 40), Number(body.cols), Number(body.rows));
+          } catch (e) {
+            throw new BadRequest((e as Error).message);
+          }
+          break;
+        }
+        case "/api/term/close": {
+          const name = str(body.name, "name", 40);
+          terms.close(name);
+          log(`closed ${name}'s terminal on the desk`);
           break;
         }
         case "/api/jump": {
@@ -366,6 +430,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         clearInterval(learner);
         clearTimeout(first);
         closed = true;
+        terms.closeAll();
         fs.rmSync(pageFile(home), { force: true });
         server.closeAllConnections?.();
         server.close(() => r());

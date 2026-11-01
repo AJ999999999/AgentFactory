@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap">
+<link rel="stylesheet" href="/vendor/xterm.css">
 <style>
 /*__PANEL_CSS__*/
 
@@ -131,6 +132,99 @@ header .spacer { flex: 1; }
 .learning .row.bad span:nth-child(2) { color: var(--bad); }
 .learning .where { font-size: 12.5px; color: var(--ink-3); overflow-wrap: anywhere; margin-top: 6px; }
 
+
+/* ---------- three parts: the threads (top left), the one you picked (bottom left),
+   and a terminal (right), which you swap with the terminal button on any thread ---------- */
+:root { --term-bg: #161b1e; --term-ink: #e6e3da; --term-dim: #8f989c; }
+main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap: 20px; height: calc(100vh - 52px); min-height: 520px; padding-bottom: 16px; align-items: stretch; }
+#left { display: flex; flex-direction: column; min-height: 0; gap: 10px; }
+#start-slot:empty { display: none; }
+#start-slot .start { margin: 0; }
+#tabs { display: flex; gap: 2px; border-bottom: 2px solid var(--ink); flex: none; }
+#tabs button { border: 0; background: none; padding: 6px 12px 6px; font-size: 14px; color: var(--ink-2); border-radius: 2px 2px 0 0; display: inline-flex; gap: 6px; align-items: baseline; }
+#tabs button:hover { color: var(--ink); }
+#tabs button[aria-selected="true"] { background: var(--ink); color: var(--rack); font-weight: 600; }
+#tabs .n { font-size: 12.5px; font-weight: 600; color: inherit; opacity: .8; }
+#list { flex: 0 1 auto; max-height: 52%; min-height: 96px; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 2px 4px 8px 1px; --namew: 96px; }
+#list > * { flex: none; }
+#list .group { margin: 10px 0 0; font-size: 13px; }
+#list .group:first-child { margin-top: 2px; }
+#list .group .call { font-size: 14px; }
+#list .calm { padding: 7px 12px; font-size: 13.5px; }
+#list .th-head { padding: 7px 0 7px 12px; }
+#list .th-title { font-size: 14.5px; }
+#list .th-line { font-size: 13px; }
+#list .th-age { padding-top: 9px; }
+#list .th-go { margin-top: 4px; }
+.th.sel { background: var(--paper-hi); box-shadow: var(--shadow), inset 0 0 0 1.5px var(--ink-2); }
+.th-go .icon, .icon { display: inline-flex; vertical-align: -3px; }
+.th-go.on { color: var(--paper); background: var(--ink); border-color: var(--ink); }
+
+#detail { flex: 1 1 0; min-height: 180px; overflow: auto; background: var(--paper); box-shadow: var(--shadow); border-radius: 2px; position: relative; padding: 14px 18px 18px 25px; }
+#detail::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 7px; background: var(--kind, var(--rule)); }
+#detail.k-approval { --kind: var(--approval); }
+#detail.k-decision { --kind: var(--decision); }
+#detail.k-action { --kind: var(--action); }
+#detail.k-working { --kind: var(--ink-3); }
+#detail > * + * { margin-top: 12px; }
+.dt-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dt-head .call { font-size: 17px; }
+.dt-head .where { color: var(--ink-2); font-size: 13.5px; }
+.dt-head .grow { flex: 1; }
+.dt-head .th-age { padding: 0; }
+.dt-title { margin: 4px 0 0; font-size: 18px; line-height: 1.35; font-weight: 550; max-width: 70ch; }
+.ghost-btn { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 4px 10px; font-size: 13.5px; display: inline-flex; gap: 6px; align-items: center; }
+.ghost-btn:hover { border-color: var(--ink); background: var(--paper-hi); }
+.ghost-btn[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.pick { color: var(--ink-2); max-width: 52ch; }
+#detail .th-now { padding: 0; }
+
+#right { display: flex; flex-direction: column; min-height: 0; background: var(--term-bg); color: var(--term-ink); border-radius: 2px; box-shadow: var(--shadow); overflow: hidden; }
+#term-head { flex: none; display: flex; align-items: baseline; gap: 10px; padding: 9px 12px 8px 14px; border-bottom: 1px solid rgba(255, 255, 255, .1); font-size: 14px; min-height: 40px; }
+#term-head .call { font-size: 16px; }
+#term-head .tt { color: var(--term-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+#term-head button { border: 1px solid rgba(255, 255, 255, .35); background: none; color: var(--term-ink); border-radius: 2px; padding: 3px 10px; font-size: 13px; white-space: nowrap; }
+#term-head button:hover { border-color: var(--term-ink); }
+#term-head button.danger { border-color: #e8735f; color: #f0a091; }
+#term-head .on-desk { font-size: 12.5px; color: var(--term-dim); white-space: nowrap; }
+#term-body { flex: 1; min-height: 0; position: relative; }
+#xterm { position: absolute; inset: 6px 4px 4px 12px; }
+#xterm .xterm-viewport { scrollbar-color: #3b4a52 transparent; }
+#mirror { position: absolute; inset: 0; overflow: auto; padding: 12px 18px 18px; font-size: 13.5px; line-height: 1.5; }
+#mirror > * + * { margin-top: 6px; }
+#mirror .m-note { color: var(--term-dim); font-size: 13px; padding-bottom: 8px; border-bottom: 1px dashed rgba(255, 255, 255, .15); }
+#mirror .m-you { color: #9fd6b8; font-weight: 600; white-space: pre-wrap; margin-top: 14px; }
+#mirror .m-said { white-space: pre-wrap; max-width: 90ch; }
+#mirror .m-now { color: var(--term-dim); font-style: italic; }
+#mirror .m-run { font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12.5px; color: #c9cfd2; white-space: pre-wrap; overflow-wrap: anywhere; }
+#mirror .m-run .m-mark { display: inline-block; width: 1.2em; }
+#mirror .m-run.ok .m-mark { color: #5eba8b; }
+#mirror .m-run.bad .m-mark { color: #e8735f; }
+#mirror .m-run.running .m-mark { color: #d9aa4a; }
+#term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; justify-content: center; padding: 32px; color: var(--term-dim); max-width: 60ch; }
+#term-empty[hidden], #xterm[hidden], #mirror[hidden] { display: none; }
+#term-empty .go-btn { background: var(--term-ink); color: var(--term-bg); }
+
+.guess { background: var(--paper); box-shadow: var(--shadow); border-radius: 2px; padding: 10px 14px 12px 19px; position: relative; }
+.guess::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: var(--review); }
+.guess .g-who { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; }
+.guess .g-who .call { color: var(--ink); font-size: 14px; }
+.guess .g-who .grow { flex: 1; }
+.guess .g-text { font-size: 15px; margin-top: 3px; }
+.guess .g-text code { font-size: 12.5px; color: var(--ink-2); margin-left: 6px; }
+.guess .why { font-size: 13.5px; color: var(--ink-2); margin-top: 6px; }
+.guess .options { margin-top: 8px; }
+.guess .opt { padding: 4px 10px; font-size: 13.5px; }
+#list .talk, #list .learning { padding: 0 4px; }
+#list .about { font-size: 13.5px; }
+
+@media (max-width: 1000px) {
+  main.desk { grid-template-columns: minmax(0, 1fr); height: auto; }
+  #list { max-height: none; }
+  #detail { flex: none; }
+  #right { height: 72vh; }
+}
+
 @media (max-width: 620px) {
   .th-head { grid-template-columns: minmax(0, 1fr); }
   .th-name { flex-direction: row; gap: 10px; align-items: baseline; }
@@ -151,14 +245,30 @@ header .spacer { flex: 1; }
   <button class="toggle" id="notify" hidden>Notify me when a thread needs me</button>
   <button class="start-btn" id="start" aria-pressed="false">New thread</button>
 </header>
-<main>
-  <section id="rack" aria-label="Threads"></section>
-  <section id="console" aria-label="Notes between threads, and what sessions taught"></section>
+<main class="desk">
+  <section id="left" aria-label="Threads">
+    <div id="start-slot"></div>
+    <div id="tabs" role="tablist"></div>
+    <div id="list" role="tabpanel"></div>
+    <div id="detail" aria-label="The thread you picked" aria-live="polite"></div>
+  </section>
+  <section id="right" aria-label="Terminal">
+    <div id="term-head"></div>
+    <div id="term-body">
+      <div id="xterm" hidden></div>
+      <div id="mirror" hidden></div>
+      <div id="term-empty" hidden></div>
+    </div>
+  </section>
 </main>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
 <script>
 "use strict";
 const TOKEN = "__TOKEN__";
-const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0 };
+// `sel`: the thread shown bottom left. `focus`: the one whose terminal is on the right,
+// once you've picked one with its terminal button (until then, the selected thread's).
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0, tab: "threads", sel: null, focus: null, closing: null, mirror: { session: null, key: "", turns: [] } };
 
 // "New since you last looked": when you left the page, kept in this browser only, so
 // the desk stays a view of the log with no state of its own.
@@ -230,15 +340,27 @@ async function act(path, body, errKey, clear) {
 }
 const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); render(); };
 const jump = (name, k) => act("/api/jump", { terminal: name }, k || `t:${name}`);
+// What you picked and which terminal is on the right survive a reload of this tab.
+const PICKED = "af-desk-picked";
+try { Object.assign(ui, JSON.parse(sessionStorage.getItem(PICKED) || "{}")); } catch { /* nothing kept */ }
+const keepPicked = () => { try { sessionStorage.setItem(PICKED, JSON.stringify({ sel: ui.sel, focus: ui.focus })); } catch { /* private window */ } };
+const select = (name) => { ui.sel = name; keepPicked(); render(); };
+const focusName = () => ui.focus || ui.sel;
+// Put a thread's terminal on the right, and the keyboard in it when it's one on the desk.
+const show = (name) => { ui.focus = name; if (!ui.sel) ui.sel = name; keepPicked(); render(); setTimeout(() => { if (XT.name === name) XT.term.focus(); }, 0); };
+function termIcon() {
+  const s = h("span", { class: "icon", "aria-hidden": "true" });
+  s.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 6.5l2.2 1.6-2.2 1.6M8.5 10.2h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return s;
+}
 
-// One row: who and where on the left, what it's about, how long, and a way to its
-// terminal. The head opens the rest; the terminal button is its own button, not
-// something inside the head.
+// One thread in the list: who and where, what it's about, how long, and its terminal
+// button. Picking the row shows the thread below; the button puts its terminal on the
+// right. They're two buttons side by side, never one inside the other.
 function rowEl(o) {
-  const isOpen = ui.open.has(o.k);
-  return h("div", { class: `strip th k-${o.kind}${o.compact ? " compact" : ""}${isOpen ? " open" : ""}${o.fresh ? " fresh" : ""}` },
+  return h("div", { class: `strip th compact k-${o.kind}${o.sel ? " sel" : ""}${o.fresh ? " fresh" : ""}` },
     h("div", { class: "th-row" },
-      h("button", { class: "th-head", "aria-expanded": String(isOpen), title: o.tip, onclick: () => toggle(o.k) },
+      h("button", { class: "th-head", "aria-pressed": String(!!o.sel), title: o.tip, onclick: o.pick },
         h("span", { class: "th-name" },
           h("span", { class: "call" }, o.isNew ? h("i", { class: "dot", title: "New since you last looked" }) : null, o.isNew ? h("span", { class: "sr" }, "New: ") : null, o.name),
           o.where ? h("span", { class: "where" }, o.where) : null),
@@ -246,10 +368,7 @@ function rowEl(o) {
           h("span", { class: "th-title" }, o.title),
           o.lines)),
       h("span", { class: `th-age${o.waiting ? " waiting" : ""}`, title: o.ageTip }, o.age),
-      o.go ? h("button", { class: "th-go", title: `Go to ${o.name}'s terminal`, "aria-label": `Go to ${o.name}'s terminal`, onclick: o.go }, "↗") : null),
-    o.now ? h("div", { class: "th-now" }, o.now) : null,
-    ui.err[o.k] ? h("div", { class: "th-err err" }, ui.err[o.k]) : null,
-    h("div", { class: "body" }, o.body));
+      o.show ? h("button", { class: `th-go${o.focused ? " on" : ""}`, title: o.focused ? `${o.name}'s terminal is on the right` : `Show ${o.name}'s terminal on the right`, "aria-label": `Show ${o.name}'s terminal on the right`, "aria-pressed": String(!!o.focused), onclick: o.show }, termIcon()) : null));
 }
 
 // ---------- the threads ----------
@@ -324,85 +443,276 @@ function modeEl(t, k) {
 
 // What a thread that needs you is waiting on, shown without opening it.
 function needsEl(t, d, k) {
-  const go = h("button", { class: "go-btn", onclick: () => jump(t.name, k) }, `Go to ${t.name} ↗`);
+  const go = t.onDesk
+    ? h("button", { class: "go-btn", onclick: () => show(t.name) }, termIcon(), ` Answer in ${t.name}'s terminal`)
+    : h("button", { class: "go-btn", onclick: () => jump(t.name, k) }, `Go to ${t.name}'s tab ↗`);
   if (t.asks.length) return [t.asks.map((a) => askEl(t, a, d.now, d.holdSec))];
-  if (t.state === "waiting for permission") return [t.wants ? psLine(t.cwd, t.wants) : h("p", { class: "asked" }, t.why), h("div", { class: "options" }, go, h("span", { class: "hint" }, "It asks in its terminal."))];
-  return [h("p", { class: "asked" }, h("span", { class: "sr" }, "It asks: "), t.why), h("div", { class: "options" }, go, h("span", { class: "hint" }, "Answer it there."))];
+  if (t.state === "waiting for permission") return [t.wants ? psLine(t.cwd, t.wants) : h("p", { class: "asked" }, t.why), h("div", { class: "options" }, go)];
+  return [h("p", { class: "asked" }, h("span", { class: "sr" }, "It asks: "), t.why), h("div", { class: "options" }, go)];
+}
+
+const edited = (t) => t.files.length ? `Edited ${t.files.slice(-3).map(base).join(", ")}${t.files.length > 3 ? ` and ${t.files.length - 3} more` : ""}` : null;
+const kindOf = (t) => (t.thread === "needs you" && t.state === "asking you" ? "decision" : KIND[t.thread]);
+function ageOf(t, now) {
+  return t.thread === "needs you" || t.thread === "your turn"
+    ? { age: `waiting ${ago(t.since, now)}`, ageTip: `Waiting for you since ${new Date(t.since).toLocaleTimeString()}`, waiting: t.thread === "needs you" }
+    : t.thread === "working" ? { age: `${ago(t.lastAt, now)} ago`, ageTip: "Its last step" }
+    : { age: `${ago(t.since, now)} ago`, ageTip: `Closed at ${new Date(t.since).toLocaleTimeString()}` };
 }
 
 function threadRow(t, d) {
-  const now = d.now;
   const k = `thread:${t.name}:${t.session}`;
   const needs = t.thread === "needs you";
   const fresh = needs && !ui.seen.has(`${k}:${t.since}`);
   ui.seen.add(`${k}:${t.since}`);
-  const open = t.state !== "closed";
   const mail = d.forYou.filter((n) => n.from === t.name);
-  const edited = t.files.length ? `Edited ${t.files.slice(-3).map(base).join(", ")}${t.files.length > 3 ? ` and ${t.files.length - 3} more` : ""}` : null;
-  const line = t.thread === "your turn" ? t.why : t.thread === "working" ? t.now : t.thread === "closed" ? edited : null;
-  const lines = [
-    line ? h("span", { class: "th-line" }, line) : null,
-    mail.length ? h("span", { class: "th-line mail" }, `To you: ${mail[mail.length - 1].text}`) : null,
-  ];
-  const age = t.thread === "needs you" || t.thread === "your turn"
-    ? { age: `waiting ${ago(t.since, now)}`, ageTip: `Waiting for you since ${new Date(t.since).toLocaleTimeString()}`, waiting: needs }
-    : t.thread === "working" ? { age: `${ago(t.lastAt, now)} ago`, ageTip: "Its last step" }
-    : { age: `${ago(t.since, now)} ago`, ageTip: `Closed at ${new Date(t.since).toLocaleTimeString()}` };
-  const body = [
-    h("div", { class: "options" },
-      open ? modeEl(t, k) : null,
-      h("button", { class: "opt quiet-opt", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
-    (t.thread === "your turn" || t.state === "asking you") && (t.lastSaid || t.said) ? h("div", { class: "why said" }, t.lastSaid || t.said) : null,
-    didEl(t),
-    t.tail && t.tail.length ? h("div", { class: "live" }, h("pre", null, t.tail.join("\n"))) : null,
-    knowsEl(t),
-    open || t.notes.length ? h("div", { class: "notes" },
-      t.notes.map((n) => noteLine(n, now, t.name)),
-      open ? h("div", { class: "send" }, sendBox(t.name, `A note for ${t.name} (read during its work)`)) : null,
-      ui.err[`send:${t.name}`] ? h("div", { class: "err" }, ui.err[`send:${t.name}`]) : null) : null,
-    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
-      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
-        h("button", { title: "Ask again", "aria-label": `Ask again before ${r.prefix || r.tool}`, onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null,
-  ];
+  const line = needs ? (t.wants ? h("code", null, t.wants) : t.why) : t.thread === "your turn" ? t.why : t.thread === "working" ? t.now : edited(t);
   return rowEl({
-    k, kind: needs && t.state === "asking you" ? "decision" : KIND[t.thread],
-    name: t.name, where: t.branch || (t.repo !== t.name ? t.repo : null),
-    title: t.title, tip: t.title, lines, ...age,
-    compact: !needs, fresh, isNew: t.thread !== "working" && isNew(t.since),
-    go: open && !needs ? () => jump(t.name, k) : null,
-    now: needs ? needsEl(t, d, k) : null,
-    body,
+    kind: kindOf(t), name: t.name, where: t.branch || (t.repo !== t.name ? t.repo : null),
+    title: t.title, tip: t.title, ...ageOf(t, d.now), fresh, isNew: t.thread !== "working" && isNew(t.since),
+    lines: [line ? h("span", { class: "th-line" }, line) : null, mail.length ? h("span", { class: "th-line mail" }, `To you: ${mail[mail.length - 1].text}`) : null],
+    sel: ui.sel === t.name, focused: focusName() === t.name,
+    pick: () => select(t.name), show: () => show(t.name),
   });
 }
 
-function threadsEl(d) {
+// A terminal the desk opened whose Copilot hasn't said hello yet, or that has ended.
+function hostedRow(x, d) {
+  return rowEl({
+    kind: x.exited ? "closed" : "working", name: x.name, where: base(x.cwd),
+    title: x.exited ? "Its terminal closed" : "Copilot is starting…", age: `${ago(x.exited ? x.exited.at : x.started, d.now)} ago`,
+    sel: ui.sel === x.name, focused: focusName() === x.name, pick: () => select(x.name), show: () => show(x.name),
+  });
+}
+
+// A terminal opened here whose Copilot session hasn't started yet: it shows with the
+// working threads until the session does.
+const onlyHosted = (d) => d.hosted.filter((x) => !d.threads.some((t) => t.name === x.name));
+
+function threadsList(d) {
   const out = [];
-  if (ui.starting) out.push(startEl(d));
-  if (!d.threads.length) {
+  if (!d.threads.length && !d.hosted.length) {
     out.push(h("div", { class: "quiet" },
-      h("p", null, "No Copilot session yet. Click New thread, or in a repo's terminal run ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."),
+      h("p", null, "No Copilot session yet. Click New thread to open one here, or in a repo's terminal run ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."),
       h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once first, so the desk sees every session.")));
     return out;
   }
   for (const g of GROUPS) {
     const ts = d.threads.filter((t) => t.thread === g);
-    if (!ts.length && g !== "needs you") continue;
-    out.push(h("h2", { class: "group" }, h("span", { class: "call" }, GROUP_SAYS[g]), ts.length ? h("span", null, String(ts.length)) : null));
-    if (!ts.length) out.push(h("p", { class: "calm" }, "Nothing waits on you."));
+    const extra = g === "working" ? onlyHosted(d) : [];
+    if (!ts.length && !extra.length && g !== "needs you") continue;
+    out.push(h("h2", { class: "group" }, h("span", { class: "call" }, GROUP_SAYS[g]), ts.length + extra.length ? h("span", null, String(ts.length + extra.length)) : null));
+    if (!ts.length && g === "needs you") out.push(h("p", { class: "calm" }, "Nothing waits on you."));
     for (const t of ts) out.push(threadRow(t, d));
+    for (const x of extra) out.push(hostedRow(x, d));
   }
   return out;
 }
 
-// ---------- a new thread; the talk between threads; what was learned ----------
+// ---------- bottom left: the thread you picked ----------
+
+function detailEl(d) {
+  const el = document.getElementById("detail");
+  const t = d.threads.find((x) => x.name === ui.sel);
+  const x = d.hosted.find((y) => y.name === ui.sel);
+  if (!t && !x) {
+    el.className = "";
+    return [h("p", { class: "pick" }, d.threads.length ? "Pick a thread above to see what it's doing, what it changed, and its notes. Its terminal button puts its terminal on the right." : "Threads show up above as Copilot sessions start.")];
+  }
+  const showBtn = (name) => h("button", { class: "ghost-btn", "aria-pressed": String(focusName() === name), onclick: () => show(name) }, termIcon(), focusName() === name ? "Its terminal is on the right" : "Show its terminal");
+  if (!t) {
+    el.className = "k-working";
+    return [h("div", { class: "dt-head" }, h("span", { class: "call" }, x.name), h("span", { class: "where" }, x.cwd), h("span", { class: "grow" }), showBtn(x.name)),
+      h("p", { class: "pick" }, x.exited ? "Its terminal closed. Open it again from the right." : "Copilot is starting in its terminal on the right. Give it your first prompt there.")];
+  }
+  const k = `thread:${t.name}:${t.session}`;
+  const now = d.now;
+  const open = t.state !== "closed";
+  const a = ageOf(t, now);
+  el.className = `k-${kindOf(t)}`;
+  const mail = d.forYou.filter((n) => n.from === t.name);
+  return [
+    h("div", { class: "dt-head" },
+      h("span", { class: "call" }, t.name),
+      h("span", { class: "where" }, [t.repo !== t.name ? t.repo : null, t.branch].filter(Boolean).join(", ")),
+      h("span", { class: "grow" }),
+      h("span", { class: `th-age${a.waiting ? " waiting" : ""}`, title: a.ageTip }, a.age),
+      showBtn(t.name)),
+    h("h2", { class: "dt-title" }, t.title),
+    t.thread === "needs you" ? h("div", { class: "th-now" }, needsEl(t, d, k)) : null,
+    t.thread === "working" && t.now ? h("div", { class: "hint" }, t.now) : null,
+    mail.length ? h("div", { class: "th-line mail" }, `To you: ${mail[mail.length - 1].text}`) : null,
+    ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null,
+    t.thread === "your turn" && (t.lastSaid || t.said) ? h("div", { class: "why said" }, t.lastSaid || t.said) : null,
+    didEl(t),
+    knowsEl(t),
+    open || t.notes.length ? h("div", { class: "notes" },
+      t.notes.map((n) => noteLine(n, now, t.name)),
+      open ? h("div", { class: "send" }, sendBox(t.name, `A note for ${t.name} (read during its work)`)) : null,
+      ui.err[`send:${t.name}`] ? h("div", { class: "err" }, ui.err[`send:${t.name}`]) : null) : null,
+    h("div", { class: "options" },
+      open && !t.onDesk ? modeEl(t, k) : null,
+      h("button", { class: "opt quiet-opt", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
+    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
+      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
+        h("button", { title: "Ask again", "aria-label": `Ask again before ${r.prefix || r.tool}`, onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null,
+  ];
+}
+
+// ---------- right: a terminal ----------
+// One on the desk is the real thing, typed into here. One in a window of your own is
+// followed from its session file, and "Type in its tab" brings that tab forward.
+
+let XT = { name: null };
+function attachTerm(name) {
+  if (XT.name === name) return;
+  detachTerm();
+  const el = document.getElementById("xterm");
+  el.hidden = false;
+  if (!window.Terminal || !window.FitAddon) { el.textContent = "The terminal didn't load (vendor/xterm.js). Reload the page."; return; }
+  const term = new Terminal({
+    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "DejaVu Sans Mono", monospace', fontSize: 14, lineHeight: 1.12,
+    cursorBlink: true, scrollback: 5000,
+    theme: { background: "#161b1e", foreground: "#e6e3da", cursor: "#5eba8b", cursorAccent: "#161b1e", selectionBackground: "#3b4a52" },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(el);
+  XT = { name, term, fit, ctrl: new AbortController(), size: "", queue: "", flushing: false };
+  term.onData((data) => typeIn(XT, data));
+  fitTerm();
+  stream(XT);
+}
+async function stream(x) {
+  try {
+    const res = await fetch(`/api/term?name=${encodeURIComponent(x.name)}`, { headers: { "x-desk-token": TOKEN }, signal: x.ctrl.signal });
+    if (!res.ok) { x.term.write(`\r\n[${(await res.json().catch(() => ({}))).error || `HTTP ${res.status}`}]\r\n`); return; }
+    const reader = res.body.getReader();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      x.term.write(value);
+    }
+  } catch { /* switched to another terminal, or the desk stopped */ }
+}
+function detachTerm() {
+  if (!XT.name) return;
+  XT.ctrl.abort();
+  XT.term.dispose();
+  XT = { name: null };
+  const el = document.getElementById("xterm");
+  el.replaceChildren();
+  el.hidden = true;
+}
+function fitTerm() {
+  if (!XT.name || !XT.fit) return;
+  try { XT.fit.fit(); } catch { return; }
+  const size = `${XT.term.cols}x${XT.term.rows}`;
+  if (size !== XT.size) { XT.size = size; api("/api/term/size", { name: XT.name, cols: XT.term.cols, rows: XT.term.rows }).catch(() => {}); }
+}
+new ResizeObserver(() => fitTerm()).observe(document.getElementById("term-body"));
+// Keys go in order, batched while one request is on its way.
+function typeIn(x, data) { x.queue += data; if (!x.flushing) flushKeys(x); }
+async function flushKeys(x) {
+  x.flushing = true;
+  while (x.queue) {
+    const data = x.queue;
+    x.queue = "";
+    try { await api("/api/term/in", { name: x.name, data }); } catch (e) { x.queue = ""; x.term.write(`\r\n[${e.message}]\r\n`); }
+  }
+  x.flushing = false;
+}
+
+const turnEl = (x) => x.k === "you" ? h("div", { class: "m-you" }, "› ", x.text)
+  : x.k === "said" ? h("div", { class: "m-said" }, x.text)
+  : x.k === "now" ? h("div", { class: "m-now" }, x.text)
+  : h("div", { class: `m-run${x.running ? " running" : x.ok ? " ok" : " bad"}` }, h("span", { class: "m-mark", "aria-label": x.running ? "running" : x.ok ? "done" : "failed" }, x.running ? "…" : x.ok ? "✓" : "✗"), x.text);
+function drawMirror(t) {
+  const m = document.getElementById("mirror");
+  const atEnd = m.scrollHeight - m.scrollTop - m.clientHeight < 60;
+  m.replaceChildren(
+    h("div", { class: "m-note" }, `${t.name} runs in a window of its own; this follows its session. To type, use "Type in its tab". A thread you start with New thread runs here, where you can type.`),
+    ...(ui.mirror.turns.length ? ui.mirror.turns.map(turnEl) : [h("div", { class: "m-now" }, "Nothing in its session yet.")]));
+  if (atEnd || ui.mirror.fresh) m.scrollTop = m.scrollHeight;
+  ui.mirror.fresh = false;
+}
+async function followMirror(t) {
+  const key = `${t.session}:${t.lastAt}:${t.state}`;
+  if (ui.mirror.session !== t.session) { ui.mirror = { session: t.session, key: "", turns: [], fresh: true }; drawMirror(t); }
+  if (ui.mirror.key === key || ui.mirror.loading === key) return;
+  ui.mirror.loading = key;
+  try {
+    const r = await api(`/api/session?id=${encodeURIComponent(t.session)}`);
+    if (ui.mirror.session !== t.session) return;
+    ui.mirror.key = key;
+    ui.mirror.turns = r.turns;
+    drawMirror(t);
+  } catch { /* the next change tries again */ } finally { if (ui.mirror.loading === key) ui.mirror.loading = ""; }
+}
+
+function rightEl(d) {
+  const name = focusName();
+  const t = d.threads.find((x) => x.name === name);
+  const x = d.hosted.find((y) => y.name === name);
+  const head = document.getElementById("term-head");
+  const mirror = document.getElementById("mirror");
+  const empty = document.getElementById("term-empty");
+  if (x) {
+    attachTerm(name);
+    mirror.hidden = true;
+    empty.hidden = true;
+    const closing = ui.closing === name;
+    head.replaceChildren(...[
+      h("span", { class: "call" }, name),
+      h("span", { class: "tt", title: x.cwd }, t ? t.title : x.cwd),
+      x.exited
+        ? [h("button", { onclick: () => act("/api/start", { folder: x.cwd, name }, "term") }, "Open again"), h("button", { onclick: () => { act("/api/term/close", { name }, "term"); if (ui.focus === name) ui.focus = null; } }, "Remove")]
+        : closing
+          ? [h("span", { class: "on-desk" }, "Copilot stops with it."), h("button", { class: "danger", onclick: () => { ui.closing = null; act("/api/term/close", { name }, "term"); } }, "Close it"), h("button", { onclick: () => { ui.closing = null; render(); } }, "Keep")]
+          : [h("span", { class: "on-desk" }, "on the desk"), h("button", { onclick: () => { ui.closing = name; render(); } }, "Close")]].flat());
+    return;
+  }
+  detachTerm();
+  if (t) {
+    mirror.hidden = false;
+    empty.hidden = true;
+    head.replaceChildren(
+      h("span", { class: "call" }, name),
+      h("span", { class: "tt", title: t.title }, t.title),
+      t.state !== "closed" ? h("button", { onclick: () => jump(t.name, "term") }, "Type in its tab ↗") : h("span", { class: "on-desk" }, "closed"));
+    followMirror(t);
+    return;
+  }
+  mirror.hidden = true;
+  empty.hidden = false;
+  head.replaceChildren(h("span", { class: "tt" }, "Terminal"));
+  empty.replaceChildren(
+    h("p", null, "A thread's terminal shows here: click the terminal button on a thread. A thread you start with New thread runs right here, and you type into it here."),
+    h("button", { class: "go-btn", onclick: () => startOpen(true) }, "New thread"));
+}
+
+// ---------- top left, the other tabs: notes between threads; what sessions taught ----------
 
 function startEl(d) {
   const k = "start";
   const folder = h("input", { type: "text", list: "af-folders", placeholder: "Folder, e.g. C:\\work\\billing", "aria-label": "Folder", "data-k": "start:folder" });
-  const name = h("input", { type: "text", placeholder: "Name (else the folder's)", "aria-label": "Name", "data-k": "start:name", style: "flex:0 1 190px" });
+  const name = h("input", { type: "text", placeholder: "Name (else the folder's)", "aria-label": "Name", "data-k": "start:name", style: "flex:0 1 170px" });
+  const own = h("input", { type: "checkbox", id: "start-own", checked: !!ui.startOwn, onchange: (e) => { ui.startOwn = e.target.checked; } });
   const go = async () => {
     if (!folder.value.trim()) { ui.err[k] = "Which folder?"; return render(); }
-    if (await act("/api/start", { folder: folder.value.trim(), name: name.value.trim() }, k, ["start:folder", "start:name"])) { ui.starting = false; render(); }
+    const n = name.value.trim() || base(folder.value.trim()).replace(/[^\w.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "");
+    const body = document.getElementById("term-body");
+    const size = { cols: Math.max(40, Math.floor((body.clientWidth - 20) / 8.5)), rows: Math.max(10, Math.floor((body.clientHeight - 12) / 17)) };
+    if (await act("/api/start", { folder: folder.value.trim(), name: name.value.trim(), ...(own.checked ? { where: "window" } : size) }, k, ["start:folder", "start:name"])) {
+      ui.starting = false;
+      ui.sel = n;
+      // Kept while the next state, which has it, is on its way.
+      ui.expect = { name: n, until: Date.now() + 20_000 };
+      if (!own.checked) { ui.focus = n; ui.tab = "threads"; }
+      keepPicked();
+      render();
+      setTimeout(() => { if (XT.name === n) XT.term.focus(); }, 50);
+    }
   };
   const enter = (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) go(); else if (e.key === "Escape") startOpen(false); };
   folder.addEventListener("keydown", enter);
@@ -411,7 +721,7 @@ function startEl(d) {
     h("h2", { class: "goal-head", style: "margin:0" }, h("span", { class: "call" }, "New thread")),
     h("datalist", { id: "af-folders" }, (d.folders || []).map((f) => h("option", { value: f }))),
     h("div", { class: "send" }, folder, name, h("button", { class: "go-btn", onclick: go }, "Open"), h("button", { class: "cancel", onclick: () => startOpen(false) }, "Cancel")),
-    h("div", { class: "about" }, "Opens a PowerShell window in that folder running Copilot, named for the desk. Type your first prompt there."),
+    h("div", { class: "about" }, h("label", null, own, " In a window of its own instead"), ". Otherwise it opens on the right: PowerShell in that folder, running Copilot. Type your first prompt there."),
     ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null);
 }
 function startOpen(on) {
@@ -427,8 +737,7 @@ function talkEl(d) {
   const open = d.threads.filter((t) => t.state !== "closed").map((t) => t.name);
   const k = "send:talk";
   const sel = h("select", { "data-k": "talk:to", "aria-label": "To" }, [...open, ...(open.length > 1 ? ["all"] : [])].map((n) => h("option", { value: n }, n === "all" ? "every thread" : n)));
-  return h("div", { class: "side" },
-    h("h2", { class: "goal-head", style: "margin:0" }, h("span", { class: "call" }, "Between threads")),
+  return [
     h("div", { class: "about" }, "A note is read while a session works. It never starts one."),
     open.length ? h("div", { class: "send" }, sel, sendBox(() => sel.value, "A note…", k)) : null,
     ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null,
@@ -440,36 +749,50 @@ function talkEl(d) {
           h("b", null, `${n.from} → ${n.to === "you" ? "you" : n.to}`), " ", n.text,
           unread ? h("button", { onclick: () => act("/api/read", { note: n.id }, k) }, "Got it")
             : !n.delivered ? h("span", { class: "st" }, " · waits for its next tool call") : null));
-    }) : h("div", { class: "about" }, "No notes yet. A session sends one with the desk's note command, which it's told about at its start; you can above.")));
+    }) : h("div", { class: "about" }, "No notes yet. A session sends one with the desk's note command, which it's told about at its start; you can above.")),
+  ];
 }
 
-function guessRow(g, now) {
+function guessEl(g, now) {
   const k = `know:${g.principal}:${g.entry}`;
-  const repo = g.principal === "you" ? "you" : g.principal.replace(/^repo\./, "");
+  const who = g.principal === "you" ? "you" : g.principal.replace(/^repo\./, "");
+  const words = ui.open.has(k);
   const mine = h("input", { type: "text", value: g.text, "aria-label": "In your words", "data-k": k });
   const why = h("input", { type: "text", placeholder: "What's wrong with it (optional)", "aria-label": "What's wrong with it", "data-k": `${k}:why` });
-  const body = [
-    g.because ? h("div", { class: "why" }, g.because, g.session ? h("div", { class: "by" }, `from session ${g.session.slice(0, 8)}`) : null) : null,
-    h("div", { class: "options" }, h("button", { class: "opt rec allow", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right" }, k) }, "Right")),
-    h("div", { class: "form row" }, mine, h("button", { class: "opt", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right", text: mine.value }, k) }, "Right, in these words")),
-    h("div", { class: "form row" }, why, h("button", { class: "opt deny", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "wrong", text: why.value }, k) }, "Wrong")),
-  ];
-  return rowEl({ k, kind: "review", name: repo, where: g.kind, title: g.text, lines: h("span", { class: "th-line" }, h("code", null, g.subject)), age: ago(g.at, now), isNew: isNew(g.at), body });
+  return h("div", { class: "guess" },
+    h("div", { class: "g-who" }, h("span", { class: "call" }, isNew(g.at) ? h("i", { class: "dot", title: "New since you last looked" }) : null, who), h("span", null, g.kind), h("span", { class: "grow" }), h("span", null, ago(g.at, now))),
+    h("div", { class: "g-text" }, g.text, h("code", null, g.subject)),
+    g.because ? h("div", { class: "why" }, g.because) : null,
+    h("div", { class: "options" },
+      h("button", { class: "opt rec allow", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right" }, k) }, "Right"),
+      h("button", { class: "opt quiet-opt", "aria-expanded": String(words), onclick: () => toggle(k) }, words ? "Never mind" : "Change it or say why it's wrong")),
+    words ? h("div", { class: "form row" }, mine, h("button", { class: "opt", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right", text: mine.value }, k) }, "Right, in these words")) : null,
+    words ? h("div", { class: "form row" }, why, h("button", { class: "opt deny", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "wrong", text: why.value }, k) }, "Wrong")) : null,
+    ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null);
 }
 
 function learnedEl(d) {
   const l = d.learning;
-  return h("div", { class: "side" },
-    h("h2", { class: "goal-head", style: "margin:0" }, h("span", { class: "call" }, "Learned, to check")),
+  return [
     h("div", { class: "about" }, d.guesses.length ? "New sessions get these as guesses until you confirm them." : "Nothing to check."),
-    d.guesses.length ? h("div", { style: "margin-top:12px" }, d.guesses.map((g) => guessRow(g, d.now))) : null,
+    d.guesses.map((g) => guessEl(g, d.now)),
     h("div", { class: "learning" },
       h("div", null, l.running ? `Reading ${l.running.repo || "a"} session ${l.running.session.slice(0, 8)}…` : l.queued ? `${plural(l.queued, "session")} waiting to be read.` : "Each finished session is read once."),
       l.recent.map((a) => h("div", { class: `row${a.ok ? "" : " bad"}` },
         h("span", null, ago(a.at, d.now)),
         h("span", null, a.error ? `${a.repo}: ${a.error}` : `${a.repo}: ${a.kept.length} learned${a.dropped.length ? `, ${a.dropped.length} left out` : ""}`),
         h("span", null, a.session.slice(0, 8)))),
-      h("div", { class: "where" }, `Kept in ${d.knowledgeDir}`)));
+      h("div", { class: "where" }, `Kept in ${d.knowledgeDir}`)),
+  ];
+}
+
+function tabsEl(d) {
+  const tab = (id, label, n) => h("button", { role: "tab", "aria-selected": String(ui.tab === id), onclick: () => { ui.tab = id; render(); } }, label, n ? h("span", { class: "n" }, String(n)) : null);
+  return [
+    tab("threads", "Threads", d.threads.filter((t) => t.state !== "closed").length + onlyHosted(d).length),
+    tab("notes", "Between threads", d.forYou.length),
+    tab("learned", "Learned, to check", d.guesses.length),
+  ];
 }
 
 // ---------- drawing ----------
@@ -487,19 +810,28 @@ function render() {
   for (const el of document.querySelectorAll("[data-k]")) typed[el.dataset.k] = el.value;
   const focus = f && f.dataset && f.dataset.k ? { k: f.dataset.k, s: f.selectionStart, e: f.selectionEnd } : null;
 
-  const count = (g) => d.threads.filter((t) => t.thread === g).length;
+  const count = (g) => d.threads.filter((t) => t.thread === g).length + (g === "working" ? onlyHosted(d).length : 0);
   const needs = count("needs you");
   document.title = needs ? `(${needs}) AgentFactory desk` : "AgentFactory desk";
   const fresh = d.threads.some((t) => t.thread !== "working" && isNew(t.since)) || d.notes.some((n) => isNew(n.at)) || d.guesses.some((g) => isNew(g.at));
   document.getElementById("tally").replaceChildren(...[
     ...[["needs you", "approval", "need you"], ["your turn", "action", "your turn"], ["working", "working", "working"]]
       .filter(([g]) => count(g)).map(([g, kind, says]) => h("span", { class: `t-${kind}` }, h("i"), h("b", null, String(count(g))), says)),
-    d.threads.some((t) => t.state !== "closed") ? null : h("span", null, "No thread open"),
+    d.threads.some((t) => t.state !== "closed") || d.hosted.length ? null : h("span", null, "No thread open"),
     fresh ? h("span", { class: "new-key" }, h("i"), "new since you last looked") : null,
   ].filter(Boolean));
   document.getElementById("start").setAttribute("aria-pressed", String(ui.starting));
-  document.getElementById("rack").replaceChildren(...threadsEl(d));
-  document.getElementById("console").replaceChildren(talkEl(d), learnedEl(d));
+  // Nothing picked yet, or the pick is gone: the thread that waits on you longest.
+  const names = [...d.threads.map((t) => t.name), ...d.hosted.map((x) => x.name)];
+  if (ui.expect && (names.includes(ui.expect.name) || Date.now() > ui.expect.until)) ui.expect = null;
+  if (ui.expect) names.push(ui.expect.name);
+  if (!ui.sel || !names.includes(ui.sel)) ui.sel = d.threads[0]?.name ?? d.hosted[0]?.name ?? null;
+  if (ui.focus && !names.includes(ui.focus)) ui.focus = null;
+  document.getElementById("start-slot").replaceChildren(...(ui.starting ? [startEl(d)] : []));
+  document.getElementById("tabs").replaceChildren(...tabsEl(d));
+  document.getElementById("list").replaceChildren(...[ui.tab === "notes" ? talkEl(d) : ui.tab === "learned" ? learnedEl(d) : threadsList(d)].flat(Infinity).filter(Boolean));
+  document.getElementById("detail").replaceChildren(...detailEl(d).filter(Boolean));
+  rightEl(d);
 
   for (const el of document.querySelectorAll("[data-k]")) {
     const k = el.dataset.k;

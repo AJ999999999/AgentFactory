@@ -20,7 +20,7 @@ import { answer, type Choice, loadConfig, modesFile, pageFile, pending, readJson
 import { confirm, guesses, knowledgeDir, commit, reject, repoNameOf, summary } from "./knowledge.ts";
 import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnConfig, toLearn } from "./learn.ts";
 import { deskHome, readLog } from "./log.ts";
-import { terminals } from "./mcp.ts";
+import { terminals } from "./others.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
 import { readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
 import { threads } from "./threads.ts";

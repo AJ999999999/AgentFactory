@@ -1,32 +1,19 @@
 // The desk's tools for your Copilot sessions, over MCP: see the other terminals, and
-// send one of them (or you) a note. Registered once in your Copilot config by
-// `npm run desk -- install`, so every interactive session has them.
+// send one of them (or you) a note. Optional: `npm run desk -- install --mcp` registers
+// it, for a company that allows it. Without it, sessions do the same with the desk's
+// own command (reach.ts), which they're told about at their start.
 //
 // It serves nothing to the desk's own analysis runs or to harness turns: those aren't
 // sessions you're driving, and shouldn't write to the ones you are.
 import * as path from "node:path";
 import { serveMcp, type McpTool } from "../mcp-rpc.ts";
-import { pending, terminalOf } from "./hold.ts";
-import { deskHome, readLog } from "./log.ts";
+import { terminalOf } from "./hold.ts";
+import { deskHome } from "./log.ts";
 import { send, YOU } from "./notes.ts";
-import { readEvents, sessionFile, summarize } from "./session.ts";
-import { deskView } from "./view.ts";
+import { terminals, threadList, titled } from "./others.ts";
 
 export const DESK_SERVER = "af-desk";
-
-export function terminals(home = deskHome(), now = Date.now()) {
-  return deskView(readLog(home), pending(home), [], {}, now).filter((t) => t.state !== "closed");
-}
-
-// What each open session is for: your first prompt there, as the desk titles threads.
-function titled(home: string) {
-  const log = readLog(home);
-  const transcript = (s: string) => log.find((e) => e.session === s && e.transcript)?.transcript;
-  return terminals(home).map((t) => {
-    const f = sessionFile(t.session, transcript(t.session));
-    return { ...t, title: f ? summarize(readEvents(f)).title : undefined };
-  });
-}
+export { terminals };
 
 export function deskTools(me: string, home = deskHome()): McpTool[] {
   return [
@@ -35,14 +22,8 @@ export function deskTools(me: string, home = deskHome()): McpTool[] {
       description: "The other Copilot CLI sessions the user has open on this PC, one per terminal and repo: name, folder, what each was asked to do, what it's doing or waiting on.",
       inputSchema: { type: "object", properties: {} },
       call: () => {
-        const ts = titled(home);
         const now = Date.now();
-        return {
-          text: ts.length
-            ? ts.map((t) => `- ${t.name}${t.name === me ? " (this terminal)" : ""}: ${t.cwd}${t.title ? `; working on: ${t.title}` : ""}; ${t.state} for ${Math.round((now - t.since) / 60_000)}m${t.said ? `; last said: ${t.said.slice(0, 160)}` : ""}`).join("\n")
-            : "No terminal is open.",
-          data: ts.map((t) => ({ name: t.name, cwd: t.cwd, title: t.title, state: t.state, since: t.since })),
-        };
+        return { text: threadList(me, home, now), data: titled(home, now).map((t) => ({ name: t.name, cwd: t.cwd, title: t.title, state: t.state, since: t.since })) };
       },
     },
     {

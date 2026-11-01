@@ -440,7 +440,7 @@ function talkEl(d) {
           h("b", null, `${n.from} → ${n.to === "you" ? "you" : n.to}`), " ", n.text,
           unread ? h("button", { onclick: () => act("/api/read", { note: n.id }, k) }, "Got it")
             : !n.delivered ? h("span", { class: "st" }, " · waits for its next tool call") : null));
-    }) : h("div", { class: "about" }, "No notes yet. A session sends one with its send_note tool; you can above.")));
+    }) : h("div", { class: "about" }, "No notes yet. A session sends one with the desk's note command, which it's told about at its start; you can above.")));
 }
 
 function guessRow(g, now) {

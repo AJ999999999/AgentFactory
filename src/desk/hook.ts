@@ -1,6 +1,7 @@
 // The hook Copilot CLI runs on each session event: `node hook.ts <event>`, the event's
 // JSON on stdin. A permission request may be held for the desk's page (hold.ts); a new
-// session is told what earlier sessions in its repo taught (knowledge.ts); notes for
+// session is told what earlier sessions in its repo taught (knowledge.ts) and how to
+// reach the other terminals (others.ts); notes for
 // this terminal are handed over after each tool call (notes.ts); everything else prints
 // nothing, which Copilot reads as "go on as usual". Events are recorded, except the
 // per-tool ones, which only deliver notes. It always exits 0: a command hook that fails
@@ -26,6 +27,9 @@ try {
     const { contextFor } = await import("./knowledge.ts");
     const known = contextFor(e.cwd);
     if (known) context.push(known);
+    const { reachContext } = await import("./others.ts");
+    const { terminalOf } = await import("./hold.ts");
+    context.push(reachContext(terminalOf(e)));
   }
   if (name === "sessionStart" || name === "postToolUse") {
     const { claim, renderNotes } = await import("./notes.ts");
@@ -39,7 +43,7 @@ try {
     const { commandOf, hold } = await import("./hold.ts");
     const r = await hold(e, {}, commandOf(raw));
     // Logged when the desk had a part in it: a standing answer, or an ask held for the page.
-    if (!["pass", "terminal-mode", "no-desk"].includes(r.by)) append({ at: Date.now(), event: "decision", session: e.session, cwd: e.cwd, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), by: r.by, ...(r.choice ? { choice: r.choice } : {}), ...(r.note ? { message: r.note } : {}), ...(r.waitedMs !== undefined ? { waitedMs: r.waitedMs } : {}) });
+    if (!["pass", "desk-command", "terminal-mode", "no-desk"].includes(r.by)) append({ at: Date.now(), event: "decision", session: e.session, cwd: e.cwd, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), by: r.by, ...(r.choice ? { choice: r.choice } : {}), ...(r.note ? { message: r.note } : {}), ...(r.waitedMs !== undefined ? { waitedMs: r.waitedMs } : {}) });
     if (Object.keys(r.output).length) process.stdout.write(JSON.stringify(r.output));
   }
 } catch (e) {

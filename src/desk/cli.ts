@@ -1,11 +1,14 @@
 // The desk on the command line.
 //
-//   npm run desk -- install          hook every Copilot CLI session on this PC (one file in ~/.copilot/hooks)
+//   npm run desk -- install [--mcp]  hook every Copilot CLI session on this PC (one file in ~/.copilot/hooks);
+//                                    --mcp also registers the af-desk MCP tools, where your company allows it
 //   npm run desk                     the page: every terminal's Copilot session as a thread
 //                                    [--port 4710] [--no-open] [--demo: five simulated threads, nothing real touched]
 //   npm run desk -- learn [--session <id>] [--force]   learn from ended sessions now (or one session)
 //   npm run desk -- knows [<folder>]  what a new session in that folder is told
-//   npm run desk -- note <terminal|all> <text>   a note to a terminal's session, read during its work
+//   node src/desk/cli.ts note <terminal|all|you> <text> [--from <terminal>]
+//                                    what a session runs to send a note (sessions are told this at their start)
+//   node src/desk/cli.ts threads [--from <terminal>]   the open terminals, as a session sees them
 //   npm run desk -- uninstall        stop recording
 //   npm run desk -- report [--days 7]  how often each repo's session stopped for you, and for what
 //   npm run desk -- tail [--n 20]    the last events, to check the hook is firing
@@ -23,6 +26,7 @@ const flag = (name: string) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 };
+const withoutFrom = args.filter((_, i) => args[i] !== "--from" && args[i - 1] !== "--from");
 
 switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
   case "open": {
@@ -53,8 +57,16 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
   }
   case "install": {
     const file = install(path.join(import.meta.dirname, "hook.ts"));
-    installMcp(path.join(import.meta.dirname, "mcp.ts"));
-    console.log(`installed ${file}\nadded the af-desk tools (list_terminals, send_note) to ${mcpConfigFile()}\nevery Copilot CLI session you start from now on is recorded to ${logFile()}`);
+    // Sessions reach each other with the desk's own command; the MCP server is only for
+    // a company that allows it. Without --mcp, an entry left by an earlier install goes.
+    const mcp = args.includes("--mcp");
+    if (mcp) installMcp(path.join(import.meta.dirname, "mcp.ts"));
+    const removed = !mcp && uninstallMcp();
+    console.log([
+      `installed ${file}`,
+      mcp ? `added the af-desk MCP tools (list_terminals, send_note) to ${mcpConfigFile()}` : `sessions reach each other with the desk's own command, no MCP server needed${removed ? ` (removed the af-desk entry from ${mcpConfigFile()})` : ""}`,
+      `every Copilot CLI session you start from now on is recorded to ${logFile()}`,
+    ].join("\n"));
     break;
   }
   case "uninstall":
@@ -85,11 +97,24 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     break;
   }
   case "note": {
-    // npm run desk -- note <terminal|all> <text...>: the same as the desk's note box.
+    // What a session runs: note <terminal|all|you> <text...> [--from <terminal>]. It's
+    // from the terminal it runs in; your own notes go from the desk's page.
     const { send } = await import("./notes.ts");
-    const { terminals } = await import("./mcp.ts");
-    const notes = send("you", args[0] ?? "", args.slice(1).join(" "), { known: terminals().map((t) => t.name) });
-    console.log(`sent to ${notes.map((n) => n.to).join(", ")}; delivered after its next tool call`);
+    const { terminals } = await import("./others.ts");
+    const { senderOf } = await import("./reach.ts");
+    const [to = "", ...words] = withoutFrom;
+    try {
+      const notes = send(senderOf(process.env, flag("from")), to, words.join(" "), { known: terminals().map((t) => t.name) });
+      console.log(`Sent to ${notes.map((n) => n.to).join(", ")}. ${notes.some((n) => n.to === "you") ? "The user sees it on the desk." : "It's read after that session's next tool call."}`);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+    }
+    break;
+  }
+  case "threads": {
+    const { threadList } = await import("./others.ts");
+    console.log(threadList(process.env.AF_DESK_TERMINAL?.trim() || flag("from") || ""));
     break;
   }
   case "tail": {
@@ -98,7 +123,7 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     break;
   }
   default:
-    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all> <text> | report [--days 7] | tail [--n 20]\nstate: ${deskHome()}`);
+    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | tail [--n 20]\nstate: ${deskHome()}`);
     process.exit(1);
 }
 

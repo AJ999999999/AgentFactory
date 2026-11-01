@@ -12,7 +12,7 @@ This branch is a variant for one setup: a Windows PC where Copilot CLI is the on
 
 ```powershell
 cd C:\workspace\AgentFactory
-npm run desk -- install      # once: a hooks file in %USERPROFILE%\.copilot\hooks and the af-desk tools in mcp-config.json; nothing goes into your repos
+npm run desk -- install      # once: a hooks file in %USERPROFILE%\.copilot\hooks; nothing goes into your repos, and no MCP server is needed
 npm run desk                 # the page, on http://127.0.0.1:4710; keep this window open while you work
 npm run desk -- --demo       # or first: five simulated threads, nothing real touched
 ```
@@ -45,8 +45,9 @@ Each row is one line: the thread's name and branch, its title (the first sentenc
 
 The sessions work the way threads in a Claude project do: each on its own, talking to another only when its work changes something the other depends on.
 
-- **From you:** the box under each terminal on the desk, "All terminals" for every open one, or `npm run desk -- note billing "use the finance schema"`.
-- **From a session:** every session has the desk's MCP tools, `list_terminals` (who's open, in which repo, what each was asked to do, what it's doing) and `send_note` (to a terminal by name, to `all`, or to `you`). A note to you shows on its thread and under "Between threads", with "Got it".
+- **From you:** the box under each thread on the desk, or "Between threads" for any open one or all of them. Only the page sends notes as yours.
+- **From a session**, with no MCP server (your company allows only the MCP servers it approved): when a session starts, the desk's hook tells it which other terminals are open, in which repo and on what, and the one command that reaches them, `node --no-warnings "C:\workspace\AgentFactory\src\desk\cli.ts" note <terminal|all|you> "<text>" --from billing` (and `threads` to look again). The hook lets exactly that command through without asking; one that chains, pipes, redirects or substitutes anything (`;`, `|`, `>`, `$`, parentheses) asks in the terminal like any other. A note from the command line is always from the terminal it runs in, never from you. A note to you shows on its thread and under "Between threads", with "Got it".
+- If your company does approve it later, `npm run desk -- install --mcp` also gives every session the same two things as MCP tools, `list_terminals` and `send_note`.
 - **Delivered while it works.** Copilot runs the desk's `postToolUse` hook after every tool call; the hook hands over the terminal's waiting notes as added context, once. A session that starts gets the notes that waited for it. The desk shows each note as waiting until then.
 - **A note never starts work.** An idle session reads its notes only after you give it your next prompt, so two sessions can't keep each other busy by writing back and forth: nothing runs unless you set it going.
 - **Whose words it is.** A note from you is marked as yours. A note from another terminal is marked as another agent's, to be weighed as a colleague's request against what you asked, the same rule Claude projects use between threads.
@@ -91,9 +92,9 @@ Every event of every session goes to `%USERPROFILE%\.af\desk\events.jsonl`, with
 ```powershell
 npm run desk -- report [--days 7]   # per repo: how often a session stopped for you, answered on the desk, settled by a standing answer, median wait
 npm run desk -- tail                # the last events, to check the hook fires
-npm run desk -- uninstall          # the hook and the af-desk tools
+npm run desk -- uninstall          # the hook (and the af-desk MCP tools, if you installed them)
 ```
 
 ## Checked against
 
-Copilot CLI 1.0.105's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference). Neither the `permissionRequest` input nor the session file's format is documented in full: the hook reads `toolName`/`toolInput` and their snake_case forms, and the session reader follows the `{type, data}` lines `copilot --output-format json` prints (the same reader as the harness's turn logs). On the first day, check with `tail` that asks are recorded with their tool names, with `learn --session <id>` that a real session's digest reads well (it's kept in `knowledge\sessions\`), and with `npm run desk -- note <terminal> "say hi"` that a working session mentions the note after its next tool call (the `postToolUse` hook's `additionalContext`) and that `/mcp` in a session lists `af-desk`.
+Copilot CLI 1.0.105's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference). Neither the `permissionRequest` input nor the session file's format is documented in full: the hook reads `toolName`/`toolInput` and their snake_case forms, and the session reader follows the `{type, data}` lines `copilot --output-format json` prints (the same reader as the harness's turn logs). On the first day, check with `tail` that asks are recorded with their tool names, with `learn --session <id>` that a real session's digest reads well (it's kept in `knowledge\sessions\`), with a note from the desk's page that a working session mentions it after its next tool call (the `postToolUse` hook's `additionalContext`), and by asking a new session "which other terminals are open?" that it was told at its start (`sessionStart`'s `additionalContext`).

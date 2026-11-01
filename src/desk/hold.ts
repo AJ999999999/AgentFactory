@@ -12,6 +12,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { deskHome, type DeskEvent } from "./log.ts";
+import { isDeskCommand } from "./reach.ts";
 
 export type DeskConfig = {
   // Tools Copilot is let to decide on its own: reads, which your rules nearly always allow.
@@ -113,7 +114,7 @@ export function commandOf(raw: Record<string, unknown>): string | undefined {
   return typeof c === "string" ? c : undefined;
 }
 
-export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "page" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode"; choice?: Choice; waitedMs?: number; note?: string };
+export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "desk-command" | "page" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode"; choice?: Choice; waitedMs?: number; note?: string };
 
 export type HoldDeps = { home?: string; now?: () => number; sleep?: (ms: number) => Promise<void>; pollMs?: number };
 
@@ -128,6 +129,8 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
   // `{}` means "go on as usual": Copilot applies its own rules and asks in the terminal.
   const usual = {};
   if (cfg.passThrough.includes(tool)) return { output: usual, by: "pass" };
+  // A session sending a note or listing the threads: the desk's own command, nothing chained on.
+  if (isDeskCommand(command)) return { output: { behavior: "allow" }, by: "desk-command", choice: "allow" };
   if (ruleMatches(readJson<Rule[]>(rulesFile(home), []), { terminal, tool, command })) return { output: { behavior: "allow" }, by: "rule", choice: "allow" };
   if ((readJson<Record<string, string>>(modesFile(home), {})[terminal] ?? cfg.asks) !== "desk") return { output: usual, by: "terminal-mode" };
   if (!deskOpen(home, now())) return { output: usual, by: "no-desk" };

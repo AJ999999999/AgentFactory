@@ -18,7 +18,7 @@ import type { EngagementDef, HEvent } from "../src/harness/types.ts";
 import { SystemClock } from "../src/harness/world.ts";
 import { panelFolders, readFolders, rememberFolder } from "../src/panel/folders.ts";
 import { answerFromBody, startPanel, Workspace } from "../src/panel/server.ts";
-import { askView, engagementView, runsOn, splitLabel } from "../src/panel/view.ts";
+import { askView, engagementView, flowView, runsOn, splitLabel } from "../src/panel/view.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
@@ -283,6 +283,27 @@ test("each agent says what it's doing, what runs it, what it may do and how its 
   assert.deepEqual([r.permissions, r.pending, r.now], [["repo:read", "web:read"], [], { state: "idle", open: 1, underway: 0 }], "once granted, it may do it");
   const without = project([...events, { id: "ans", at: T + 1, by: "partner", type: "ask_answered", ask: "ask-seat-research", answeredBy: "partner", choice: "without" }], policy);
   assert.equal(engagementView(without, "shop", now, []).goals[0].seats.find((x) => x.lane === "research")!.agent.pending[0].state, "declined");
+});
+
+test("a question says when its goal can't move without it, and how work is flowing around it", async () => {
+  const { h } = await workspace();
+  let s = await h.state();
+  const now = Date.now();
+  const budget = askView(s, "shop", [...s.asks.values()].find((a) => a.origin === "rule:budget_exhausted")!, now);
+  assert.equal(budget.goal, "h");
+  assert.equal(budget.stalls, true, "goal h has no turns left: its only work waits on the raise");
+  assert.equal(budget.stalledWith, 0, "the raise alone frees it");
+  const spend = askView(s, "shop", [...s.asks.values()].find((a) => a.origin === "rule:money")!, now);
+  assert.equal(spend.stalls, false, "the core loop can still be built while the ads wait");
+  assert.deepEqual(spend.history, [], "no turns on that work yet");
+  const g = flowView(s, "g", now);
+  assert.equal(g.ready, 1, "the core loop");
+  assert.equal(g.asking, 1, "the ads, held by the spending question");
+  assert.equal(g.person + g.running + g.held + g.asking + g.ready, 3, "every piece of live work is counted once");
+  assert.deepEqual(g.day, { added: 3, done: 0, failed: 0 });
+  await h.pause(true, "partner");
+  s = await h.state();
+  assert.equal(askView(s, "shop", s.asks.get(budget.id)!, now).stalls, false, "paused, nothing moves anyway: the question isn't what stops it");
 });
 
 test("what runs an agent, read from the model mapping", () => {

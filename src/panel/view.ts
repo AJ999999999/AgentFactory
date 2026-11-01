@@ -41,6 +41,11 @@ export type AskView = {
   budget?: Budget; // now, for a raise
   revision?: GoalRevision; // the goal as it stands, to edit into a new direction
   tests?: { id: string; text: string }; // what an observation counts toward
+  // The flow around the question, for deciding it: whether the goal can move at all
+  // without an answer, and how the turns that led here went.
+  stalls: boolean; // nothing else in its goal can run until a question is answered
+  stalledWith?: number; // when it stalls: the other open questions that hold the same goal's work
+  history: Array<{ at: number; result: TurnResult; reason?: string }>; // the work's last turns, newest first
 };
 
 // One agent: a seat as the partner sees it. What it's doing now, what runs it, what it
@@ -74,6 +79,16 @@ export type SeatView = { lane: string; role: string; generated: boolean; probati
 // the turns running on this PC. Both are optional, and the view stays pure.
 export type ViewContext = { models?: Record<string, string>; running?: Array<{ turn: string; todo: string; goal: string; text: string; startedAt: number }> };
 
+// How work is moving in a goal: where it sits now, and what changed in the last day.
+export type FlowView = {
+  running: number; // a turn or a job under way
+  ready: number; // could start at the next wake
+  asking: number; // held by an open question
+  held: number; // held by something else: a dependency, a limit, a pause
+  person: number; // a person's task under way
+  day: { added: number; done: number; failed: number };
+};
+
 export type WorkView = { id: string; text: string; lane: string; kind: string; state: "running" | "review" | "ready" | "held"; why?: string };
 
 export type GoalView = {
@@ -87,6 +102,7 @@ export type GoalView = {
   seats: SeatView[];
   work: WorkView[];
   workMore: number;
+  flow: FlowView;
   turnLog: Array<{ at: number; todo: string; text: string; result: TurnResult; granularity: Granularity; reasons: string[] }>;
 };
 
@@ -109,6 +125,35 @@ const WORK_SHOWN = 6;
 const TURNS_SHOWN = 48;
 const STATE_ORDER = { running: 0, review: 1, ready: 2, held: 3 } as const;
 const AGENT_RECENT = 12;
+const DAY_MS = 86_400_000;
+const HISTORY_SHOWN = 5;
+
+// Which live work open questions hold, by todo id.
+function askedWork(s: State): Set<string> {
+  const out = new Set<string>();
+  for (const a of s.asks.values()) if (a.status === "open") for (const t of heldBy(s, a)) out.add(t.id);
+  return out;
+}
+
+const liveWork = (s: State, goal: string) => [...s.todos.values()].filter((t) => t.goal === goal && ["open", "running", "review", "blocked"].includes(t.status));
+
+export function flowView(s: State, goal: string, now: number, asked = askedWork(s)): FlowView {
+  const f: FlowView = { running: 0, ready: 0, asking: 0, held: 0, person: 0, day: { added: 0, done: 0, failed: 0 } };
+  for (const t of liveWork(s, goal)) {
+    const w = workView(s, t, now);
+    if (w.state === "running") t.kind === "action" ? f.person++ : f.running++;
+    else if (asked.has(t.id)) f.asking++;
+    else if (w.state === "ready") f.ready++;
+    else f.held++; // a review in progress, or held by something other than a question
+  }
+  for (const t of s.todos.values()) {
+    if (t.goal !== goal) continue;
+    if (t.addedAt > now - DAY_MS) f.day.added++;
+    if (t.doneAt !== undefined && t.doneAt > now - DAY_MS) f.day.done++;
+  }
+  f.day.failed = s.turns.filter((t) => t.goal === goal && t.at > now - DAY_MS && (t.result === "host_failure" || t.result === "validation_failed")).length;
+  return f;
+}
 
 // "Send back (answer with what to fix)" -> "Send back", with "What to fix" as the
 // prompt in the note: the page asks for what the parenthesis describes. Other
@@ -129,7 +174,7 @@ export function optionNeeds(a: AskState, o: AskState["options"][number]): Needs 
   return undefined;
 }
 
-export function askView(s: State, engagement: string, a: AskState): AskView {
+export function askView(s: State, engagement: string, a: AskState, now = s.lastAt, asked = askedWork(s)): AskView {
   const g = s.goals.get(a.goal);
   const t = a.todo ? s.todos.get(a.todo) : undefined;
   const tests = t?.tests ? findAssumption(s, a.goal, t.tests) : null;
@@ -174,7 +219,26 @@ export function askView(s: State, engagement: string, a: AskState): AskView {
     ...(g && options.some((o) => o.needs === "budget") ? { budget: g.def.budget } : {}),
     ...(g && options.some((o) => o.needs === "revision") ? { revision: { objective: g.def.objective, assumptions: g.def.assumptions, success: g.def.success, kill: g.def.kill, todos: [] } } : {}),
     ...(tests ? { tests: { id: tests.def.id, text: tests.def.text } } : {}),
+    stalls: stalls(s, a, now, asked),
+    ...(stalls(s, a, now, asked) ? { stalledWith: [...s.asks.values()].filter((x) => x.id !== a.id && x.status === "open" && x.goal === a.goal && heldBy(s, x).length).length } : {}),
+    history: history(s, a),
   };
+}
+
+// The goal can't move without an answer: it's active, not paused, this question holds
+// some of its work, and none of its work can run or is running. A person's task under
+// way doesn't count as moving: it waits on someone too.
+function stalls(s: State, a: AskState, now: number, asked: Set<string>): boolean {
+  const g = s.goals.get(a.goal);
+  if (!g || g.status !== "active" || s.paused || !heldBy(s, a).length) return false;
+  return !liveWork(s, a.goal).some((t) => !asked.has(t.id) && (t.status === "running" ? t.kind !== "action" : workView(s, t, now).state === "ready"));
+}
+
+// The turns behind the question: on its own work, or else on the lane it holds.
+function history(s: State, a: AskState): AskView["history"] {
+  const lane = a.lane ? seatKey(a.goal, a.lane) : undefined;
+  const mine = s.turns.filter((t) => (a.todo ? t.todo === a.todo : lane !== undefined && (t.seat ?? seatKey(t.goal, s.todos.get(t.todo)?.lane ?? "")) === lane));
+  return mine.slice(-HISTORY_SHOWN).reverse().map((t) => ({ at: t.at, result: t.result, ...(t.reasons[0] ? { reason: t.reasons[0].slice(0, 240) } : {}) }));
 }
 
 function workView(s: State, t: TodoState, now: number): WorkView {
@@ -244,6 +308,7 @@ export function goalView(s: State, goalId: string, now: number, ctx: ViewContext
     beliefs: beliefs(s, goalId).map((b) => ({ id: b.def.id, text: b.def.text, status: b.status, category: b.def.category, loadBearing: !!b.def.loadBearing, riskiest: ph?.assumption === b.def.id })),
     seats: [...s.seats.values()].filter((x) => x.goal === goalId).map((x) => ({ lane: x.lane, role: x.role, generated: x.generated, probation: x.probation, accepted: x.accepted, rejected: x.rejected, promoteAfter: s.policy.probation?.promoteAfter ?? 3, agent: agentView(s, x, now, ctx) })),
     work: work.slice(0, WORK_SHOWN),
+    flow: flowView(s, goalId, now),
     workMore: Math.max(0, work.length - WORK_SHOWN),
     turnLog: s.turns.filter((t) => t.goal === goalId).slice(-TURNS_SHOWN).map((t) => ({ at: t.at, todo: t.todo, text: s.todos.get(t.todo)?.text ?? t.todo, result: t.result, granularity: t.granularity, reasons: t.reasons.slice(0, 3).map((r) => r.slice(0, 240)) })),
   };
@@ -252,6 +317,7 @@ export function goalView(s: State, goalId: string, now: number, ctx: ViewContext
 export function engagementView(s: State, id: string, now: number, runners: RunnerView[], ctx: ViewContext = {}): EngagementView {
   // Goals in the order they were opened; closed ones after the active ones.
   const goals = [...s.goals.values()].sort((a, b) => Number(a.status !== "active") - Number(b.status !== "active") || a.openedAt - b.openedAt);
-  const asks = [...s.asks.values()].filter((a) => a.status === "open").map((a) => askView(s, id, a));
+  const asked = askedWork(s);
+  const asks = [...s.asks.values()].filter((a) => a.status === "open").map((a) => askView(s, id, a, now, asked));
   return { id, title: s.engagement?.title ?? id, paused: s.paused, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason, kind: c.kind })), goals: goals.map((g) => goalView(s, g.id, now, ctx)), asks, runners };
 }

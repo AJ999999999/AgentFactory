@@ -2,8 +2,9 @@
 // projection of the event log like everything else, never a second copy of the state.
 import type { LiveView } from "../harness/live.ts";
 import { heldBy } from "../harness/harness.ts";
-import type { AskState, State, TodoState } from "../harness/project.ts";
-import { beliefs, findAssumption } from "../harness/project.ts";
+import type { AskState, SeatState, State, TodoState } from "../harness/project.ts";
+import { beliefs, capacityFor, findAssumption, seatKey, seatPermissions } from "../harness/project.ts";
+import { vendorOfModel } from "../harness/agents.ts";
 import { blockers, phase } from "../harness/select.ts";
 import { irreversibleEffect } from "../harness/types.ts";
 import type { AskKind, BeliefStatus, Budget, GoalRevision, Granularity, TurnResult } from "../harness/types.ts";
@@ -42,6 +43,37 @@ export type AskView = {
   tests?: { id: string; text: string }; // what an observation counts toward
 };
 
+// One agent: a seat as the partner sees it. What it's doing now, what runs it, what it
+// may do, and how its turns have gone.
+export type AgentNow =
+  | { state: "running"; turn: string; text: string; since: number }
+  | { state: "waiting"; vendor: string; until: number; kind: "limit" | "unreachable" | "setup"; reason: string }
+  | { state: "asking"; why: string } // a permission it needs waits on the goal's owner
+  // Nothing of its runs on this PC now. open: work in its lane not started; underway:
+  // started (a job, a person's task, a review, or a turn on another PC).
+  | { state: "idle"; open: number; underway: number };
+
+export type AgentView = {
+  key: string; // "<goal>/<lane>"
+  template: string;
+  model: string; // the library's placeholder
+  // What the agents policy maps that placeholder to: the CLI, and its model ("" for
+  // that CLI's default). Absent when the panel wasn't given the mapping.
+  runsOn?: { cli: string; model: string };
+  charter?: string;
+  permissions: string[]; // what it may do now
+  pending: Array<{ permission: string; decision: string; state: "asking" | "declined" }>;
+  now: AgentNow;
+  turns: { total: number; done: number; failed: number; stopped: number; lastAt?: number };
+  recent: Array<{ at: number; result: TurnResult; granularity: Granularity; text: string; reason?: string }>; // newest first
+};
+
+export type SeatView = { lane: string; role: string; generated: boolean; probation: boolean; accepted: number; rejected: number; promoteAfter: number; agent: AgentView };
+
+// What the view needs besides the state: the model mapping from the agents policy, and
+// the turns running on this PC. Both are optional, and the view stays pure.
+export type ViewContext = { models?: Record<string, string>; running?: Array<{ turn: string; todo: string; goal: string; text: string; startedAt: number }> };
+
 export type WorkView = { id: string; text: string; lane: string; kind: string; state: "running" | "review" | "ready" | "held"; why?: string };
 
 export type GoalView = {
@@ -52,7 +84,7 @@ export type GoalView = {
   turns: { spent: number; budget?: number; warnAt: number };
   usd: { spent: number; budget?: number };
   beliefs: Array<{ id: string; text: string; status: BeliefStatus; category: string; loadBearing: boolean; riskiest: boolean }>;
-  seats: Array<{ lane: string; role: string; generated: boolean; probation: boolean; accepted: number; rejected: number; promoteAfter: number }>;
+  seats: SeatView[];
   work: WorkView[];
   workMore: number;
   turnLog: Array<{ at: number; todo: string; text: string; result: TurnResult; granularity: Granularity; reasons: string[] }>;
@@ -76,6 +108,7 @@ export type EngagementView = {
 const WORK_SHOWN = 6;
 const TURNS_SHOWN = 48;
 const STATE_ORDER = { running: 0, review: 1, ready: 2, held: 3 } as const;
+const AGENT_RECENT = 12;
 
 // "Send back (answer with what to fix)" -> "Send back", with "What to fix" as the
 // prompt in the note: the page asks for what the parenthesis describes. Other
@@ -153,7 +186,50 @@ function workView(s: State, t: TodoState, now: number): WorkView {
   return why.length ? { ...base, state: "held", why: why[0] } : { ...base, state: "ready" };
 }
 
-export function goalView(s: State, goalId: string, now: number): GoalView {
+// "claude:opus" -> Claude Code on opus; "" -> Copilot's default; "gpt-5" -> Copilot on gpt-5.
+export function runsOn(mapped: string): { cli: string; model: string } {
+  const cli = vendorOfModel(mapped);
+  return { cli, model: cli === "copilot" ? mapped : mapped.slice(cli.length + 1) };
+}
+
+export function agentView(s: State, seat: SeatState, now: number, ctx: ViewContext = {}): AgentView {
+  const inLane = (t: { goal: string; lane: string }) => t.goal === seat.goal && t.lane === seat.lane;
+  // Older turn records don't name their seat: the todo's lane says whose turn it was.
+  const mine = s.turns.filter((t) => (t.seat ?? (s.todos.get(t.todo) ? seatKey(t.goal, s.todos.get(t.todo)!.lane) : "")) === seat.key);
+  const ask = seat.ask ? s.asks.get(seat.ask) : undefined;
+  const granted = ask?.status === "answered" && ask.choice === "grant";
+  const pending = granted ? [] : seat.pending.map((p) => ({ ...p, state: (ask?.status === "open" ? "asking" : "declined") as "asking" | "declined" }));
+  const live = (ctx.running ?? []).find((r) => { const t = s.todos.get(r.todo); return !!t && inLane(t); });
+  const cap = capacityFor(s, seat.model, now);
+  const lane = [...s.todos.values()].filter((t) => inLane(t) && t.status === "open");
+  let state: AgentNow;
+  if (live) state = { state: "running", turn: live.turn, text: live.text, since: live.startedAt };
+  // The owner's decision holds the whole lane, so it comes before a usage limit.
+  else if (ask?.status === "open") state = { state: "asking", why: ask.question };
+  else if (cap && lane.length) state = { state: "waiting", vendor: cap.vendor, until: cap.until, kind: cap.kind, reason: cap.reason };
+  else state = { state: "idle", open: lane.length, underway: [...s.todos.values()].filter((t) => inLane(t) && (t.status === "running" || t.status === "review")).length };
+  const mapped = ctx.models?.[seat.model];
+  return {
+    key: seat.key,
+    template: seat.template,
+    model: seat.model,
+    ...(mapped !== undefined ? { runsOn: runsOn(mapped) } : {}),
+    ...(seat.charter ? { charter: seat.charter } : {}),
+    permissions: seatPermissions(s, seat),
+    pending,
+    now: state,
+    turns: {
+      total: mine.length,
+      done: mine.filter((t) => t.result === "completed").length,
+      failed: mine.filter((t) => t.result === "host_failure" || t.result === "validation_failed").length,
+      stopped: mine.filter((t) => t.result === "stopped").length,
+      ...(mine.length ? { lastAt: mine[mine.length - 1].at } : {}),
+    },
+    recent: mine.slice(-AGENT_RECENT).reverse().map((t) => ({ at: t.at, result: t.result, granularity: t.granularity, text: s.todos.get(t.todo)?.text ?? t.todo, ...(t.reasons[0] ? { reason: t.reasons[0].slice(0, 240) } : {}) })),
+  };
+}
+
+export function goalView(s: State, goalId: string, now: number, ctx: ViewContext = {}): GoalView {
   const g = s.goals.get(goalId)!;
   const ph = phase(s, goalId);
   const live = [...s.todos.values()].filter((t) => t.goal === goalId && ["open", "running", "review", "blocked"].includes(t.status));
@@ -166,16 +242,16 @@ export function goalView(s: State, goalId: string, now: number): GoalView {
     turns: { spent: g.spent.turns, ...(g.def.budget.turns !== undefined ? { budget: g.def.budget.turns } : {}), warnAt: s.policy.budget.warnAt },
     usd: { spent: g.spent.usd, ...(g.def.budget.usd !== undefined ? { budget: g.def.budget.usd } : {}) },
     beliefs: beliefs(s, goalId).map((b) => ({ id: b.def.id, text: b.def.text, status: b.status, category: b.def.category, loadBearing: !!b.def.loadBearing, riskiest: ph?.assumption === b.def.id })),
-    seats: [...s.seats.values()].filter((x) => x.goal === goalId).map((x) => ({ lane: x.lane, role: x.role, generated: x.generated, probation: x.probation, accepted: x.accepted, rejected: x.rejected, promoteAfter: s.policy.probation?.promoteAfter ?? 3 })),
+    seats: [...s.seats.values()].filter((x) => x.goal === goalId).map((x) => ({ lane: x.lane, role: x.role, generated: x.generated, probation: x.probation, accepted: x.accepted, rejected: x.rejected, promoteAfter: s.policy.probation?.promoteAfter ?? 3, agent: agentView(s, x, now, ctx) })),
     work: work.slice(0, WORK_SHOWN),
     workMore: Math.max(0, work.length - WORK_SHOWN),
     turnLog: s.turns.filter((t) => t.goal === goalId).slice(-TURNS_SHOWN).map((t) => ({ at: t.at, todo: t.todo, text: s.todos.get(t.todo)?.text ?? t.todo, result: t.result, granularity: t.granularity, reasons: t.reasons.slice(0, 3).map((r) => r.slice(0, 240)) })),
   };
 }
 
-export function engagementView(s: State, id: string, now: number, runners: RunnerView[]): EngagementView {
+export function engagementView(s: State, id: string, now: number, runners: RunnerView[], ctx: ViewContext = {}): EngagementView {
   // Goals in the order they were opened; closed ones after the active ones.
   const goals = [...s.goals.values()].sort((a, b) => Number(a.status !== "active") - Number(b.status !== "active") || a.openedAt - b.openedAt);
   const asks = [...s.asks.values()].filter((a) => a.status === "open").map((a) => askView(s, id, a));
-  return { id, title: s.engagement?.title ?? id, paused: s.paused, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason, kind: c.kind })), goals: goals.map((g) => goalView(s, g.id, now)), asks, runners };
+  return { id, title: s.engagement?.title ?? id, paused: s.paused, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason, kind: c.kind })), goals: goals.map((g) => goalView(s, g.id, now, ctx)), asks, runners };
 }

@@ -14,7 +14,7 @@ It opens a page on this PC (`http://127.0.0.1:4700`) with every engagement in th
   - per goal, turns spent against the budget (click the total to change it)
   - one mark per assumption, with the riskiest open one spelled out
   - open work, running first
-  - the team, with roles on probation dashed
+  - the team, with roles on probation dashed. Click it to open each agent: what it's doing now (running a turn here, waiting out a usage limit, waiting on your decision about a permission, or how much of its work is under way or not started), which CLI and model run it, whether it's a library role or a generated one on probation, what it may do and what still waits on you, and its last turns with why each failed. The CLI and model come from `policy/harness-agents.json`; a loop started with `--models` overrides them, and the panel can't see that.
   - the last turns, with failed and thrown-out ones in red
 
 It reads the same event log as `status` and writes through the same code as `answer`, so it never holds state of its own. Writes from the loop, the command line and the panel go through one checkout under a lock shared across processes. It listens on 127.0.0.1 only, refuses requests addressed to any other host, and every call carries a token only the page it served knows. `npm run panel -- --demo` opens it on three simulated engagements.

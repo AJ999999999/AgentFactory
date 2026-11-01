@@ -1,9 +1,9 @@
-# The desk: one page for all your Copilot CLI terminals
+# The desk: all your Copilot CLI terminals as threads
 
-This branch is a variant for one setup: a Windows PC where Copilot CLI is the only agent, with several PowerShell terminals open, each in a different repo, each running an interactive `copilot` session you drive by hand. The desk adds three things on top of Copilot:
+This branch is a variant for one setup: a Windows PC where Copilot CLI is the only agent, with several PowerShell terminals open, each in a different repo, each running an interactive `copilot` session you work in by hand. The desk works the way a Claude project does: the main page lists every session as a thread, and the work happens in the thread itself, here the terminal. On top of Copilot it adds:
 
-- **One page for everything waiting on you.** It looks and works like the partner's panel: the permission asks from every terminal, Copilot's questions, sessions waiting for your next prompt, each terminal's live session, and a button to jump to its window. Every terminal stays yours to type in.
-- **Notes between terminals.** You, or the session in one terminal, can send another terminal's session a note ("I renamed the API field you call"). It's read while that session works, marked with whose words it is.
+- **Every session as a thread.** Each is titled by what you first asked it, and grouped by what it needs from you: needs you, your turn, working, closed. A working thread says what it's doing now; each says what it changed. One click takes you to its terminal.
+- **Notes between threads.** You, or the session in one terminal, can send another session a note ("I renamed the API field you call"). It's read while that session works, marked with whose words it is, and a session can see what the others were asked to do.
 - **What your sessions teach, kept.** Each finished session is read from Copilot's own session file, analysed, and what will still be true next time (how to run the tests, a rule you corrected Copilot on, a trap and its fix, how you like to work) goes into a git repo of shared memory. The next session in that repo is told it before your first prompt.
 
 (If your company allowed Copilot's own [remote control](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-remote-control), `/remote` would answer prompts from github.com. Jack's company seat doesn't allow it.)
@@ -14,33 +14,37 @@ This branch is a variant for one setup: a Windows PC where Copilot CLI is the on
 cd C:\workspace\AgentFactory
 npm run desk -- install      # once: a hooks file in %USERPROFILE%\.copilot\hooks and the af-desk tools in mcp-config.json; nothing goes into your repos
 npm run desk                 # the page, on http://127.0.0.1:4710; keep this window open while you work
-npm run desk -- --demo       # or first: three simulated terminals, nothing real touched
+npm run desk -- --demo       # or first: five simulated threads, nothing real touched
 ```
 
-In each terminal, start Copilot with a name:
+Start each session with a name, in the repo's terminal:
 
 ```powershell
 C:\workspace\AgentFactory\scripts\windows\copilot-here.ps1 -Name billing   # any copilot flags after it
 ```
 
-The name becomes the window title and the terminal's name on the page; without it the repo folder's name is used. Click "Notify me" once to get a system notification when a terminal asks while you're elsewhere.
+or from the page: "Start a thread" opens a PowerShell window in the folder you pick, running the same thing; you type your first prompt there. The name becomes the window title and the thread's name; without it the repo folder's name is used. Click "Notify me" once to get a system notification when a thread needs you while you're elsewhere.
 
 ## The page
 
-**Left: what's waiting on you**, most blocking first.
-- **A permission ask** (amber; red after five minutes): the command or tool, with Allow, Deny with a reason Copilot reads and works around, "Allow `npm run …` in billing from now on", and "Answer in the terminal". A standing answer for a command covers the same program and first word only, and is never offered for a line that chains, pipes, redirects or substitutes (`;`, `&`, `|`, `>`, `` ` ``, `$(`), so `npm run build; rm -rf ~` always asks.
-- **A question from Copilot** (blue) and **an ask open in the terminal itself**: what it asked, and a button to go there.
-- **Something learned, to check** (purple): what a session taught, why the analysis thinks so, and Right, Right in your own words, or Wrong (with what's wrong, optional).
-- **Your turn** (green): a session finished and waits for your next prompt.
+**Left: the threads**, grouped the way a Claude project groups its threads.
+- **Needs you** (amber for a permission ask, blue for a question), longest waiting first: what it wants to run, or what it asked. "Go to ↗" brings its terminal forward; answer there.
+- **Your turn** (green): it finished and waits for your next prompt, with the last thing it said.
+- **Working** (grey), most recently active first: what it's doing now (what Copilot says it's doing, and the command it's running).
+- **Closed today**, muted.
 
-**Right: each terminal**, like an engagement on the panel: its state, the end of its session as it happens (read from Copilot's session file), where its asks are answered (here or in the terminal), Go to terminal, what's known about its repo (filled dots are confirmed, hollow ones are guesses), and its standing answers with × to take one back. At the bottom, what learning is doing and the last analyses.
+Each thread shows its title (the first sentence of your first prompt), its repo and branch, and a note it sent you, if unread. Open one for the rest: what it did (prompts, files edited, commands run, failures), the end of its session as it happens, what's known about its repo (filled dots are confirmed, hollow ones are guesses), its notes, and its standing answers with × to take one back.
 
-## Notes between terminals
+**Right:** start a thread; the notes between threads, with a box to send one to any thread or all of them, and "Got it" for one sent to you; what sessions taught, to check (Right, Right in your own words, or Wrong); what learning is doing.
 
-The terminals work the way threads in a Claude project do: each on its own, talking to another only when its work changes something the other depends on.
+**Permission asks are answered in the terminal**, where you work. The desk shows which thread is waiting and on what. For a terminal you'd rather answer from the desk (say, one you leave running in the background), open its thread and switch "Its asks" to "answered here", or set `"asks": "desk"` in `%USERPROFILE%\.af\desk\config.json` for all of them; see below.
+
+## Notes between threads
+
+The sessions work the way threads in a Claude project do: each on its own, talking to another only when its work changes something the other depends on.
 
 - **From you:** the box under each terminal on the desk, "All terminals" for every open one, or `npm run desk -- note billing "use the finance schema"`.
-- **From a session:** every session has the desk's MCP tools, `list_terminals` (who's open, in which repo, doing what) and `send_note` (to a terminal by name, to `all`, or to `you`). A note to you shows on the left of the desk with "Got it" and "Go to" that terminal.
+- **From a session:** every session has the desk's MCP tools, `list_terminals` (who's open, in which repo, what each was asked to do, what it's doing) and `send_note` (to a terminal by name, to `all`, or to `you`). A note to you shows on its thread and under "Between threads", with "Got it".
 - **Delivered while it works.** Copilot runs the desk's `postToolUse` hook after every tool call; the hook hands over the terminal's waiting notes as added context, once. A session that starts gets the notes that waited for it. The desk shows each note as waiting until then.
 - **A note never starts work.** An idle session reads its notes only after you give it your next prompt, so two sessions can't keep each other busy by writing back and forth: nothing runs unless you set it going.
 - **Whose words it is.** A note from you is marked as yours. A note from another terminal is marked as another agent's, to be weighed as a colleague's request against what you asked, the same rule Claude projects use between threads.
@@ -67,13 +71,15 @@ npm run desk -- knows C:\work\billing    # what a new session there is told
 
 `config.json` takes `"learn": "off"` to stop analysing, `"model"` for the analysis's Copilot model, and `"timeoutSec"` (600).
 
-## How the asks work, and their limits
+## Asks answered on the desk
 
-Copilot CLI runs a `permissionRequest` hook before it would ask you, and takes what the hook prints as the answer. The desk's hook writes the ask under `%USERPROFILE%\.af\desk\asks\` and waits for your answer from the page.
+For a terminal set to "answered here", Copilot CLI runs a `permissionRequest` hook before it would ask you, and takes what the hook prints as the answer. The desk's hook writes the ask under `%USERPROFILE%\.af\desk\asks\` and waits for your answer from the page.
 
 - **One place at a time.** While an ask waits on the page, the terminal shows no prompt for it. That's why there's "answer in the terminal", and why nothing is held when the desk isn't running: stop `npm run desk` and every terminal asks for itself again within seconds. An ask nobody answers goes to the terminal after 20 minutes (`holdSec`).
 - **Reads aren't held.** The hook runs before Copilot's own rules, so read-only tools (`view`, `grep`, `glob` and the like; `passThrough` in the config) go straight to them. Everything else is held, including tools your own Copilot settings would have allowed; answer those once with "from now on".
-- **Questions and new prompts stay in the terminal.** Copilot's hooks can't answer its multiple-choice questions or type your next instruction into a waiting session without tricks that change what Copilot sees. The page shows them and takes you to the window. Go to terminal finds the window by the title `copilot-here.ps1` gave it, so keep one window per repo: Windows can't bring a particular Windows Terminal tab forward from outside.
+- **Questions and new prompts stay in the terminal.** Copilot's hooks can't answer its multiple-choice questions or type your next instruction into a waiting session. The page shows them and takes you to the window.
+
+**Go to** finds a terminal's window by the title `copilot-here.ps1` gave it ("copilot: billing"), so keep one window per repo: Windows can't bring a particular Windows Terminal tab forward from outside.
 - **If the hook breaks, Copilot goes on as usual.** It always exits cleanly; at worst Copilot asks in the terminal and the session starts without what's known.
 
 ## The record

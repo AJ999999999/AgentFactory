@@ -184,14 +184,14 @@ test("the desk confirms and retracts guesses, and learns from a session on reque
       await new Promise((r) => setTimeout(r, 50));
     }
     assert.equal(s.guesses.length, 2);
-    assert.equal(s.terminals[0].tail.length > 0, true, "the terminal shows the end of its session");
+    assert.equal(s.threads[0].tail.length > 0, true, "the terminal shows the end of its session");
     const push = s.guesses.find((g: { subject: string }) => g.subject === "git.push");
     const tc = s.guesses.find((g: { subject: string }) => g.subject === "test.command");
     assert.equal((await fetch(`${base}/api/know`, { method: "POST", headers: h, body: JSON.stringify({ principal: push.principal, entry: push.entry, verdict: "right" }) })).status, 200);
     assert.equal((await fetch(`${base}/api/know`, { method: "POST", headers: h, body: JSON.stringify({ principal: tc.principal, entry: tc.entry, verdict: "wrong", text: "it's make test" }) })).status, 200);
     s = await state();
     assert.deepEqual(s.guesses, []);
-    assert.equal(s.terminals[0].knowledge.confirmed, 0);
+    assert.equal(s.threads[0].knowledge.confirmed, 0);
     assert.match(contextFor(repo, home)!, /How I work \(from earlier sessions\)[\s\S]*I push myself/);
     assert.equal((await fetch(`${base}/api/know`, { method: "POST", headers: h, body: JSON.stringify({ principal: tc.principal, entry: "nope", verdict: "right" }) })).status, 400);
   } finally {

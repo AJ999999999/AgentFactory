@@ -109,7 +109,12 @@ test("the report counts per repo how often a session stopped for you, apart from
 
 // ---- Holding permission asks for the desk ----
 
-const deskOn = (home: string) => writeJson(pageFile(home), { at: Date.now() });
+// Asks answered on the desk (the default is the terminal), with the desk running.
+const asksHere = (home: string) => writeJson(path.join(home, "config.json"), { asks: "desk" });
+const deskOn = (home: string) => {
+  asksHere(home);
+  writeJson(pageFile(home), { at: Date.now() });
+};
 // A clock where each wait is a minute, with the desk still beating.
 const fastClock = (home: string) => {
   let t = Date.now();
@@ -161,8 +166,20 @@ test("'allow here from now on' answers this ask and every later one for that too
   assert.equal((await hold(ask({ cwd: "/w/web" }), { home, ...fastClock(home) })).by, "timeout");
 });
 
+test("asks go to the terminal unless you chose the desk for that terminal, or for all", async () => {
+  const home = tmp("default");
+  writeJson(pageFile(home), { at: Date.now() });
+  assert.equal((await hold(ask(), { home })).by, "terminal-mode", "your work happens in the terminal");
+  writeJson(modesFile(home), { billing: "desk" });
+  const held = hold(ask(), { home, pollMs: 5 });
+  await answerWhenAsked(home, "allow");
+  assert.equal((await held).by, "page");
+  assert.equal((await hold(ask({ cwd: "/w/web" }), { home })).by, "terminal-mode", "only the terminal you chose");
+});
+
 test("without the desk running nothing is held: the terminal asks as if the desk weren't there", async () => {
   const home = tmp("off");
+  asksHere(home);
   const r = await hold(ask(), { home });
   assert.deepEqual([r.output, r.by], [{}, "no-desk"]);
   writeJson(pageFile(home), { at: Date.now() - 60_000 });
@@ -247,6 +264,7 @@ test("a new session in a terminal takes over its row", () => {
 test("the desk's page refuses other hosts and calls without its token, and answers through the same files the hook reads", async () => {
   const home = tmp("server");
   const jumped: string[] = [];
+  asksHere(home);
   const desk = await startDesk({ home, port: 0, jump: async (t) => (jumped.push(t), true) });
   try {
     const base = desk.url.replace(/\/$/, "");
@@ -258,10 +276,10 @@ test("the desk's page refuses other hosts and calls without its token, and answe
 
     // While the desk runs, the hook holds; the page sees the ask and answers it.
     const held = hold(ask(), { home, pollMs: 5 });
-    let st: { version: string; terminals: Array<{ name: string; asks: Array<{ id: string }> }> };
+    let st: { version: string; threads: Array<{ name: string; asks: Array<{ id: string }> }> };
     do st = await (await fetch(`${base}/api/state?wait=0`, { headers: h })).json();
-    while (!st.terminals[0]?.asks.length);
-    const id = st.terminals[0].asks[0].id;
+    while (!st.threads[0]?.asks.length);
+    const id = st.threads[0].asks[0].id;
     // A waiting request returns as soon as something changes.
     const waiting = fetch(`${base}/api/state?since=${st.version}&wait=20000`, { headers: h }).then((r) => r.json());
     const res = await fetch(`${base}/api/answer`, { method: "POST", headers: h, body: JSON.stringify({ ask: id, choice: "always" }) });

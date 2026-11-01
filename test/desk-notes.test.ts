@@ -136,7 +136,7 @@ test("on the desk you send a terminal a note and mark a note to you as read", as
     assert.equal((await fetch(`${base}/api/note`, { method: "POST", headers: h, body: JSON.stringify({ to: "nobody", text: "x" }) })).status, 400);
     s = await (await fetch(`${base}/api/state?wait=0`, { headers: h })).json();
     assert.deepEqual(s.forYou, []);
-    assert.deepEqual(s.terminals[0].notes.map((n: { from: string; text: string }) => [n.from, n.text]), [["you", "use finance"], ["billing", "needs finance sign-off"]]);
+    assert.deepEqual(s.threads[0].notes.map((n: { from: string; text: string }) => [n.from, n.text]), [["you", "use finance"], ["billing", "needs finance sign-off"]]);
     assert.equal(claim("billing", "s-billing", { home }).length, 1);
   } finally {
     await desk.close();

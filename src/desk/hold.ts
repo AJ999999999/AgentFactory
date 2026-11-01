@@ -1,11 +1,14 @@
-// Holding a permission request for the desk's page. Copilot runs its `permissionRequest`
-// hook before it would ask you in the terminal; whatever the hook prints is the answer.
-// So the hook writes the ask where the page can see it and waits for your answer.
+// Holding a permission request for the desk's page, for a terminal you chose to answer
+// there. Copilot runs its `permissionRequest` hook before it would ask you in the
+// terminal; whatever the hook prints is the answer. So the hook writes the ask where the
+// page can see it and waits for your answer.
 //
 // While it waits, the terminal shows no prompt: an ask is answered on the page or in the
-// terminal, never both. So the hook only holds while the desk runs, never for a
-// terminal you've set to "answer there", and lets go (Copilot then asks in the terminal)
-// when you click "answer in the terminal", the desk stops, or the wait runs out.
+// terminal, never both. Your work happens in the terminal, so asks go there unless you
+// set a terminal (or `asks` in the config) to "desk"; and the hook only holds while the
+// desk runs, and lets go (Copilot then asks in the terminal) when you click "answer in
+// the terminal", the desk stops, or the wait runs out. Standing answers you gave on the
+// desk apply either way.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { deskHome, type DeskEvent } from "./log.ts";
@@ -15,11 +18,14 @@ export type DeskConfig = {
   passThrough: string[];
   // How long an ask waits on the page before the terminal gets it.
   holdSec: number;
+  // Where permission asks are answered, for terminals you haven't set either way.
+  asks: "terminal" | "desk";
 };
 
 export const DEFAULTS: DeskConfig = {
   passThrough: ["view", "read", "glob", "grep", "rg", "ls", "list_directory", "report_intent", "think", "fetch_copilot_cli_documentation"],
   holdSec: 1200,
+  asks: "terminal",
 };
 
 // Copilot kills a hook after its timeoutSec; this leaves the hold room to end first.
@@ -123,7 +129,7 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
   const usual = {};
   if (cfg.passThrough.includes(tool)) return { output: usual, by: "pass" };
   if (ruleMatches(readJson<Rule[]>(rulesFile(home), []), { terminal, tool, command })) return { output: { behavior: "allow" }, by: "rule", choice: "allow" };
-  if (readJson<Record<string, string>>(modesFile(home), {})[terminal] === "terminal") return { output: usual, by: "terminal-mode" };
+  if ((readJson<Record<string, string>>(modesFile(home), {})[terminal] ?? cfg.asks) !== "desk") return { output: usual, by: "terminal-mode" };
   if (!deskOpen(home, now())) return { output: usual, by: "no-desk" };
 
   const start = now();

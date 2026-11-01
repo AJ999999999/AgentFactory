@@ -26,7 +26,9 @@ const KIND: Record<string, TerminalState> = { permission_prompt: "waiting for pe
 // Most urgent first: an ask held for the desk blocks a session the longest.
 const ORDER: TerminalState[] = ["waiting on the desk", "asking you", "waiting for permission", "waiting for your next prompt", "working", "closed"];
 
-export function deskView(log: DeskEvent[], asks: Ask[], rules: Rule[], modes: Record<string, string>, now = Date.now(), startOfDay = new Date(now).setHours(0, 0, 0, 0)): TerminalView[] {
+// `askMode`: where a terminal's permission asks go unless you set it for that terminal.
+export function deskView(log: DeskEvent[], asks: Ask[], rules: Rule[], modes: Record<string, string>, now = Date.now(), startOfDay = new Date(now).setHours(0, 0, 0, 0), askMode: "desk" | "terminal" = "terminal"): TerminalView[] {
+  const modeOf = (name: string): "desk" | "terminal" => (modes[name] === "desk" || modes[name] === "terminal" ? modes[name] : askMode);
   const byName = new Map<string, TerminalView>();
   for (const e of log) {
     if (e.event === "decision") continue;
@@ -34,7 +36,7 @@ export function deskView(log: DeskEvent[], asks: Ask[], rules: Rule[], modes: Re
     let t = byName.get(name);
     // A new session in the same terminal takes over its row.
     if (!t || (e.event === "sessionStart" && e.session !== t.session) || (t.state === "closed" && e.session !== t.session)) {
-      t = { name, cwd: e.cwd, session: e.session, state: "working", since: e.at, mode: modes[name] === "terminal" ? "terminal" : "desk", asks: [], rules: rules.filter((r) => r.terminal === name), stopsToday: t?.stopsToday ?? 0 };
+      t = { name, cwd: e.cwd, session: e.session, state: "working", since: e.at, mode: modeOf(name), asks: [], rules: rules.filter((r) => r.terminal === name), stopsToday: t?.stopsToday ?? 0 };
       byName.set(name, t);
     }
     if (e.session !== t.session) continue;
@@ -53,7 +55,7 @@ export function deskView(log: DeskEvent[], asks: Ask[], rules: Rule[], modes: Re
   }
   for (const a of asks) {
     let t = byName.get(a.terminal);
-    if (!t) byName.set(a.terminal, (t = { name: a.terminal, cwd: a.cwd, session: a.session, state: "working", since: a.at, mode: "desk", asks: [], rules: [], stopsToday: 0 }));
+    if (!t) byName.set(a.terminal, (t = { name: a.terminal, cwd: a.cwd, session: a.session, state: "working", since: a.at, mode: modeOf(a.terminal), asks: [], rules: [], stopsToday: 0 }));
     t.asks.push(a);
     if (t.state !== "waiting on the desk") {
       t.state = "waiting on the desk";

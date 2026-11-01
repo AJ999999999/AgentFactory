@@ -41,6 +41,38 @@ header .spacer { flex: 1; }
 .send input { flex: 1; min-width: 0; border: 1px solid var(--rule); border-bottom-color: var(--ink-3); background: var(--paper); border-radius: 2px; padding: 4px 8px; font-size: 13.5px; }
 .send button { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 3px 10px; font-size: 13px; }
 .live .learn-now { border: 1px solid var(--ink-2); background: none; border-radius: 2px; padding: 2px 10px; font-size: 13px; }
+/* threads */
+.group { display: flex; align-items: baseline; gap: 8px; margin: 18px 0 2px; font-size: 14px; color: var(--ink-2); }
+.group:first-child { margin-top: 0; }
+.group .call { font-size: 15px; color: var(--ink); }
+.strip.k-working { --kind: var(--ink-3); }
+.strip.k-closed { --kind: var(--rule); }
+.strip.k-closed .q { color: var(--ink-2); font-size: 15px; }
+.q .title { display: block; font-weight: 550; }
+.k-closed .q .title { font-weight: 400; }
+.q .rec.now { font-style: italic; }
+.q .rec .mail { color: var(--action); font-style: normal; font-weight: 550; }
+.holds .go { font-size: 13px; padding: 2px 8px; border: 1px solid var(--ink-2); border-radius: 2px; white-space: nowrap; background: var(--paper); }
+.holds .go:hover { border-color: var(--ink); background: var(--paper-hi); }
+.did { font-size: 13.5px; color: var(--ink-2); }
+.did b { color: var(--ink); font-weight: 550; }
+.did .files { display: block; font: 12.5px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink-2); overflow-wrap: anywhere; }
+.said { white-space: pre-wrap; max-height: 16em; overflow: auto; }
+.body .live { margin-top: 12px; }
+.side { padding: 0 0 20px; }
+.side + .side { padding-top: 14px; border-top: 2px solid var(--ink); }
+.side .about { font-size: 13.5px; margin-top: 6px; }
+.side .send select { border: 1px solid var(--rule); background: var(--paper); border-radius: 2px; font-size: 13.5px; }
+.talk { margin-top: 10px; font-size: 14px; display: grid; gap: 4px; }
+.talk .note { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; color: var(--ink-2); }
+.talk .note b { color: var(--ink); font-weight: 550; }
+.talk .note.unread { color: var(--ink); }
+.talk .note.unread b { color: var(--action); }
+.talk .note button { border: 1px solid var(--action); color: var(--action); background: none; border-radius: 2px; padding: 0 8px; font-size: 12.5px; margin-left: 6px; }
+.talk .note .st { color: var(--ink-3); }
+.side .strip + .strip { margin-top: 8px; }
+.side .strip .head { grid-template-columns: 96px minmax(0, 1fr) auto 40px; }
+.side .strip .body { padding-left: 21px; }
 </style>
 </head>
 <body>
@@ -49,16 +81,16 @@ header .spacer { flex: 1; }
   <span class="sub" id="sub">desk</span>
   <span id="offline" hidden></span>
   <span class="spacer"></span>
-  <button class="toggle" id="notify" hidden>Notify me when a terminal asks</button>
+  <button class="toggle" id="notify" hidden>Notify me when a thread needs me</button>
 </header>
 <main>
-  <section id="rack" aria-label="Waiting on you"></section>
-  <section id="console" aria-label="Terminals"></section>
+  <section id="rack" aria-label="Threads"></section>
+  <section id="console" aria-label="Start, talk, learn"></section>
 </main>
 <script>
 "use strict";
 const TOKEN = "__TOKEN__";
-const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, seen: new Set(), err: {} };
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set() };
 
 async function api(path, body) {
   const res = await fetch(path, body === undefined
@@ -93,68 +125,179 @@ function ago(ms, now) {
 const cmdOf = (detail) => {
   try { const v = JSON.parse(detail); return v.command || v.path || v.url || detail; } catch { return detail || ""; }
 };
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many || `${one}s`}`;
+const base = (f) => f.split(/[\\/]/).pop();
 
 // ---------- actions ----------
 
-async function act(path, body, errKey) {
+// `clear`: the boxes to empty once it went through (what you typed stays if it failed).
+async function act(path, body, errKey, clear) {
   ui.sending = true;
+  let ok = false;
   try {
     await api(path, body);
     delete ui.err[errKey];
-    return true;
+    for (const k of [].concat(clear || [])) ui.drop.add(k);
+    ok = true;
   } catch (e) {
     ui.err[errKey] = e.message;
-    return false;
   } finally {
     ui.sending = false;
     render();
   }
+  return ok;
 }
 const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); render(); };
-const jump = (name) => act("/api/jump", { terminal: name }, `t:${name}`);
+const jump = (name, k) => act("/api/jump", { terminal: name }, k || `t:${name}`);
 
-// ---------- the rack: what is waiting on you ----------
-
-function stripEl(k, kind, who, sub, q, rec, at, now, body, fresh) {
+function stripEl(k, kind, who, sub, q, at, now, body, fresh, go) {
   const isOpen = ui.open.has(k);
   return h("div", { class: `strip k-${kind}${isOpen ? " open" : ""}${fresh ? " fresh" : ""}` },
-    h("button", { class: "head", "aria-expanded": String(isOpen), onclick: () => toggle(k) },
+    h("button", { class: "head", "aria-expanded": String(isOpen), onclick: (e) => (go && e.target.closest(".go") ? go() : toggle(k)) },
       h("span", { class: "who" }, h("span", { class: "call" }, who), sub ? h("span", { class: "gid" }, sub) : null),
-      h("span", { class: "q" }, q, rec ? h("span", { class: "rec" }, rec) : null),
-      h("span", { class: "holds" }),
+      h("span", { class: "q" }, q),
+      h("span", { class: "holds" }, go ? h("span", { class: "go", title: "Go to its terminal" }, "Go to ↗") : null),
       h("span", { class: "age" }, ago(at, now))),
     h("div", { class: "body" }, body, ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null));
 }
 
-function askStrip(t, a, now, holdSec) {
-  const k = `ask:${a.id}`;
-  if (!ui.seen.has(k)) ui.open.add(k); // a new ask opens, so one click answers it
-  const cmd = cmdOf(a.detail);
+// ---------- the threads ----------
+
+const KIND = { "needs you": "approval", "your turn": "action", working: "working", closed: "closed" };
+const GROUP_SAYS = { "needs you": "Needs you", "your turn": "Your turn", working: "Working", closed: "Closed today" };
+
+// A permission ask held here (for a terminal you chose to answer on the desk).
+function askEl(t, a, now, holdSec) {
+  const k = `t:${t.name}`;
+  const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": `ask:${a.id}:note` });
   const left = Math.max(0, Math.round((a.at + holdSec * 1000 - now) / 60000));
-  const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": k });
-  const body = [
-    cmd.length > 100 ? h("code", { class: "cmd" }, cmd) : null,
+  return h("div", { class: "ask" },
+    h("code", { class: "cmd" }, cmdOf(a.detail) || a.tool),
+    h("div", { class: "about" }, `${a.tool} · goes to its terminal in ${left} min if you don't answer`),
     h("div", { class: "options" },
       h("button", { class: "opt rec allow", onclick: () => act("/api/answer", { ask: a.id, choice: "allow" }, k) }, "Allow"),
       a.always ? h("button", { class: "opt", onclick: () => act("/api/answer", { ask: a.id, choice: "always" }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : a.tool} in ${t.name} from now on`) : null,
       h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal")),
     h("div", { class: "form row" }, note,
-      h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k) }, "Deny")),
-  ];
-  const urgent = now - a.at > 5 * 60_000;
-  return stripEl(k, urgent ? "approval urgent" : "approval", t.name, a.tool, h("span", null, h("code", { class: "cmd" }, cmd || a.tool)), `goes to the terminal in ${left} min if you don't answer`, a.at, now, body, !ui.seen.has(k));
+      h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k, `ask:${a.id}:note`) }, "Deny")));
 }
 
-function waitStrip(t, now) {
-  const k = `wait:${t.name}:${t.since}`;
-  const kind = t.state === "asking you" ? "decision" : t.state === "waiting for permission" ? "approval" : "action";
-  const label = t.state === "asking you" ? "asks you" : t.state === "waiting for permission" ? "asks in its terminal" : "your turn";
+function didEl(t) {
+  const bits = [];
+  if (t.prompts) bits.push(plural(t.prompts, "prompt"));
+  if (t.files.length) bits.push(`edited ${plural(t.files.length, "file")}`);
+  if (t.commands) bits.push(`ran ${plural(t.commands, "command")}`);
+  if (t.failed) bits.push(`${t.failed} failed`);
+  if (!bits.length) return null;
+  return h("div", { class: "did" }, h("b", null, "Did "), bits.join(" · "), t.branch ? ` · on ${t.branch}` : "",
+    t.files.length ? h("span", { class: "files" }, t.files.slice(-8).map(base).join("  ")) : null);
+}
+
+function knowsEl(t) {
+  const kn = t.knowledge;
+  if (!kn.items.length) return null;
+  return h("div", { class: "knows" },
+    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
+      h("span", { class: "v" }, `${kn.confirmed} confirmed · ${kn.guesses} to check`)),
+    h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it on the right" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))));
+}
+
+function noteLine(n, now, here) {
+  const dir = n.to === here ? h("b", null, `from ${n.from}`) : h("b", null, `to ${n.to}`);
+  return h("div", { class: `note${n.delivered ? "" : n.to === "you" ? " unread" : " waiting"}` }, h("span", null, ago(n.at, now)), h("span", null, dir, " ", n.text));
+}
+
+function sendBox(to, label, k) {
+  k = k || `send:${to}`;
+  const go = () => { if (input.value.trim()) act("/api/note", { to: typeof to === "function" ? to() : to, text: input.value }, k, k); };
+  const input = h("input", { type: "text", placeholder: label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) go(); } });
+  return [input, h("button", { onclick: go }, "Send")];
+}
+
+function threadStrip(t, d) {
+  const now = d.now;
+  const k = `thread:${t.name}:${t.session}`;
+  const fresh = t.thread === "needs you" && !ui.seen.has(`${k}:${t.since}`);
+  ui.seen.add(`${k}:${t.since}`);
+  // An ask you can answer here opens, so one click answers it.
+  for (const a of t.asks) if (!ui.seen.has(a.id)) { ui.seen.add(a.id); ui.open.add(k); }
+  const mail = d.forYou.filter((n) => n.from === t.name);
+  const line = t.thread === "working" ? t.now : t.thread === "closed" ? null : t.why;
+  const q = h("span", null,
+    h("span", { class: "title" }, t.title),
+    line ? h("span", { class: `rec${t.thread === "working" ? " now" : ""}` }, line) : null,
+    mail.length ? h("span", { class: "rec" }, h("span", { class: "mail" }, "✉ tells you: "), mail[mail.length - 1].text) : null);
+  const open = t.state !== "closed";
   const body = [
-    t.said ? h("div", { class: "why" }, t.said) : null,
-    h("div", { class: "options" }, h("button", { class: "opt rec", onclick: () => jump(t.name) }, `Go to ${t.name}`)),
-    h("div", { class: "about" }, t.state === "waiting for your next prompt" ? "Copilot finished and waits for your next prompt in that terminal." : "Copilot's own prompt is open in that terminal: answer it there."),
+    h("div", { class: "options" },
+      open ? h("button", { class: "opt rec", onclick: () => jump(t.name, k) }, `Go to ${t.name}`) : null,
+      open ? h("button", { class: "opt", title: "Where this terminal's permission asks are answered", onclick: () => act("/api/mode", { terminal: t.name, mode: t.mode === "desk" ? "terminal" : "desk" }, k) }, t.mode === "desk" ? "Its asks: answered here" : "Its asks: in its terminal") : null,
+      h("button", { class: "opt quiet-opt", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
+    t.asks.map((a) => askEl(t, a, now, d.holdSec)),
+    (t.thread === "your turn" || t.state === "asking you") && (t.lastSaid || t.said) ? h("div", { class: "why said" }, t.lastSaid || t.said) : null,
+    didEl(t),
+    t.tail && t.tail.length ? h("div", { class: "live" }, h("pre", null, t.tail.join("\n"))) : null,
+    knowsEl(t),
+    open || t.notes.length ? h("div", { class: "notes" },
+      t.notes.map((n) => noteLine(n, now, t.name)),
+      open ? h("div", { class: "send" }, sendBox(t.name, `A note for ${t.name} (read during its work)`)) : null,
+      ui.err[`send:${t.name}`] ? h("div", { class: "err" }, ui.err[`send:${t.name}`]) : null) : null,
+    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
+      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
+        h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null,
   ];
-  return stripEl(k, kind, t.name, label, t.said || t.state, null, t.since, now, body, false);
+  const kind = t.thread === "needs you" && t.state === "asking you" ? "decision" : KIND[t.thread];
+  return stripEl(k, kind, t.name, [t.repo !== t.name ? t.repo : null, t.branch].filter(Boolean).join(" · "), q, t.thread === "working" ? t.lastAt : t.since, now, body, fresh, open ? () => jump(t.name, k) : null);
+}
+
+function threadsEl(d) {
+  const out = [];
+  for (const g of ["needs you", "your turn", "working", "closed"]) {
+    const ts = d.threads.filter((t) => t.thread === g);
+    if (!ts.length) continue;
+    out.push(h("div", { class: "group" }, h("span", { class: "call" }, GROUP_SAYS[g]), h("span", null, String(ts.length))));
+    for (const t of ts) out.push(threadStrip(t, d));
+  }
+  if (!out.length) out.push(h("div", { class: "quiet" },
+    h("p", null, "No Copilot session yet. Start a thread on the right, or in a repo's terminal run ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."),
+    h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once first, so the desk sees every session.")));
+  return out;
+}
+
+// ---------- the side: start a thread, the talk between threads, what was learned ----------
+
+function startEl(d) {
+  const k = "start";
+  const folder = h("input", { type: "text", list: "af-folders", placeholder: "Folder, e.g. C:\\work\\billing", "data-k": "start:folder" });
+  const name = h("input", { type: "text", placeholder: "Name (else the folder's)", "data-k": "start:name", style: "flex:0 1 180px" });
+  const go = () => {
+    if (!folder.value.trim()) { ui.err[k] = "Which folder?"; return render(); }
+    act("/api/start", { folder: folder.value.trim(), name: name.value.trim() }, k, ["start:folder", "start:name"]);
+  };
+  return h("div", { class: "side" },
+    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Start a thread")),
+    h("datalist", { id: "af-folders" }, (d.folders || []).map((f) => h("option", { value: f }))),
+    h("div", { class: "send" }, folder, name, h("button", { onclick: go }, "Open")),
+    h("div", { class: "about" }, "Opens a PowerShell window in that folder with Copilot, named for the desk. Type your first prompt there."),
+    ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null);
+}
+
+function talkEl(d) {
+  const open = d.threads.filter((t) => t.state !== "closed").map((t) => t.name);
+  const k = "send:talk";
+  const sel = h("select", { "data-k": "talk:to" }, [...open, ...(open.length > 1 ? ["all"] : [])].map((n) => h("option", { value: n }, n === "all" ? "every thread" : n)));
+  return h("div", { class: "side" },
+    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Between threads"), h("span", { class: "v" }, "notes are read during a session's work, and never start it")),
+    open.length ? h("div", { class: "send" }, sel, sendBox(() => sel.value, "A note…", k)) : null,
+    ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null,
+    h("div", { class: "talk" }, d.notes.length ? d.notes.slice(0, 20).map((n) => {
+      const unread = n.to === "you" && !n.delivered;
+      return h("div", { class: `note${unread ? " unread" : ""}` },
+        h("span", null, ago(n.at, d.now)),
+        h("span", null, h("b", null, `${n.from} → ${n.to === "you" ? "you" : n.to}`), " ", n.text,
+          unread ? h("button", { onclick: () => act("/api/read", { note: n.id }, k) }, "Got it")
+            : !n.delivered ? h("span", { class: "st" }, " · waits for its next tool call") : null));
+    }) : h("div", { class: "about" }, "No notes yet. A session can send one with its send_note tool; so can you, above.")));
 }
 
 function guessStrip(g, now) {
@@ -164,135 +307,83 @@ function guessStrip(g, now) {
   const why = h("input", { type: "text", placeholder: "What's wrong with it (optional)", "data-k": `${k}:why` });
   const body = [
     g.because ? h("div", { class: "why" }, g.because, g.session ? h("div", { class: "by" }, `from session ${g.session.slice(0, 8)}`) : null) : null,
-    h("div", { class: "about" }, "Until you confirm it, new sessions get this as a guess to check, not as a fact."),
-    h("div", { class: "options" },
-      h("button", { class: "opt rec allow", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right" }, k) }, "Right")),
-    h("div", { class: "form row" }, mine,
-      h("button", { class: "opt", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right", text: mine.value }, k) }, "Right, in these words")),
-    h("div", { class: "form row" }, why,
-      h("button", { class: "opt deny", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "wrong", text: why.value }, k) }, "Wrong")),
+    h("div", { class: "options" }, h("button", { class: "opt rec allow", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right" }, k) }, "Right")),
+    h("div", { class: "form row" }, mine, h("button", { class: "opt", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "right", text: mine.value }, k) }, "Right, in these words")),
+    h("div", { class: "form row" }, why, h("button", { class: "opt deny", onclick: () => act("/api/know", { principal: g.principal, entry: g.entry, verdict: "wrong", text: why.value }, k) }, "Wrong")),
   ];
-  return stripEl(k, "review", repo, `learned · ${g.kind}`, h("span", null, h("span", { class: "subject" }, g.subject), g.text), null, g.at, now, body, false);
+  return stripEl(k, "review", repo, g.kind, h("span", null, h("span", { class: "subject" }, g.subject), g.text), g.at, now, body, false, null);
 }
 
-function noteStrip(n, now) {
-  const k = `note:${n.id}`;
-  const body = [
-    h("div", { class: "why" }, n.text),
-    h("div", { class: "options" },
-      h("button", { class: "opt rec", onclick: () => act("/api/read", { note: n.id }, k) }, "Got it"),
-      h("button", { class: "opt", onclick: () => jump(n.from) }, `Go to ${n.from}`)),
-  ];
-  return stripEl(k, "action", n.from, "tells you", n.text, null, n.at, now, body, !ui.seen.has(k));
-}
-
-function rack(d) {
-  const now = d.now;
-  const out = [];
-  for (const t of d.terminals) for (const a of t.asks) out.push(askStrip(t, a, now, d.holdSec));
-  for (const t of d.terminals) if (t.state === "asking you" || t.state === "waiting for permission") out.push(waitStrip(t, now));
-  for (const n of d.forYou) out.push(noteStrip(n, now));
-  for (const g of d.guesses) out.push(guessStrip(g, now));
-  for (const t of d.terminals) if (t.state === "waiting for your next prompt") out.push(waitStrip(t, now));
-  for (const t of d.terminals) for (const a of t.asks) ui.seen.add(`ask:${a.id}`);
-  for (const n of d.forYou) ui.seen.add(`note:${n.id}`);
-  if (!out.length) out.push(h("div", { class: "quiet" }, "Nothing is waiting on you."));
-  return out;
-}
-
-// ---------- the console: one block per terminal ----------
-
-function beat(t) {
-  const cls = t.state === "closed" ? "off" : t.state === "working" ? "ok" : "late";
-  return h("span", { class: `beat ${cls}` }, h("i"), `${t.state} · ${ago(t.since, ui.data.now)}`);
-}
-
-function terminalEl(t) {
-  const k = `t:${t.name}`;
-  const kn = t.knowledge;
-  return h("div", { class: "eng" },
-    h("div", { class: "eng-head" },
-      h("h2", null, h("span", { class: "call" }, t.name), h("span", { class: "folder" }, t.cwd)),
-      beat(t)),
-    h("div", { class: "eng-head", style: "margin-top:8px" },
-      h("span", { class: "n", style: "flex:1" }, `${t.stopsToday} stop${t.stopsToday === 1 ? "" : "s"} today`),
-      h("span", { class: "acts" },
-        h("button", { class: "toggle", title: "Where this terminal's permission asks are answered", onclick: () => act("/api/mode", { terminal: t.name, mode: t.mode === "desk" ? "terminal" : "desk" }, k) }, t.mode === "desk" ? "Asks: here" : "Asks: in the terminal"),
-        t.state !== "closed" ? h("button", { class: "toggle", onclick: () => jump(t.name) }, "Go to terminal") : null)),
-    ui.err[k] ? h("div", { class: "eng-err" }, ui.err[k]) : null,
-    t.tail && t.tail.length ? h("div", { class: "live" },
-      h("div", { class: "live-head" }, h("span", { class: "t" }, `Session ${t.session.slice(0, 8)}`),
-        h("button", { class: "learn-now", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
-      h("pre", null, t.tail.join("\n"))) : null,
-    h("div", { class: "knows" },
-      h("div", { class: "goal-head" }, h("span", { class: "call" }, "Knows"), h("span", { class: "t" }, t.repo),
-        h("span", { class: "v" }, kn.confirmed + kn.guesses ? `${kn.confirmed} confirmed · ${kn.guesses} to check` : "nothing yet")),
-      kn.items.length ? h("ul", { class: "work" }, kn.items.map((i) => h("li", { class: i.confirmed ? "k-sure" : "k-guess", title: i.confirmed ? "confirmed by you" : "a guess: confirm it in the left column" }, h("i", { class: "g" }), h("span", null, h("b", null, i.subject), " ", i.text)))) : null),
-    notesEl(t),
-    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
-      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
-        h("button", { title: "Ask again", onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null);
-}
-
-function noteLine(n, now, here) {
-  const dir = n.to === here ? h("b", null, `from ${n.from}`) : h("b", null, `to ${n.to}`);
-  return h("div", { class: `note${n.delivered ? "" : n.to === "you" ? " unread" : " waiting"}` }, h("span", null, ago(n.at, now)), h("span", null, dir, " ", n.text));
-}
-
-function sendBox(to, label) {
-  const k = `send:${to}`;
-  const input = h("input", { type: "text", placeholder: label, "data-k": k, onkeydown: (e) => { if (e.key === "Enter") go(); } });
-  const go = () => { if (input.value.trim()) act("/api/note", { to, text: input.value }, k).then((ok) => { if (ok) { input.value = ""; input.blur(); } }); };
-  return [h("div", { class: "send" }, input, h("button", { onclick: go }, "Send")), ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null];
-}
-
-function notesEl(t) {
-  if (t.state === "closed" && !t.notes.length) return null;
-  return h("div", { class: "notes" },
-    t.notes.map((n) => noteLine(n, ui.data.now, t.name)),
-    t.state !== "closed" ? sendBox(t.name, `A note for ${t.name}'s session (it reads it while it works)`) : null);
-}
-
-function learningEl(d) {
+function learnedEl(d) {
   const l = d.learning;
-  return h("div", { class: "learning" },
-    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Learning"),
-      h("span", { class: "t" }, l.running ? `reading ${l.running.repo || "a"} session ${l.running.session.slice(0, 8)}…` : l.queued ? `${l.queued} sessions waiting` : "each finished session is read once")),
-    l.recent.map((a) => h("div", { class: `row${a.ok ? "" : " bad"}` },
-      h("span", null, ago(a.at, d.now)),
-      h("span", null, a.error ? `${a.repo}: ${a.error}` : `${a.repo}: ${a.kept.length} learned${a.dropped.length ? `, ${a.dropped.length} left out` : ""}`),
-      h("span", null, a.session.slice(0, 8)))),
-    h("div", { class: "where" }, `Kept in ${d.knowledgeDir}`));
+  return h("div", { class: "side" },
+    h("div", { class: "goal-head" }, h("span", { class: "call" }, "Learned, to check"),
+      h("span", { class: "v" }, d.guesses.length ? "new sessions get these as guesses until you confirm them" : "nothing waiting")),
+    d.guesses.length ? h("div", { style: "margin-top:10px" }, d.guesses.map((g) => guessStrip(g, d.now))) : null,
+    h("div", { class: "learning", style: "border-top:0; margin-top:12px; padding-top:0" },
+      h("div", { class: "goal-head" }, h("span", { class: "call" }, "Learning"), h("span", { class: "t" }, l.running ? `reading ${l.running.repo || "a"} session ${l.running.session.slice(0, 8)}…` : l.queued ? `${l.queued} sessions waiting to be read` : "each finished session is read once")),
+      l.recent.map((a) => h("div", { class: `row${a.ok ? "" : " bad"}` },
+        h("span", null, ago(a.at, d.now)),
+        h("span", null, a.error ? `${a.repo}: ${a.error}` : `${a.repo}: ${a.kept.length} learned${a.dropped.length ? `, ${a.dropped.length} left out` : ""}`),
+        h("span", null, a.session.slice(0, 8)))),
+      h("div", { class: "where" }, `Kept in ${d.knowledgeDir}`)));
 }
+
+// ---------- drawing ----------
 
 function render() {
   const d = ui.data;
   if (!d) return;
   const f = document.activeElement;
-  if (ui.sending || (f && f.tagName === "INPUT")) { ui.pending = true; return; }
+  // A request on its way, an open dropdown, or a word half-typed in an input method
+  // (pinyin): wait, then draw.
+  if (ui.sending || ui.composing || (f && f.tagName === "SELECT")) { ui.pending = true; return; }
   ui.pending = false;
-  const waiting = d.terminals.reduce((n, t) => n + t.asks.length, 0);
-  document.title = waiting ? `(${waiting}) AgentFactory desk` : "AgentFactory desk";
-  document.getElementById("sub").textContent = `desk · ${d.terminals.filter((t) => t.state !== "closed").length} terminals`;
-  document.getElementById("rack").replaceChildren(...rack(d));
-  const con = document.getElementById("console");
-  con.replaceChildren(...(d.terminals.length ? d.terminals.map(terminalEl) : [h("div", { class: "empty" },
-    h("p", null, "No Copilot CLI session yet."),
-    h("p", null, "Run ", h("code", null, "npm run desk -- install"), " once, then start Copilot in each repo's terminal with ", h("code", null, "scripts\\windows\\copilot-here.ps1 -Name <name>"), "."))]),
-    d.terminals.filter((t) => t.state !== "closed").length > 1 ? h("div", { class: "learning" }, h("div", { class: "goal-head" }, h("span", { class: "call" }, "All terminals")), sendBox("all", "A note for every open session")) : null,
-    learningEl(d));
+  // Redrawn as sessions move, so keep what you're typing and where your cursor is.
+  const typed = {};
+  for (const el of document.querySelectorAll("[data-k]")) typed[el.dataset.k] = el.value;
+  const focus = f && f.dataset && f.dataset.k ? { k: f.dataset.k, s: f.selectionStart, e: f.selectionEnd } : null;
+
+  const needs = d.threads.filter((t) => t.thread === "needs you").length;
+  const open = d.threads.filter((t) => t.state !== "closed").length;
+  document.title = needs ? `(${needs}) AgentFactory desk` : "AgentFactory desk";
+  document.getElementById("sub").textContent = `desk · ${plural(open, "thread")} open${needs ? ` · ${needs} need${needs === 1 ? "s" : ""} you` : ""}`;
+  document.getElementById("rack").replaceChildren(...threadsEl(d));
+  document.getElementById("console").replaceChildren(startEl(d), talkEl(d), learnedEl(d));
+
+  for (const el of document.querySelectorAll("[data-k]")) {
+    const k = el.dataset.k;
+    if (!ui.drop.has(k) && k in typed && el.tagName !== "SELECT") el.value = typed[k];
+    else if (el.tagName === "SELECT" && k in typed && [...el.options].some((o) => o.value === typed[k])) el.value = typed[k];
+  }
+  ui.drop.clear();
+  if (focus) {
+    const el = [...document.querySelectorAll("[data-k]")].find((x) => x.dataset.k === focus.k);
+    if (el) {
+      el.focus();
+      try { el.setSelectionRange(focus.s, focus.e); } catch { /* not a text box */ }
+    }
+  }
   announce(d);
 }
 document.addEventListener("focusout", () => setTimeout(() => { if (ui.pending) render(); }, 0));
+document.addEventListener("compositionstart", () => { ui.composing = true; });
+document.addEventListener("compositionend", () => { ui.composing = false; setTimeout(() => { if (ui.pending) render(); }, 0); });
 
-// A new ask while you're in a terminal: a system notification, if you allowed them.
+// A thread that starts needing you while you're elsewhere: a system notification, if
+// you allowed them.
 const told = new Set();
+let first = true;
 function announce(d) {
-  for (const t of d.terminals) for (const a of t.asks) {
-    if (told.has(a.id)) continue;
-    told.add(a.id);
-    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") new Notification(`${t.name} wants to run ${a.tool}`, { body: cmdOf(a.detail), tag: a.id });
+  for (const t of d.threads) {
+    if (t.thread !== "needs you" && t.thread !== "your turn") continue;
+    const id = `${t.session}:${t.since}`;
+    if (told.has(id)) continue;
+    told.add(id);
+    if (!first && document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted")
+      new Notification(`${t.name} ${t.thread === "needs you" ? "needs you" : "finished: your turn"}`, { body: `${t.title}\n${t.why || ""}`, tag: id });
   }
+  first = false;
 }
 if ("Notification" in window && Notification.permission === "default") {
   const b = document.getElementById("notify");
@@ -320,6 +411,7 @@ async function loop() {
 }
 setInterval(() => { if (ui.data) { ui.data.now = Date.now(); render(); } }, 15000);
 loop();
+
 </script>
 </body>
 </html>

@@ -38,7 +38,8 @@ try {
   if (name === "permissionRequest") {
     const { commandOf, hold } = await import("./hold.ts");
     const r = await hold(e, {}, commandOf(raw));
-    if (r.by !== "pass") append({ at: Date.now(), event: "decision", session: e.session, cwd: e.cwd, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), by: r.by, ...(r.choice ? { choice: r.choice } : {}), ...(r.note ? { message: r.note } : {}), ...(r.waitedMs !== undefined ? { waitedMs: r.waitedMs } : {}) });
+    // Logged when the desk had a part in it: a standing answer, or an ask held for the page.
+    if (!["pass", "terminal-mode", "no-desk"].includes(r.by)) append({ at: Date.now(), event: "decision", session: e.session, cwd: e.cwd, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), by: r.by, ...(r.choice ? { choice: r.choice } : {}), ...(r.note ? { message: r.note } : {}), ...(r.waitedMs !== undefined ? { waitedMs: r.waitedMs } : {}) });
     if (Object.keys(r.output).length) process.stdout.write(JSON.stringify(r.output));
   }
 } catch (e) {

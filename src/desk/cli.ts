@@ -1,8 +1,8 @@
 // The desk on the command line.
 //
 //   npm run desk -- install          hook every Copilot CLI session on this PC (one file in ~/.copilot/hooks)
-//   npm run desk                     the page: every terminal, and its permission asks held for you
-//                                    [--port 4710] [--no-open] [--demo: three simulated terminals, nothing real touched]
+//   npm run desk                     the page: every terminal's Copilot session as a thread
+//                                    [--port 4710] [--no-open] [--demo: five simulated threads, nothing real touched]
 //   npm run desk -- learn [--session <id>] [--force]   learn from ended sessions now (or one session)
 //   npm run desk -- knows [<folder>]  what a new session in that folder is told
 //   npm run desk -- note <terminal|all> <text>   a note to a terminal's session, read during its work
@@ -40,7 +40,7 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
       console.log(`a demo desk in ${home}`);
     }
     const desk = await startDesk({ ...(home ? { home } : {}), ...(analyst ? { analyst } : {}), port: i >= 0 ? Number(all[i + 1]) : 4710, log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
-    console.log(`desk: ${desk.url}  (Ctrl+C to stop; while it runs, permission asks wait here instead of in the terminals)`);
+    console.log(`desk: ${desk.url}  (Ctrl+C to stop)`);
     if (!all.includes("--no-open")) openBrowser(desk.url);
     const stop = async () => {
       await desk.close();

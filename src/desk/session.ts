@@ -44,7 +44,8 @@ export function sessionTail(file: string, lines = 14, bytes = 96 * 1024): string
   const s = new CopilotStream((...l) => out.push(...l));
   s.feed(text);
   s.end();
-  return out.filter((l) => !l.startsWith("model:")).slice(-lines);
+  // report_intent is Copilot saying what it's doing, shown as the thread's "now" instead.
+  return out.filter((l) => !l.startsWith("model:") && !/^\W*report_intent\b/.test(l)).slice(-lines);
 }
 
 type Ev = { type?: string; data?: Record<string, any>; id?: string; timestamp?: string };
@@ -153,4 +154,88 @@ export function digest(events: Ev[], refusals: Array<{ tool?: string; note?: str
   }
   d.text = `${head}\n${body.join("\n")}\n`;
   return d;
+}
+
+// ---------- a session as a thread ----------
+
+export type Summary = {
+  // Your first prompt, cut to its first sentence: what the thread is for.
+  title?: string;
+  branch?: string;
+  // What it says it's doing (Copilot's report_intent), else the tool it's running.
+  now?: string;
+  said?: string;
+  prompts: number;
+  // Files its tools wrote, newest last; shell commands; tool calls that failed.
+  files: string[];
+  commands: number;
+  failed: number;
+};
+
+const SHELL = /^(powershell|pwsh|bash|shell|sh|cmd|run_in_terminal|terminal)$/i;
+const WRITES = /(edit|create|write|patch|replace|insert|delete|move|rename)/i;
+const PATCHED = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm;
+
+export function titleOf(prompt: string, max = 80): string {
+  const first = prompt.trim().split(/\n/)[0].trim();
+  const sentence = /^(.+?(?:[.?!](?=\s|$)|[。？！]))/.exec(first)?.[1] ?? first;
+  if (sentence.length <= max) return sentence;
+  const cut = sentence.slice(0, max);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), max - 20)).trimEnd()}…`;
+}
+
+export function summarize(events: Ev[]): Summary {
+  const s: Summary = { prompts: 0, files: [], commands: 0, failed: 0 };
+  const running = new Map<string, string>();
+  const files = new Set<string>();
+  const wrote = (f: string) => {
+    files.delete(f); // newest last
+    files.add(f);
+  };
+  for (const e of events) {
+    const x = e.data ?? {};
+    switch (e.type) {
+      case "session.start":
+        s.branch = (x.context ?? x).branch ?? s.branch;
+        break;
+      case "user.message": {
+        const t = typeof x.content === "string" ? x.content : typeof x.text === "string" ? x.text : "";
+        s.prompts++;
+        if (!s.title && t.trim()) s.title = titleOf(t);
+        break;
+      }
+      case "assistant.message":
+        if (!x.parentToolCallId && typeof x.content === "string" && x.content.trim()) s.said = x.content.trim();
+        break;
+      case "tool.execution_start": {
+        const name = String(x.toolName ?? x.name ?? "");
+        const a = x.arguments ?? x.args ?? x.input;
+        if (name === "report_intent") {
+          const intent = typeof a === "string" ? a : a?.intent;
+          if (typeof intent === "string" && intent.trim()) s.now = intent.trim();
+          break;
+        }
+        if (SHELL.test(name)) s.commands++;
+        const what = typeof a === "string" ? a : a?.command ?? a?.path ?? a?.file_path ?? a?.url ?? "";
+        if (x.toolCallId) running.set(String(x.toolCallId), `${name}${what ? `: ${String(what).split("\n")[0].slice(0, 120)}` : ""}`);
+        if (WRITES.test(name)) {
+          const text = typeof a === "string" ? a : typeof a?.patch === "string" ? a.patch : typeof a?.input === "string" ? a.input : "";
+          for (const m of text.matchAll(PATCHED)) wrote(m[1].trim());
+          for (const p of [a?.path, a?.file_path, a?.filePath]) if (typeof p === "string" && p) wrote(p);
+        }
+        break;
+      }
+      case "tool.execution_complete": {
+        if (x.toolCallId) running.delete(String(x.toolCallId));
+        const exit = x.shellExecution?.exitCode;
+        if (x.success === false || (typeof exit === "number" && exit !== 0)) s.failed++;
+        break;
+      }
+    }
+  }
+  // A tool still running says more about now than an intent stated earlier.
+  const last = [...running.values()].pop();
+  if (last) s.now = s.now ? `${s.now} (running ${last})` : `running ${last}`;
+  s.files = [...files].slice(-30);
+  return s;
 }

@@ -1,10 +1,11 @@
-// A throwaway desk with three simulated terminals, for `npm run desk -- --demo`: a
-// permission ask waiting, a question, an idle session, a finished one already learned
-// from, and a canned analyst in place of Copilot. Nothing here touches your real
+// A throwaway desk for `npm run desk -- --demo`: five simulated threads (a permission
+// ask held on the desk, a question in its terminal, one finished and waiting for your
+// prompt, one working, one closed earlier), notes between them, what earlier sessions
+// taught, and a canned analyst in place of Copilot. Nothing here touches your real
 // Copilot folder or knowledge repo.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { hold, writeJson } from "./hold.ts";
+import { hold, modesFile, writeJson } from "./hold.ts";
 import { recordProposals, commit, ensureRepo } from "./knowledge.ts";
 import type { Analyst } from "./learn.ts";
 import { append, type DeskEvent } from "./log.ts";
@@ -22,7 +23,7 @@ export async function makeDemo(home: string): Promise<void> {
   process.env.COPILOT_HOME = copilot;
   const now = Date.now();
   const repos = path.join(home, "work");
-  for (const r of ["billing", "web", "etl"]) fs.mkdirSync(path.join(repos, r, ".git"), { recursive: true });
+  for (const r of ["billing", "web", "etl", "api", "docs"]) fs.mkdirSync(path.join(repos, r, ".git"), { recursive: true });
   const at = (minAgo: number) => now - minAgo * 60_000;
   const session = (id: string, lines: string[]) => {
     fs.mkdirSync(path.join(copilot, "session-state", id), { recursive: true });
@@ -34,6 +35,7 @@ export async function makeDemo(home: string): Promise<void> {
   session("b1111111-demo", [
     line("session.start", { context: { cwd: billing, branch: "invoice-rounding" } }, at(40)),
     line("user.message", { content: "Invoices round each line, so totals are off by a cent. Round only the total." }, at(40)),
+    line("tool.execution_start", { toolCallId: "0", toolName: "report_intent", arguments: { intent: "Fixing invoice rounding" } }, at(39)),
     line("tool.execution_start", { toolCallId: "1", toolName: "grep", arguments: { pattern: "round(" } }, at(39)),
     line("tool.execution_complete", { toolCallId: "1", toolName: "grep", success: true }, at(39)),
     line("tool.execution_start", { toolCallId: "2", toolName: "apply_patch", arguments: "*** Begin Patch\n*** Update File: src/invoice/total.ts\n*** End Patch" }, at(30)),
@@ -62,6 +64,29 @@ export async function makeDemo(home: string): Promise<void> {
   ev({ event: "sessionStart", session: "e3333333-demo", cwd: etl, terminal: "etl" }, 30);
   ev({ event: "notification", session: "e3333333-demo", cwd: etl, terminal: "etl", kind: "elicitation_dialog", message: "Which schema should the refunds table go in: billing or finance?" }, 2);
 
+  const api = path.join(repos, "api");
+  session("a4444444-demo", [
+    line("session.start", { context: { cwd: api, branch: "refunds-endpoint" } }, at(25)),
+    line("user.message", { content: "Add a POST /refunds endpoint that records a refund against an invoice. Follow the payments endpoint's style." }, at(25)),
+    line("tool.execution_start", { toolCallId: "1", toolName: "apply_patch", arguments: "*** Begin Patch\n*** Add File: src/routes/refunds.ts\n*** Update File: src/routes/index.ts\n*** End Patch" }, at(12)),
+    line("tool.execution_complete", { toolCallId: "1", toolName: "apply_patch", success: true }, at(12)),
+    line("tool.execution_start", { toolCallId: "2", toolName: "report_intent", arguments: { intent: "Writing tests for the refunds endpoint" } }, at(2)),
+    line("tool.execution_start", { toolCallId: "3", toolName: "powershell", arguments: { command: "npm test -w api -- refunds" } }, at(1)),
+  ]);
+  ev({ event: "sessionStart", session: "a4444444-demo", cwd: api, terminal: "api" }, 25);
+  ev({ event: "userPromptSubmitted", session: "a4444444-demo", cwd: api, terminal: "api" }, 1);
+
+  const docs = path.join(repos, "docs");
+  session("d5555555-demo", [
+    line("session.start", { context: { cwd: docs, branch: "main" } }, at(180)),
+    line("user.message", { content: "Document the new invoice rounding rule in the billing guide." }, at(180)),
+    line("tool.execution_start", { toolCallId: "1", toolName: "edit", arguments: { path: "guides/billing.md" } }, at(170)),
+    line("tool.execution_complete", { toolCallId: "1", toolName: "edit", success: true }, at(170)),
+    line("assistant.message", { content: "Added a section on rounding to guides/billing.md." }, at(165)),
+  ]);
+  ev({ event: "sessionStart", session: "d5555555-demo", cwd: docs, terminal: "docs" }, 180);
+  ev({ event: "sessionEnd", session: "d5555555-demo", cwd: docs, terminal: "docs" }, 160);
+
   // What earlier sessions taught: one fact you confirmed, two guesses to check.
   const dir = path.join(home, "knowledge");
   writeJson(path.join(home, "config.json"), { knowledgeDir: dir, learn: "off" });
@@ -80,7 +105,9 @@ export async function makeDemo(home: string): Promise<void> {
   send("web", "billing", "I renamed the API field invoice.totalCents to invoice.total_cents in the web client; the billing endpoint should send the new name.", { home, now: at(12) });
   send("billing", "you", "The staging migration needs the finance team's sign-off before it runs; I've stopped at that step.", { home, now: at(4) });
 
-  // The ask billing is waiting on, held the way the real hook holds it.
+  // The ask billing is waiting on, held the way the real hook holds it: billing's asks
+  // are answered on the desk (the others' in their terminals).
+  writeJson(modesFile(home), { billing: "desk" });
   writeJson(path.join(home, "page.json"), { at: Date.now() });
   const ask: DeskEvent = { at: Date.now(), event: "permissionRequest", session: "b1111111-demo", cwd: billing, terminal: "billing", tool: "powershell", detail: JSON.stringify({ command: "npm run migrate -- --env staging" }) };
   append(ask, home);

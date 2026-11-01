@@ -1,11 +1,13 @@
-// The desk's page: every Copilot CLI terminal on this PC, what each is waiting on and
-// doing, the permission asks held for you, and what finished sessions taught, for you
-// to confirm. It also runs the learning: each ended session is analysed once.
+// The desk's page: every Copilot CLI session on this PC as a thread, the way a Claude
+// project lists its threads, grouped by what each needs from you; the notes between
+// them; what finished sessions taught, for you to confirm. The work happens in each
+// terminal, and the page takes you there. It also runs the learning: each ended
+// session is analysed once.
 //
 // Same guards as the partner's panel: it listens on 127.0.0.1 only, answers only
 // requests addressed to that host, and every call carries a token only the served page
-// knows. While it runs it beats `page.json`; the hook holds an ask only while that beat
-// is fresh, so stopping the desk hands every terminal its own prompts back.
+// knows. While it runs it beats `page.json`; the hook holds an ask (for a terminal you
+// chose to answer here) only while that beat is fresh.
 //
 // The page waits on /api/state for a change instead of polling on a timer: browsers
 // slow timers in background tabs to once a minute, but not a pending request.
@@ -18,9 +20,10 @@ import { answer, type Choice, loadConfig, modesFile, pageFile, pending, readJson
 import { confirm, guesses, knowledgeDir, commit, reject, repoNameOf, summary } from "./knowledge.ts";
 import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnConfig, toLearn } from "./learn.ts";
 import { deskHome, readLog } from "./log.ts";
+import { terminals } from "./mcp.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
-import { sessionFile, sessionTail } from "./session.ts";
-import { deskView } from "./view.ts";
+import { readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
+import { threads } from "./threads.ts";
 
 const PAGE = path.join(import.meta.dirname, "page.html");
 const PANEL_PAGE = path.join(import.meta.dirname, "..", "panel", "page.html");
@@ -37,7 +40,33 @@ const CHOICES: Choice[] = ["allow", "deny", "terminal", "always"];
 
 class BadRequest extends Error {}
 
-export type DeskOptions = { home?: string; port?: number; log?: (line: string) => void; jump?: (title: string) => Promise<boolean>; analyst?: Analyst; learnEveryMs?: number };
+export type DeskOptions = {
+  home?: string;
+  port?: number;
+  log?: (line: string) => void;
+  jump?: (title: string) => Promise<boolean>;
+  // Open a new terminal with Copilot in a folder; tests replace it.
+  launch?: (folder: string, name: string) => Promise<boolean>;
+  analyst?: Analyst;
+  learnEveryMs?: number;
+};
+
+const LAUNCHER = path.join(import.meta.dirname, "..", "..", "scripts", "windows", "copilot-here.ps1");
+export const NAME = /^[A-Za-z0-9][\w.-]{0,39}$/;
+
+// A new PowerShell window in the folder, running Copilot under the name (copilot-here.ps1),
+// like starting a thread. The values travel in environment variables, never inside the
+// command text; the name is plain (NAME), and [char]34 quotes the script's path without
+// a `"` in the command line, which would have to survive two parsers.
+export async function launchWindows(folder: string, name: string): Promise<boolean> {
+  if (process.platform !== "win32" || !NAME.test(name)) return false;
+  try {
+    await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Start-Process -FilePath powershell.exe -WorkingDirectory $env:AF_DESK_CWD -ArgumentList ('-NoExit -ExecutionPolicy Bypass -File ' + [char]34 + $env:AF_DESK_LAUNCHER + [char]34 + ' -Name ' + $env:AF_DESK_NAME)"], { env: { ...process.env, AF_DESK_CWD: folder, AF_DESK_LAUNCHER: LAUNCHER, AF_DESK_NAME: name }, timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type Learning = { running?: { session: string; repo: string; since: number }; queued: number; recent: Analysis[] };
 export type Desk = { url: string; port: number; token: string; close: () => Promise<void> };
@@ -73,6 +102,22 @@ export function recentAnalyses(dir: string, n = 6): Analysis[] {
   }
 }
 
+// What a session's file says about it, read again only when the file has changed (and
+// not more than once a second while Copilot writes to it).
+const summaries = new Map<string, { key: string; at: number; value: Summary }>();
+export function summaryFor(session: string, transcript?: string, now = Date.now()): Summary | undefined {
+  const f = sessionFile(session, transcript);
+  if (!f) return undefined;
+  const st = fs.statSync(f, { throwIfNoEntry: false });
+  if (!st) return undefined;
+  const key = `${st.size}:${st.mtimeMs}`;
+  const c = summaries.get(f);
+  if (c && (c.key === key || now - c.at < 1000)) return c.value;
+  const value = summarize(readEvents(f));
+  summaries.set(f, { key, at: now, value });
+  return value;
+}
+
 export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }) {
   const cfg = loadConfig(home);
   // An ask the hook left behind (Copilot killed it, the PC slept) is past its wait.
@@ -82,16 +127,17 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
   const log = readLog(home);
   const dir = knowledgeDir(home);
   const notes = recentNotes(home);
-  const terminals = deskView(log, asks, rules, modes, now).map((t) => {
+  const list = threads(log, asks, rules, modes, (s, t) => summaryFor(s, t, now), { now, askMode: cfg.asks }).map((t) => {
     const repo = repoNameOf(t.cwd);
     const transcript = log.find((e) => e.session === t.session && e.transcript)?.transcript;
     const tail = t.state === "closed" ? [] : cached(`tail:${t.session}`, 1500, now, () => {
       const f = sessionFile(t.session, transcript);
-      return f ? sessionTail(f) : [];
+      return f ? sessionTail(f, 10) : [];
     });
     return { ...t, repo, tail, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)), notes: notes.filter((n) => n.to === t.name || n.from === t.name).slice(0, 6) };
   });
-  return { now, holdSec: cfg.holdSec, knowledgeDir: dir, terminals, guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
+  const folders = [...new Set(log.map((e) => e.cwd))].slice(-30);
+  return { now, holdSec: cfg.holdSec, askMode: cfg.asks, knowledgeDir: dir, threads: list, folders, notes: notes.slice(0, 30), guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
 }
 
 // Changes the page cares about; the clock alone isn't one.
@@ -108,6 +154,7 @@ const str = (v: unknown, what: string, max = 300): string => {
 export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
   const home = opts.home ?? deskHome();
   const jump = opts.jump ?? jumpWindows;
+  const launch = opts.launch ?? launchWindows;
   const log = opts.log ?? (() => {});
   const token = randomBytes(24).toString("hex");
   let port = 0;
@@ -199,7 +246,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         }
         case "/api/note": {
           // From you, to a terminal's session (read during its work) or to all of them.
-          const known = deskView(readLog(home), [], [], {}).filter((t) => t.state !== "closed").map((t) => t.name);
+          const known = terminals(home).map((t) => t.name);
           try {
             sendNote(YOU, str(body.to, "to", 100), typeof body.text === "string" ? body.text : "", { home, known });
           } catch (e) {
@@ -217,6 +264,17 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
           const session = str(body.session, "session", 200);
           if (!/^[\w.-]+$/.test(session)) throw new BadRequest("bad session id");
           learnNow(session);
+          break;
+        }
+        case "/api/start": {
+          // A new thread: a terminal in that folder, with Copilot under that name.
+          const folder = path.resolve(str(body.folder, "folder", 1000));
+          if (!fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) throw new BadRequest(`no folder ${folder}`);
+          const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : path.basename(folder).replace(/[^\w.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "");
+          if (!NAME.test(name)) throw new BadRequest("a name is letters, digits, '.', '-' or '_', up to 40");
+          if (terminals(home).some((t) => t.name === name)) throw new BadRequest(`${name} is already open: go to it, or pick another name`);
+          if (!(await launch(folder, name))) throw new BadRequest(`couldn't open a window: in a terminal, cd to ${folder} and run scripts\\windows\\copilot-here.ps1 -Name ${name}`);
+          log(`opened ${name} in ${folder}`);
           break;
         }
         case "/api/jump": {

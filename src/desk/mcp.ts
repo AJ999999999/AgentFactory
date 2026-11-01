@@ -9,6 +9,7 @@ import { serveMcp, type McpTool } from "../mcp-rpc.ts";
 import { pending, terminalOf } from "./hold.ts";
 import { deskHome, readLog } from "./log.ts";
 import { send, YOU } from "./notes.ts";
+import { readEvents, sessionFile, summarize } from "./session.ts";
 import { deskView } from "./view.ts";
 
 export const DESK_SERVER = "af-desk";
@@ -17,20 +18,30 @@ export function terminals(home = deskHome(), now = Date.now()) {
   return deskView(readLog(home), pending(home), [], {}, now).filter((t) => t.state !== "closed");
 }
 
+// What each open session is for: your first prompt there, as the desk titles threads.
+function titled(home: string) {
+  const log = readLog(home);
+  const transcript = (s: string) => log.find((e) => e.session === s && e.transcript)?.transcript;
+  return terminals(home).map((t) => {
+    const f = sessionFile(t.session, transcript(t.session));
+    return { ...t, title: f ? summarize(readEvents(f)).title : undefined };
+  });
+}
+
 export function deskTools(me: string, home = deskHome()): McpTool[] {
   return [
     {
       name: "list_terminals",
-      description: "The other Copilot CLI sessions the user has open on this PC, one per terminal and repo: name, folder, what each is doing or waiting on.",
+      description: "The other Copilot CLI sessions the user has open on this PC, one per terminal and repo: name, folder, what each was asked to do, what it's doing or waiting on.",
       inputSchema: { type: "object", properties: {} },
       call: () => {
-        const ts = terminals(home);
+        const ts = titled(home);
         const now = Date.now();
         return {
           text: ts.length
-            ? ts.map((t) => `- ${t.name}${t.name === me ? " (this terminal)" : ""}: ${t.cwd}; ${t.state} for ${Math.round((now - t.since) / 60_000)}m${t.said ? `; last said: ${t.said.slice(0, 160)}` : ""}`).join("\n")
+            ? ts.map((t) => `- ${t.name}${t.name === me ? " (this terminal)" : ""}: ${t.cwd}${t.title ? `; working on: ${t.title}` : ""}; ${t.state} for ${Math.round((now - t.since) / 60_000)}m${t.said ? `; last said: ${t.said.slice(0, 160)}` : ""}`).join("\n")
             : "No terminal is open.",
-          data: ts.map((t) => ({ name: t.name, cwd: t.cwd, state: t.state, since: t.since })),
+          data: ts.map((t) => ({ name: t.name, cwd: t.cwd, title: t.title, state: t.state, since: t.since })),
         };
       },
     },

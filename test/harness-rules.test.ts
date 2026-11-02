@@ -426,6 +426,19 @@ test("a turn is told which checks it must pass, failures in code it didn't write
   assert.doesNotMatch(buildPacket(plain, plain.todos.get("t")!, "why"), /Checked when you finish/);
 });
 
+test("validation: a proposed todo's Windows paths are the same paths, so a follow-up isn't dropped as out of scope", () => {
+  const s = st(goal({ id: "G", scope: ["game"], assumptions: [A({ id: "D" })] }), todo("G", { id: "levels", lane: "levels", text: "levels", tests: "D", writeScope: ["game/levels"] }));
+  const v = validate(s, "levels", { todos: [
+    { lane: "build", text: "make all five levels playable and update the tests", tests: "D", writeScope: ["game\\game.js", "game\\logic.test.cjs"], freeze: ["game\\levels"] },
+    { lane: "build", text: "reach outside", tests: "D", writeScope: ["other\\x.js"] },
+  ] });
+  const added = v.events.filter((e) => e.type === "todo_added").map((e) => (e as Extract<HEvent, { type: "todo_added" }>).todo);
+  assert.equal(added.length, 1);
+  assert.deepEqual(added[0].writeScope, ["game/game.js", "game/logic.test.cjs"]);
+  assert.deepEqual(added[0].freeze, ["game/levels"]);
+  assert.ok(v.reasons.some((r) => /todo 1: scope other\/x\.js is outside the goal's scope/.test(r)), v.reasons.join("; "));
+});
+
 test("validation: an agent can't make its own work survive a pivot, outlast the turn cap, or name a reviewer nobody is", () => {
   const s = st(goal({ id: "G", assumptions: [A({ id: "D" })] }), todo("G", { id: "r", lane: "x", text: "r", tests: "D" }));
   const v = validate(s, "r", { todos: [

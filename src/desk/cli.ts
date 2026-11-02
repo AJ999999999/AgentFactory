@@ -14,6 +14,7 @@
 //   npm run desk -- tail [--n 20]    the last events, to check the hook is firing
 //   npm run desk -- away [on|off]    while you're away, asks go to Teams as cards (needs teams in config.json)
 //   npm run desk -- teams test       send one test card to Teams and wait for your tap
+//   npm run desk -- slack test       post one test message to your Slack workflow
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -120,18 +121,28 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     break;
   }
   case "away": {
-    const { awaySince, loadConfig, setAway, teamsOf } = await import("./hold.ts");
+    const { awaySince, awayTo, loadConfig, setAway } = await import("./hold.ts");
     if (args[0] === "on" || args[0] === "off") {
-      if (args[0] === "on" && !teamsOf(loadConfig())) {
-        console.error(`set up Teams first: "teams": {"folder": ..., "me": ...} in ${path.join(deskHome(), "config.json")}; see docs/desk.md`);
+      if (args[0] === "on" && !awayTo(loadConfig())) {
+        console.error(`set up Teams or Slack first in ${path.join(deskHome(), "config.json")}; see docs/desk.md`);
         process.exitCode = 1;
         break;
       }
       setAway(args[0] === "on");
     }
     const since = awaySince();
-    console.log(since ? `away since ${new Date(since).toLocaleTimeString()}: asks go to Teams while the desk runs` : "at the desk: asks go where each terminal is set");
+    console.log(since ? `away since ${new Date(since).toLocaleTimeString()}: asks go to ${awayTo(loadConfig())?.to ?? "nowhere (set up Teams or Slack)"} while the desk runs` : "at the desk: asks go where each terminal is set");
     break;
+  }
+  case "slack": {
+    if (args[0] !== "test") {
+      console.error("usage: npm run desk -- slack test");
+      process.exit(2);
+    }
+    const { slackTest } = await import("./slack.ts");
+    const r = await slackTest();
+    for (const l of r.lines) console.log(l);
+    process.exit(r.ok ? 0 : 1);
   }
   case "teams": {
     if (args[0] !== "test") {
@@ -151,7 +162,7 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     break;
   }
   default:
-    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | tail [--n 20] | away [on|off] | teams test\nstate: ${deskHome()}`);
+    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | tail [--n 20] | away [on|off] | teams test | slack test\nstate: ${deskHome()}`);
     process.exit(1);
 }
 

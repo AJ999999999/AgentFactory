@@ -10,8 +10,8 @@
 // the terminal", the desk stops, or the wait runs out. Standing answers you gave on the
 // desk apply either way.
 //
-// When you're away from the desk and Teams is set up (teams.ts), every terminal's asks
-// are held, and the desk sends each one to Teams as a card; they wait longer, since
+// When you're away from the desk and Teams or Slack is set up (teams.ts, slack.ts), every
+// terminal's asks are held, and the desk sends each one there; they wait longer, since
 // Copilot waits for you either way. Coming back hands the ones held only because you
 // were away back to their terminals.
 import * as fs from "node:fs";
@@ -28,6 +28,15 @@ export type DeskConfig = {
   asks: "terminal" | "desk";
   // Cards on Teams for asks, while you're away (teams.ts). Off unless both are set.
   teams?: TeamsConfig;
+  // A message on Slack for each ask, while you're away (slack.ts). Off unless webhook is set.
+  slack?: SlackConfig;
+};
+
+export type SlackConfig = {
+  // The address of a Slack workflow that starts from a webhook and messages you.
+  webhook: string;
+  afterSec?: number;
+  holdSec?: number;
 };
 
 export type TeamsConfig = {
@@ -99,7 +108,25 @@ export function teamsOf(cfg: DeskConfig): Required<TeamsConfig> | undefined {
   return { folder: t.folder, me: t.me, afterSec: sec(t.afterSec, 300), holdSec: Math.min(sec(t.holdSec, TEAMS_HOLD_SEC), HOOK_TIMEOUT_SEC - 300) };
 }
 
-// Away from the desk: since when, or undefined. Means nothing without Teams set up.
+// Slack, when it's set up: a workflow's webhook address, and the waits filled in.
+export function slackOf(cfg: DeskConfig): Required<SlackConfig> | undefined {
+  const t = cfg.slack;
+  if (!t || typeof t.webhook !== "string" || !/^https:\/\/hooks\.slack\.com\//.test(t.webhook)) return undefined;
+  const sec = (v: unknown, d: number) => (typeof v === "number" && v >= 0 ? v : d);
+  return { webhook: t.webhook, afterSec: sec(t.afterSec, 300), holdSec: Math.min(sec(t.holdSec, TEAMS_HOLD_SEC), HOOK_TIMEOUT_SEC - 300) };
+}
+
+// Where asks go while you're away: Teams if it's set up, else Slack, else nowhere (and
+// being away then holds nothing). Slack only tells you; Teams lets you answer.
+export type AwayTo = { to: "Teams" | "Slack"; afterSec: number; holdSec: number; answers: boolean };
+export function awayTo(cfg: DeskConfig): AwayTo | undefined {
+  const t = teamsOf(cfg);
+  if (t) return { to: "Teams", afterSec: t.afterSec, holdSec: t.holdSec, answers: true };
+  const s = slackOf(cfg);
+  return s ? { to: "Slack", afterSec: s.afterSec, holdSec: s.holdSec, answers: false } : undefined;
+}
+
+// Away from the desk: since when, or undefined. Means nothing without Teams or Slack set up.
 export function awaySince(home = deskHome()): number | undefined {
   const a = readJson<{ since?: number }>(awayFile(home), {});
   return typeof a.since === "number" ? a.since : undefined;
@@ -111,9 +138,9 @@ export function setAway(on: boolean, home = deskHome(), now = Date.now()): void 
   } else fs.rmSync(awayFile(home), { force: true });
 }
 
-// How long an ask waits while you're away with Teams set up; undefined otherwise.
+// How long an ask waits while you're away with Teams or Slack set up; undefined otherwise.
 function awayHoldSec(home: string): number | undefined {
-  const t = teamsOf(loadConfig(home));
+  const t = awayTo(loadConfig(home));
   return t && awaySince(home) !== undefined ? t.holdSec : undefined;
 }
 

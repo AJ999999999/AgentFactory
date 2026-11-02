@@ -388,7 +388,7 @@ const psPath = (cwd) => {
 const psLine = (cwd, cmd) => h("code", { class: "ps" }, h("span", { class: "sr" }, "Wants to run: "), h("span", { class: "p", "aria-hidden": "true" }, `PS ${psPath(cwd)}> `), cmd);
 
 // A permission ask held here (for a terminal you chose to answer on the desk, or any
-// terminal while you're away with Teams set up).
+// terminal while you're away with Teams or Slack set up).
 function askEl(t, a, d) {
   const k = `t:${t.name}`;
   const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": `ask:${a.id}:note` });
@@ -401,7 +401,7 @@ function askEl(t, a, d) {
       h("button", { class: "opt rec allow", onclick: () => act("/api/answer", { ask: a.id, choice: "allow" }, k) }, "Allow"),
       a.always ? h("button", { class: "opt", onclick: () => act("/api/answer", { ask: a.id, choice: "always" }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : a.tool} in ${t.name} from now on`) : null,
       h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal"),
-      h("span", { class: "hint" }, onTeams ? h("span", { class: "on-teams" }, "Sent to Teams. ") : null, `Goes back to the terminal in ${left} min if you don't answer.`)),
+      h("span", { class: "hint" }, onTeams ? h("span", { class: "on-teams" }, d.teams.answers ? `Sent to ${d.teams.to}. ` : `${d.teams.to} told you. `) : null, `Goes back to the terminal in ${left} min if you don't answer.`)),
     h("div", { class: "form row" }, note,
       h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k, `ask:${a.id}:note`) }, "Deny")));
 }
@@ -828,13 +828,13 @@ function render() {
     fresh ? h("span", { class: "new-key" }, h("i"), "new since you last looked") : null,
   ].filter(Boolean));
   document.getElementById("start").setAttribute("aria-pressed", String(ui.starting));
-  // Away: every terminal's asks wait here and go to Teams. Shown once Teams is set up.
+  // Away: every terminal's asks wait here and go to Teams or Slack. Shown once one is set up.
   const away = document.getElementById("away");
   away.hidden = !d.teams;
   if (d.teams) {
     away.setAttribute("aria-pressed", String(!!d.teams.away));
-    away.textContent = d.teams.away ? `Away since ${new Date(d.teams.away).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: I'm back` : "I'm away: send asks to Teams";
-    away.title = d.teams.away ? "Asks held only because you were away go back to their terminals." : "Every terminal's permission asks wait here and reach you on Teams as cards.";
+    away.textContent = d.teams.away ? `Away since ${new Date(d.teams.away).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: I'm back` : `I'm away: send asks to ${d.teams.to}`;
+    away.title = d.teams.away ? "Asks held only because you were away go back to their terminals." : d.teams.answers ? `Every terminal's permission asks wait here and reach you on ${d.teams.to} as cards.` : `Every terminal's permission asks wait here, and ${d.teams.to} tells you about each one. You answer when you're back.`;
   }
   // Nothing picked yet, or the pick is gone: the thread that waits on you longest.
   const names = [...d.threads.map((t) => t.name), ...d.hosted.map((x) => x.name)];

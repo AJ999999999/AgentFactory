@@ -38,6 +38,9 @@ const commandIn = (detail?: string): boolean => {
   }
 };
 
+// What an ask is, in one line: "billing wants to run a command".
+export const headline = (ask: Ask): string => (commandIn(ask.detail) ? `${ask.terminal} wants to run a command` : `${ask.terminal} wants to use ${ask.tool}`);
+
 // The card for one ask, in Adaptive Card 1.2, which Teams shows on the phone too. Every
 // button carries the ask's id and code; the flow sends back what the button carried.
 export function card(ask: Ask, nonce: string, about: About = {}): Record<string, unknown> {
@@ -50,7 +53,7 @@ export function card(ask: Ask, nonce: string, about: About = {}): Record<string,
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.2",
     body: [
-      { type: "TextBlock", text: commandIn(ask.detail) ? `${ask.terminal} wants to run a command` : `${ask.terminal} wants to use ${ask.tool}`, weight: "Bolder", size: "Medium", wrap: true },
+      { type: "TextBlock", text: headline(ask), weight: "Bolder", size: "Medium", wrap: true },
       ...(about.title ? [{ type: "TextBlock", text: about.title, isSubtle: true, wrap: true }] : []),
       { type: "TextBlock", text: wants, fontType: "Monospace", wrap: true },
       { type: "FactSet", facts },

@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { answer, hold, pageFile, pending, setAway, setMode, writeJson } from "../src/desk/hold.ts";
 import type { DeskEvent } from "../src/desk/log.ts";
 import { startDesk } from "../src/desk/server.ts";
-import { type SlackMessage, slackTest, slackTick } from "../src/desk/slack.ts";
+import { type Mail, type ReadMail, type SlackMessage, slackReplies, slackTest, slackTick } from "../src/desk/slack.ts";
 
 const HOOK = "https://hooks.slack.com/triggers/T0/1/abc";
 const tmp = (n: string) => fs.mkdtempSync(path.join(os.tmpdir(), `af-slack-${n}-`));
@@ -108,4 +108,62 @@ test("on the desk, 'I'm away' with Slack set up posts held asks by itself and sa
   } finally {
     await desk.close();
   }
+});
+
+// Slack set up with answers by mail: the workflow's Outlook step, played by a mailbox.
+function withMail(name: string) {
+  const home = setUp(name, { replies: "outlook", me: "jack@corp.example" });
+  const box: Mail[] = [];
+  const read: ReadMail = async (only) => box.splice(0).filter((m) => !only || m.subject.includes(` ${only} `));
+  return { home, box, read };
+}
+
+test("your answer on Slack comes back as a mail to yourself, and is what Copilot gets", async () => {
+  const { home, box, read } = withMail("mail");
+  setAway(true, home);
+  const held = hold(ask(), { home, pollMs: 5 });
+  const a = await asked(home);
+  const s = slack();
+  await slackTick(home, Date.now(), () => ({}), s.send);
+  const { nonce } = s.got[0].body;
+  box.push({ subject: `af-desk ${a.id} ${nonce} Deny`, body: "use the staging database\r\n", from: "Jack@Corp.example" });
+  const r = await slackReplies(home, Date.now(), read);
+  assert.deepEqual(r.answered.map((x) => [x.ask, x.choice]), [[a.id, "deny"]]);
+  const h = await held;
+  assert.deepEqual([h.output, h.by, h.who], [{ behavior: "deny", message: "Denied from the desk: use the staging database" }, "slack", "Jack@Corp.example"]);
+});
+
+test("a mail from someone else, with the wrong code, an unknown choice or after you answered changes nothing", async () => {
+  const { home, box, read } = withMail("strangers");
+  setAway(true, home);
+  const held = hold(ask(), { home, pollMs: 5 });
+  const a = await asked(home);
+  const s = slack();
+  await slackTick(home, Date.now(), () => ({}), s.send);
+  const { nonce } = s.got[0].body;
+  box.push(
+    { subject: `af-desk ${a.id} ${nonce} Allow`, body: "", from: "someone@corp.example" },
+    { subject: `af-desk ${a.id} guessed Allow`, body: "", from: "jack@corp.example" },
+    { subject: `af-desk ${a.id} ${nonce} Maybe`, body: "", from: "jack@corp.example" },
+  );
+  const r = await slackReplies(home, Date.now(), read);
+  assert.deepEqual(r.ignored.map((x) => x.why), ["sent by someone@corp.example, not jack@corp.example", "not a message the desk sent", "no such answer: maybe"]);
+  answer(a.id, "allow", undefined, home);
+  assert.equal((await held).by, "page");
+  await slackTick(home, Date.now(), () => ({}), s.send);
+  box.push({ subject: `af-desk ${a.id} ${nonce} Allow from now on`, body: "", from: "jack@corp.example" });
+  assert.equal((await slackReplies(home, Date.now(), read)).answered.length, 0, "nothing waits for it any more, so the mailbox isn't even read");
+});
+
+test("the Slack test with answers by mail waits for your answer and checks who sent it", async () => {
+  const { home, read, box } = withMail("mail-test");
+  const s = slack();
+  const reply = (from: string) => async () => {
+    const b = s.got.at(-1)!.body;
+    box.push({ subject: `af-desk ${b.ask} ${b.nonce} Allow`, body: "", from });
+  };
+  const ok = await slackTest(home, s.send, { read, sleep: reply("jack@corp.example"), waitMs: 60_000 });
+  assert.equal(ok.ok, true, ok.lines.join("\n"));
+  const wrong = await slackTest(home, s.send, { read, sleep: reply("someone@corp.example"), waitMs: 60_000 });
+  assert.match(wrong.lines.join("\n"), /slack.me is jack@corp.example/);
 });

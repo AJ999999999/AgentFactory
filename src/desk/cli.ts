@@ -14,7 +14,7 @@
 //   npm run desk -- tail [--n 20]    the last events, to check the hook is firing
 //   npm run desk -- away [on|off]    while you're away, asks go to Teams as cards (needs teams in config.json)
 //   npm run desk -- teams test       send one test card to Teams and wait for your tap
-//   npm run desk -- slack test       post one test message to your Slack workflow
+//   npm run desk -- slack test       post one test message to your Slack workflow, and wait for your answer by mail if set up
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";

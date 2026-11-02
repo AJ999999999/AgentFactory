@@ -35,6 +35,11 @@ export type DeskConfig = {
 export type SlackConfig = {
   // The address of a Slack workflow that starts from a webhook and messages you.
   webhook: string;
+  // "outlook": the workflow emails your answer to you, and the desk reads it from the
+  // Outlook app on this PC. Needs `me`.
+  replies?: "outlook";
+  // Your email address: an answer from any other sender is ignored.
+  me?: string;
   afterSec?: number;
   holdSec?: number;
 };
@@ -67,7 +72,7 @@ const TEAMS_HOLD_SEC = 3000;
 export type Ask = { id: string; at: number; session: string; cwd: string; terminal: string; tool: string; detail?: string; always?: { prefix?: string }; pid?: number };
 export type Choice = "allow" | "deny" | "terminal" | "always";
 // `via` and `who`: answered on a Teams card, by that account.
-export type Answer = { choice: Choice; note?: string; at: number; via?: "teams"; who?: string };
+export type Answer = { choice: Choice; note?: string; at: number; via?: "teams" | "slack"; who?: string };
 // "Allow this tool in this terminal from now on", given on the page.
 export type Rule = { terminal: string; tool: string; prefix?: string; at: number };
 
@@ -109,21 +114,22 @@ export function teamsOf(cfg: DeskConfig): Required<TeamsConfig> | undefined {
 }
 
 // Slack, when it's set up: a workflow's webhook address, and the waits filled in.
-export function slackOf(cfg: DeskConfig): Required<SlackConfig> | undefined {
+export function slackOf(cfg: DeskConfig): (Required<Omit<SlackConfig, "replies">> & Pick<SlackConfig, "replies">) | undefined {
   const t = cfg.slack;
   if (!t || typeof t.webhook !== "string" || !/^https:\/\/hooks\.slack\.com\//.test(t.webhook)) return undefined;
   const sec = (v: unknown, d: number) => (typeof v === "number" && v >= 0 ? v : d);
-  return { webhook: t.webhook, afterSec: sec(t.afterSec, 300), holdSec: Math.min(sec(t.holdSec, TEAMS_HOLD_SEC), HOOK_TIMEOUT_SEC - 300) };
+  const replies = t.replies === "outlook" && typeof t.me === "string" && t.me.includes("@") ? "outlook" : undefined;
+  return { webhook: t.webhook, ...(replies ? { replies } : {}), me: replies ? (t.me as string) : "", afterSec: sec(t.afterSec, 300), holdSec: Math.min(sec(t.holdSec, TEAMS_HOLD_SEC), HOOK_TIMEOUT_SEC - 300) };
 }
 
 // Where asks go while you're away: Teams if it's set up, else Slack, else nowhere (and
-// being away then holds nothing). Slack only tells you; Teams lets you answer.
+// being away then holds nothing). Slack lets you answer only with replies by Outlook.
 export type AwayTo = { to: "Teams" | "Slack"; afterSec: number; holdSec: number; answers: boolean };
 export function awayTo(cfg: DeskConfig): AwayTo | undefined {
   const t = teamsOf(cfg);
   if (t) return { to: "Teams", afterSec: t.afterSec, holdSec: t.holdSec, answers: true };
   const s = slackOf(cfg);
-  return s ? { to: "Slack", afterSec: s.afterSec, holdSec: s.holdSec, answers: false } : undefined;
+  return s ? { to: "Slack", afterSec: s.afterSec, holdSec: s.holdSec, answers: !!s.replies } : undefined;
 }
 
 // Away from the desk: since when, or undefined. Means nothing without Teams or Slack set up.
@@ -201,7 +207,7 @@ export function commandOf(raw: Record<string, unknown>): string | undefined {
 
 // "teams": answered on a Teams card; "back": you came back to the desk, so an ask held
 // only because you were away went to its terminal.
-export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "desk-command" | "page" | "teams" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode" | "back"; choice?: Choice; waitedMs?: number; note?: string; who?: string };
+export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "desk-command" | "page" | "teams" | "slack" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode" | "back"; choice?: Choice; waitedMs?: number; note?: string; who?: string };
 
 export type HoldDeps = { home?: string; now?: () => number; sleep?: (ms: number) => Promise<void>; pollMs?: number };
 
@@ -237,7 +243,7 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
       const a = readJson<Answer | null>(answerFile, null);
       if (a) {
         const waitedMs = now() - start;
-        const by = a.via === "teams" ? "teams" : "page";
+        const by = a.via ?? "page";
         const who = a.who ? { who: a.who } : {};
         if (a.choice === "terminal") return { output: usual, by: "terminal", choice: a.choice, waitedMs, ...who };
         if (a.choice === "deny") return { output: { behavior: "deny", message: a.note ? `Denied from the desk: ${a.note}` : "Denied from the desk." }, by, choice: a.choice, waitedMs, ...(a.note ? { note: a.note } : {}), ...who };
@@ -258,7 +264,7 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
 
 // What the page does when you answer: the answer file the hook is polling for, and for
 // "always" a standing rule for this terminal and tool.
-export function answer(id: string, choice: Choice, note: string | undefined, home = deskHome(), now = Date.now(), from?: { via: "teams"; who: string }): void {
+export function answer(id: string, choice: Choice, note: string | undefined, home = deskHome(), now = Date.now(), from?: { via: "teams" | "slack"; who: string }): void {
   const { asks, answers } = dirs(home);
   const ask = readJson<Ask | null>(path.join(asks, `${id}.json`), null);
   if (!ask) throw new Error("that ask is gone: answered in the terminal, or its wait ran out");

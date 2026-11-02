@@ -24,7 +24,7 @@ import { deskHome, readLog } from "./log.ts";
 import { terminals } from "./others.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
 import { conversation, readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
-import { slackSentIds, slackTick } from "./slack.ts";
+import { slackReplies, slackSentIds, slackTick } from "./slack.ts";
 import { type About, sentIds, teamsTick } from "./teams.ts";
 import { type Bridge, HostedTerminals, type HostedView } from "./terminal.ts";
 import { threads } from "./threads.ts";
@@ -65,6 +65,9 @@ export type DeskOptions = {
   teamsEveryMs?: number;
   // How the desk posts to Slack; tests play Slack.
   slackPost?: import("./slack.ts").Post;
+  // How often, and how, your answers by mail are read from Outlook; tests play Outlook.
+  outlookEveryMs?: number;
+  readMail?: import("./slack.ts").ReadMail;
 };
 
 const LAUNCHER = path.join(import.meta.dirname, "..", "..", "scripts", "windows", "copilot-here.ps1");
@@ -474,6 +477,25 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
     }
   };
   const teamsTimer = setInterval(teamsPass, opts.teamsEveryMs ?? 3_000);
+  // Your answers to Slack, by mail. Outlook is slow to start, so less often, one at a time.
+  let mailError = "";
+  let mailBusy = false;
+  const mailTimer = setInterval(() => {
+    if (mailBusy) return;
+    mailBusy = true;
+    void slackReplies(home, Date.now(), opts.readMail)
+      .then((r) => {
+        for (const a of r.answered) log(`answered ${a.ask} on Slack (${a.who}): ${a.choice}`);
+        for (const x of r.ignored) log(`ignored a mail "${x.subject}": ${x.why}`);
+        mailError = "";
+      })
+      .catch((e) => {
+        const m = (e as Error).message;
+        if (m !== mailError) log(`Outlook: ${m}`);
+        mailError = m;
+      })
+      .finally(() => (mailBusy = false));
+  }, opts.outlookEveryMs ?? 15_000);
   return {
     url: `http://127.0.0.1:${port}/`,
     port,
@@ -484,6 +506,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         clearInterval(beating);
         clearInterval(learner);
         clearInterval(teamsTimer);
+        clearInterval(mailTimer);
         clearTimeout(first);
         closed = true;
         terms.closeAll();

@@ -25,7 +25,7 @@ export function waits(log: DeskEvent[]): Wait[] {
       open.delete(e.session);
     }
     if (e.event === "permissionRequest") lastAsk.set(e.session, e);
-    if (e.event === "decision" && (e.by === "page" || e.by === "teams")) {
+    if (e.event === "decision" && (e.by === "page" || e.by === "teams" || e.by === "slack")) {
       const ask = lastAsk.get(e.session);
       out.push({ at: e.at - (e.waitedMs ?? 0), repo: path.basename(e.cwd) || e.cwd, session: e.session, why: "permission", onPage: true, ...(e.terminal ? { terminal: e.terminal } : {}), ...(e.tool ? { tool: e.tool } : {}), ...(ask?.detail ? { detail: ask.detail } : {}), ...(e.waitedMs !== undefined ? { waitedMs: e.waitedMs } : {}) });
     }

@@ -5,7 +5,7 @@ This branch is a variant for one setup: a Windows PC where Copilot CLI is the on
 - **Every session as a thread.** Each is titled by what you first asked it, and grouped by what it needs from you: needs you, your turn, working, closed. A working thread says what it's doing now; each says what it changed. Its terminal sits on the right of the same page, so you switch terminals with one click instead of hunting for a tab.
 - **Notes between threads.** You, or the session in one terminal, can send another session a note ("I renamed the API field you call"). It's read while that session works, marked with whose words it is, and a session can see what the others were asked to do.
 - **What your sessions teach, kept.** Each finished session is read from Copilot's own session file, analysed, and what will still be true next time (how to run the tests, a rule you corrected Copilot on, a trap and its fix, how you like to work) goes into a git repo of shared memory. The next session in that repo is told it before your first prompt.
-- **Asks on Teams while you're away.** Click "I'm away" and every terminal's permission asks reach your Teams chat as cards; tap Allow or Deny on your phone and Copilot goes on. Where Teams can't run the flow, a Slack workflow tells you instead, and you answer when you're back.
+- **Asks on Teams while you're away.** Click "I'm away" and every terminal's permission asks reach your Teams chat as cards; tap Allow or Deny on your phone and Copilot goes on. Where Teams can't run the flow, a Slack workflow can do the same, with your answer coming back by Outlook.
 
 (If your company allowed Copilot's own [remote control](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-remote-control), `/remote` would answer prompts from github.com. Jack's company seat doesn't allow it.)
 
@@ -124,21 +124,31 @@ Teams can't reach your PC, and your company allows only the apps it approved, so
 - **Questions and your next prompt still need the terminal**, as on the page.
 - **What leaves the PC** is the card: terminal name, thread title, command, folder. It goes to your company's own OneDrive and Teams. The record of who answered (`report` counts Teams answers with the desk's) stays in `events.jsonl`.
 
-## Told on Slack while you're away
+## Asks on Slack while you're away
 
-If your company's Power Automate needs a license you don't have, but you can build Slack workflows, Slack can tell you about each ask. It can't take your answer: without a Slack app there is no way back to this PC, so you answer on the page or in the terminal when you return, and the ask waits for you meanwhile (the same 50 minutes as with Teams).
+If your company's Power Automate needs a license you don't have, but you can build Slack workflows, the asks can go to Slack instead. Without a Slack app nothing can call back into this PC, so your answer comes back by mail: the workflow emails it to you, and the desk reads it from the Outlook app on this PC (the desktop one, "Outlook for Microsoft 365"; the new Outlook can't be read). Skip steps 3 and 4 below and Slack only tells you; you answer when you're back, and the ask waits for you meanwhile (the same 50 minutes as with Teams).
 
 1. In Slack, open **Workflow Builder** and create a workflow that starts **From a webhook**. Add these variables, all of type text: `headline`, `thread`, `wants`, `doing`, `folder`, `since`, `ask`, `nonce`.
-2. Add one step, **Send a message to a person**, to yourself. A message that reads well: `headline` in bold, then `thread`, then `wants`, then `folder` and `since`. Publish the workflow and copy its webhook address.
-3. Add it to `%USERPROFILE%\.af\desk\config.json`:
+2. Add **Send a message to a person**, to yourself: `headline` in bold, then `thread`, `wants`, `folder` and `since`. Add a button to it, **Answer**.
+3. After the button, add **Collect info in a form**, sent to the person who clicked. Two questions: **Answer**, a drop-down with exactly these four options: `Allow`, `Allow from now on`, `Deny`, `Answer in the terminal`; and **Why not**, short text, not required.
+4. Then **Outlook: Send an email**, to your own address. Subject: `af-desk {ask} {nonce} {Answer}` (each one the variable, inserted from the menu). Body: just the form's **Why not**. Copilot reads that when you deny.
+5. Publish, copy the webhook address, and add it to `%USERPROFILE%\.af\desk\config.json`:
 
    ```json
-   { "slack": { "webhook": "https://hooks.slack.com/triggers/..." } }
+   { "slack": { "webhook": "https://hooks.slack.com/triggers/...", "replies": "outlook", "me": "you@company.com" } }
    ```
 
-4. Run `npm run desk -- slack test`. A test message should reach you in a few seconds.
+   `me` is the address the Outlook step sends from, which is yours; a mail from anyone else is ignored. Leave out `replies` and `me` if you skipped steps 3 and 4.
+6. Run `npm run desk -- slack test` with Outlook open. A test message reaches you on Slack; answer it with any choice, and the command waits for the mail and says whether the desk would take it.
 
-Then **I'm away: send asks to Slack** appears at the top of the page. If both Teams and Slack are set up, Teams is used, since you can answer there. A message Slack didn't take is tried again every few seconds; the page's log says why it failed. What leaves the PC is the message's fields: terminal name, thread title, command, folder. `ask` and `nonce` are there for a way back added later.
+Then **I'm away: send asks to Slack** appears at the top of the page. If both Teams and Slack are set up, Teams is used.
+
+**What to expect:**
+
+- **A minute or so each way.** The mail takes a moment, and the desk reads Outlook every 15 seconds while some ask has a message on Slack.
+- **The desk moves each `af-desk` mail it reads to Deleted Items**, so it's read once and your inbox stays clean. The copy in Sent Items stays.
+- **Only your answer to the message that was sent counts**: the subject has to carry that ask's id and the one-time code its message had, the mail has to come from `me`, and the ask has to still be waiting.
+- **What leaves the PC** is the message's fields: terminal name, thread title, command, folder. They go to your company's own Slack and mailbox.
 
 ## The record
 

@@ -29,6 +29,8 @@ header .spacer { flex: 1; }
 .tally .t-action { --kind: var(--action); }
 .tally .new-key i { border-radius: 50%; background: var(--focus); }
 .start-btn { border: 0; background: var(--ink); color: var(--rack); border-radius: 2px; padding: 5px 12px; font-size: 13.5px; font-weight: 600; }
+#away[aria-pressed="true"] { background: var(--ink); color: var(--rack); border-color: var(--ink); }
+.ask .on-teams { color: var(--ink); font-weight: 600; }
 .start-btn[aria-pressed="true"] { background: none; color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2); }
 
 /* groups */
@@ -243,6 +245,7 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
   <span id="offline" hidden></span>
   <span class="spacer"></span>
   <button class="toggle" id="notify" hidden>Notify me when a thread needs me</button>
+  <button class="toggle" id="away" hidden aria-pressed="false"></button>
   <button class="start-btn" id="start" aria-pressed="false">New thread</button>
 </header>
 <main class="desk">
@@ -384,18 +387,21 @@ const psPath = (cwd) => {
 };
 const psLine = (cwd, cmd) => h("code", { class: "ps" }, h("span", { class: "sr" }, "Wants to run: "), h("span", { class: "p", "aria-hidden": "true" }, `PS ${psPath(cwd)}> `), cmd);
 
-// A permission ask held here (for a terminal you chose to answer on the desk).
-function askEl(t, a, now, holdSec) {
+// A permission ask held here (for a terminal you chose to answer on the desk, or any
+// terminal while you're away with Teams set up).
+function askEl(t, a, d) {
   const k = `t:${t.name}`;
   const note = h("input", { type: "text", placeholder: "Why not (Copilot reads this and tries another way)", "data-k": `ask:${a.id}:note` });
-  const left = Math.max(0, Math.round((a.at + holdSec * 1000 - now) / 60000));
+  const holdSec = d.teams && d.teams.away ? d.teams.holdSec : d.holdSec;
+  const left = Math.max(0, Math.round((a.at + holdSec * 1000 - d.now) / 60000));
+  const onTeams = d.teams && d.teams.sent.includes(a.id);
   return h("div", { class: "ask" },
     psLine(t.cwd, cmdOf(a.detail) || a.tool),
     h("div", { class: "options" },
       h("button", { class: "opt rec allow", onclick: () => act("/api/answer", { ask: a.id, choice: "allow" }, k) }, "Allow"),
       a.always ? h("button", { class: "opt", onclick: () => act("/api/answer", { ask: a.id, choice: "always" }, k) }, `Allow ${a.always.prefix ? `"${a.always.prefix} …"` : a.tool} in ${t.name} from now on`) : null,
       h("button", { class: "opt quiet-opt", onclick: () => act("/api/answer", { ask: a.id, choice: "terminal" }, k) }, "Answer in the terminal"),
-      h("span", { class: "hint" }, `Goes back to the terminal in ${left} min if you don't answer.`)),
+      h("span", { class: "hint" }, onTeams ? h("span", { class: "on-teams" }, "Sent to Teams. ") : null, `Goes back to the terminal in ${left} min if you don't answer.`)),
     h("div", { class: "form row" }, note,
       h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k, `ask:${a.id}:note`) }, "Deny")));
 }
@@ -446,7 +452,7 @@ function needsEl(t, d, k) {
   const go = t.onDesk
     ? h("button", { class: "go-btn", onclick: () => show(t.name) }, termIcon(), ` Answer in ${t.name}'s terminal`)
     : h("button", { class: "go-btn", onclick: () => jump(t.name, k) }, `Go to ${t.name}'s tab ↗`);
-  if (t.asks.length) return [t.asks.map((a) => askEl(t, a, d.now, d.holdSec))];
+  if (t.asks.length) return [t.asks.map((a) => askEl(t, a, d))];
   if (t.state === "waiting for permission") return [t.wants ? psLine(t.cwd, t.wants) : h("p", { class: "asked" }, t.why), h("div", { class: "options" }, go)];
   return [h("p", { class: "asked" }, h("span", { class: "sr" }, "It asks: "), t.why), h("div", { class: "options" }, go)];
 }
@@ -732,6 +738,7 @@ function startOpen(on) {
   if (on) document.querySelector('[data-k="start:folder"]')?.focus(); else b.focus();
 }
 document.getElementById("start").onclick = () => startOpen(!ui.starting);
+document.getElementById("away").onclick = () => act("/api/away", { on: !(ui.data && ui.data.teams && ui.data.teams.away) }, "away");
 
 function talkEl(d) {
   const open = d.threads.filter((t) => t.state !== "closed").map((t) => t.name);
@@ -821,6 +828,14 @@ function render() {
     fresh ? h("span", { class: "new-key" }, h("i"), "new since you last looked") : null,
   ].filter(Boolean));
   document.getElementById("start").setAttribute("aria-pressed", String(ui.starting));
+  // Away: every terminal's asks wait here and go to Teams. Shown once Teams is set up.
+  const away = document.getElementById("away");
+  away.hidden = !d.teams;
+  if (d.teams) {
+    away.setAttribute("aria-pressed", String(!!d.teams.away));
+    away.textContent = d.teams.away ? `Away since ${new Date(d.teams.away).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: I'm back` : "I'm away: send asks to Teams";
+    away.title = d.teams.away ? "Asks held only because you were away go back to their terminals." : "Every terminal's permission asks wait here and reach you on Teams as cards.";
+  }
   // Nothing picked yet, or the pick is gone: the thread that waits on you longest.
   const names = [...d.threads.map((t) => t.name), ...d.hosted.map((x) => x.name)];
   if (ui.expect && (names.includes(ui.expect.name) || Date.now() > ui.expect.until)) ui.expect = null;

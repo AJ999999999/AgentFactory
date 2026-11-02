@@ -5,6 +5,7 @@ This branch is a variant for one setup: a Windows PC where Copilot CLI is the on
 - **Every session as a thread.** Each is titled by what you first asked it, and grouped by what it needs from you: needs you, your turn, working, closed. A working thread says what it's doing now; each says what it changed. Its terminal sits on the right of the same page, so you switch terminals with one click instead of hunting for a tab.
 - **Notes between threads.** You, or the session in one terminal, can send another session a note ("I renamed the API field you call"). It's read while that session works, marked with whose words it is, and a session can see what the others were asked to do.
 - **What your sessions teach, kept.** Each finished session is read from Copilot's own session file, analysed, and what will still be true next time (how to run the tests, a rule you corrected Copilot on, a trap and its fix, how you like to work) goes into a git repo of shared memory. The next session in that repo is told it before your first prompt.
+- **Asks on Teams while you're away.** Click "I'm away" and every terminal's permission asks reach your Teams chat as cards; tap Allow or Deny on your phone and Copilot goes on.
 
 (If your company allowed Copilot's own [remote control](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-remote-control), `/remote` would answer prompts from github.com. Jack's company seat doesn't allow it.)
 
@@ -91,6 +92,38 @@ For a terminal whose asks are answered "here", Copilot CLI runs a `permissionReq
 **Type in its tab** finds the terminal by the title `copilot-here.ps1` gave it ("copilot: billing"). Windows Terminal shows each tab to Windows' accessibility interface (UI Automation) by its title, so the desk selects that tab, then brings its window forward. A plain PowerShell window is found by its title alone. If Copilot renames the tab while it runs, the desk can't find it; threads started on the page don't need this.
 - **If the hook breaks, Copilot goes on as usual.** It always exits cleanly; at worst Copilot asks in the terminal and the session starts without what's known. The one exception is a hook whose script is gone: the hooks file points at this folder, so run `npm run desk -- uninstall` before you move or delete it.
 
+## Asks on Teams while you're away
+
+When you leave the PC, click **I'm away: send asks to Teams** at the top of the page (or run `npm run desk -- away on`). Until you click **I'm back**, every terminal's permission asks wait on the desk, and each goes to your Teams chat as a card: which terminal and thread, the command as it would run, its folder, and what it's doing. Tap **Allow**, **Allow … from now on**, **Deny…** (with a reason Copilot reads) or **Answer in the terminal**, and the terminal goes on as if you'd clicked on the page.
+
+Teams can't reach your PC, and your company allows only the apps it approved, so the cards travel through a folder in your OneDrive, which syncs both ways by itself. The desk writes each card to the folder's `out`. A flow you build once in Teams' Workflows app posts it to your chat with the Workflows bot, waits for your tap, and writes the tap to `in`. The desk reads it from there. No public address, no app to register, no MCP server.
+
+**Set up, once:**
+
+1. In OneDrive, make a folder `af-desk`. On the PC, right-click it and choose "Always keep on this device".
+2. Tell the desk where it is and who you are, in `%USERPROFILE%\.af\desk\config.json`:
+   ```json
+   { "teams": { "folder": "C:\\Users\\you\\OneDrive - Contoso\\af-desk", "me": "you@contoso.com" } }
+   ```
+   `me` is the account you sign in to Teams with; a tap from any other account is ignored.
+3. In Teams, open **Workflows** (or make.powerautomate.com) and create an automated flow with four steps:
+   1. **OneDrive for Business: When a file is created (properties only)**, folder `/af-desk/out`.
+   2. **OneDrive for Business: Get file content**, file = the trigger's *Identifier*, *Infer content type* = No.
+   3. **Microsoft Teams: Post adaptive card and wait for a response**. Post as *Flow bot*, post in *Chat with Flow bot*, recipient = your address. Message = the expression `base64ToString(body('Get_file_content')?['$content'])`. Update message = `Got it. A tap after the ask was settled changes nothing.`
+   4. **OneDrive for Business: Create file**, folder `/af-desk/in`, file name = the trigger's *Name*, file content = the expression `string(body('Post_adaptive_card_and_wait_for_a_response'))`.
+
+   In an expression, a step is named by its title with spaces as underscores; if you rename a step, use its new name. Both connectors are standard ones; your admin has to allow the Workflows app in Teams.
+4. Run `npm run desk -- teams test` and tap any button on the card that arrives. It says "It works", or what to fix (most often: the last step must write the card's whole response, which carries who tapped).
+
+**What to expect:**
+
+- **A minute or a few each way.** OneDrive's trigger checks for new files every so often, and syncing takes a moment. At the desk, the page and the terminal are faster.
+- **Away asks wait longer**: 50 minutes (`"holdSec"` under `teams`, at most 55, since Copilot stops a hook after an hour), then the terminal asks as usual. The desk has to keep running; stopping it sends every ask back to its terminal.
+- **I'm back** sends the asks held only because you were away back to their terminals. A terminal you answer "here" keeps its asks on the page, and sends them to Teams too once they've waited 5 minutes (`"afterSec"`), away or not.
+- **Only your tap on the card that was sent counts.** Each card carries its ask's id and a one-time code. A tap counts only when it carries both, comes from `me`, and the ask is still waiting: a tap after you answered on the page, an old card, or anyone else's changes nothing. A card for an ask settled before the flow picked it up isn't sent.
+- **Questions and your next prompt still need the terminal**, as on the page.
+- **What leaves the PC** is the card: terminal name, thread title, command, folder. It goes to your company's own OneDrive and Teams. The record of who answered (`report` counts Teams answers with the desk's) stays in `events.jsonl`.
+
 ## The record
 
 Every event of every session goes to `%USERPROFILE%\.af\desk\events.jsonl`, with who settled each held ask and how long it waited. It stays on your PC.
@@ -103,6 +136,6 @@ npm run desk -- uninstall          # the hook (and the af-desk MCP tools, if you
 
 ## Checked against
 
-Copilot CLI 1.0.105's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference). Neither the `permissionRequest` input nor the session file's format is documented in full: the hook reads `toolName`/`toolInput` and their snake_case forms, and the session reader follows the `{type, data}` lines `copilot --output-format json` prints (the same reader as the harness's turn logs). On the first day, check with `tail` that asks are recorded with their tool names, with `learn --session <id>` that a real session's digest reads well (it's kept in `knowledge\sessions\`), with a note from the desk's page that a working session mentions it after its next tool call (the `postToolUse` hook's `additionalContext`), and by asking a new session "which other terminals are open?" that it was told at its start (`sessionStart`'s `additionalContext`).
+The Teams flow follows the [Microsoft Teams connector reference](https://learn.microsoft.com/en-us/connectors/teams/); the shape of the card's response (`responder`, `data`) isn't documented there, which is what `teams test` checks. Copilot CLI 1.0.105's [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference). Neither the `permissionRequest` input nor the session file's format is documented in full: the hook reads `toolName`/`toolInput` and their snake_case forms, and the session reader follows the `{type, data}` lines `copilot --output-format json` prints (the same reader as the harness's turn logs). On the first day, check with `tail` that asks are recorded with their tool names, with `learn --session <id>` that a real session's digest reads well (it's kept in `knowledge\sessions\`), with a note from the desk's page that a working session mentions it after its next tool call (the `postToolUse` hook's `additionalContext`), and by asking a new session "which other terminals are open?" that it was told at its start (`sessionStart`'s `additionalContext`).
 
 **Terminals on the page** use Windows' own pseudo-console (ConPTY, Windows 10 1809 or later), the same one Windows Terminal is built on, through `scripts\windows\conpty.ps1`. That script compiles a little C# when it starts, so nothing is installed, but it needs PowerShell's full language mode. On a PC locked to constrained mode the terminal on the page shows PowerShell's error instead; check with `$ExecutionContext.SessionState.LanguageMode` (it should say `FullLanguage`), and start threads in a window of their own if it doesn't. The page draws terminals with [xterm.js](https://xtermjs.org/), kept in `src/desk/vendor/` (MIT licence), so nothing is fetched from the internet. On Mac and Linux the desk uses python3's `pty` instead (`scripts/pty-bridge.py`).

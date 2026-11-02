@@ -50,7 +50,7 @@ const commandIn = (detail?: string) => {
   }
 };
 // A shell command stands alone; anything else reads as the tool and what it touches.
-const wantsOf = (tool?: string, detail?: string) => {
+export const wantsOf = (tool?: string, detail?: string) => {
   try {
     if (detail && typeof (JSON.parse(detail) as Record<string, unknown>).command === "string") return commandIn(detail);
   } catch { /* not JSON: the detail as it is */ }

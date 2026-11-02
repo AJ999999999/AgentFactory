@@ -17,13 +17,14 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { runCommand } from "../proc.ts";
-import { answer, type Choice, loadConfig, modesFile, pageFile, pending, readJson, type Rule, rulesFile, writeJson } from "./hold.ts";
+import { answer, awaySince, type Choice, loadConfig, modesFile, pageFile, pending, readJson, type Rule, rulesFile, setAway, setMode, teamsOf, writeJson } from "./hold.ts";
 import { confirm, guesses, knowledgeDir, commit, reject, repoNameOf, summary } from "./knowledge.ts";
 import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnConfig, toLearn } from "./learn.ts";
 import { deskHome, readLog } from "./log.ts";
 import { terminals } from "./others.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
 import { conversation, readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
+import { sentIds, teamsTick } from "./teams.ts";
 import { type Bridge, HostedTerminals, type HostedView } from "./terminal.ts";
 import { threads } from "./threads.ts";
 
@@ -59,6 +60,8 @@ export type DeskOptions = {
   bridge?: Bridge;
   analyst?: Analyst;
   learnEveryMs?: number;
+  // How often asks go to Teams and taps come back; tests make it quick.
+  teamsEveryMs?: number;
 };
 
 const LAUNCHER = path.join(import.meta.dirname, "..", "..", "scripts", "windows", "copilot-here.ps1");
@@ -150,7 +153,10 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
     return { ...t, repo, tail, onDesk, knowledge: cached(`know:${repo}`, 3000, now, () => summary(dir, repo, now)), notes: notes.filter((n) => n.to === t.name || n.from === t.name).slice(0, 6) };
   });
   const folders = [...new Set(log.map((e) => e.cwd))].slice(-30);
-  return { now, holdSec: cfg.holdSec, askMode: cfg.asks, knowledgeDir: dir, threads: list, hosted, folders, notes: notes.slice(0, 30), guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
+  // Teams, when set up: whether you're away, how long an ask sent there waits, and which have a card.
+  const t = teamsOf(cfg);
+  const teams = t ? { away: awaySince(home) ?? null, holdSec: t.holdSec, sent: sentIds(home) } : null;
+  return { now, holdSec: cfg.holdSec, askMode: cfg.asks, teams, knowledgeDir: dir, threads: list, hosted, folders, notes: notes.slice(0, 30), guesses: cached("guesses", 3000, now, () => guesses(dir, now).slice(0, 40)), forYou: notes.filter((n) => n.to === YOU && !n.delivered), learning };
 }
 
 // Changes the page cares about; the clock alone isn't one.
@@ -246,11 +252,14 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         case "/api/mode": {
           const terminal = str(body.terminal, "terminal");
           const mode = body.mode === "terminal" ? "terminal" : "desk";
-          const modes = readJson<Record<string, string>>(modesFile(home), {});
-          if (mode === "terminal") modes[terminal] = "terminal";
-          else delete modes[terminal];
-          writeJson(modesFile(home), modes);
+          setMode(terminal, mode, home);
           log(`${terminal}: answer ${mode === "terminal" ? "in the terminal" : "on the desk"}`);
+          break;
+        }
+        case "/api/away": {
+          if (body.on && !teamsOf(loadConfig(home))) throw new BadRequest("set up Teams first: teams.folder and teams.me in config.json (see the desk guide)");
+          setAway(!!body.on, home);
+          log(body.on ? "away: asks go to Teams" : "back at the desk");
           break;
         }
         case "/api/forget": {
@@ -419,6 +428,29 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
   const beat = () => writeJson(pageFile(home), { at: Date.now(), pid: process.pid, url: `http://127.0.0.1:${port}/` });
   beat();
   const beating = setInterval(beat, 5_000);
+
+  // Asks to Teams and taps back. A failure (OneDrive's folder gone, say) is logged once,
+  // not every pass.
+  let teamsError = "";
+  const teamsPass = () => {
+    try {
+      let snap: ReturnType<typeof snapshot> | undefined;
+      const r = teamsTick(home, Date.now(), (a) => {
+        snap ??= snapshot(home, Date.now());
+        const t = snap.threads.find((x) => x.name === a.terminal);
+        return { ...(t?.title ? { title: t.title } : {}), ...(t?.now ? { doing: t.now } : {}) };
+      });
+      for (const id of r.sent) log(`sent ask ${id} to Teams`);
+      for (const a of r.answered) log(`answered ${a.ask} on Teams (${a.who}): ${a.choice}`);
+      for (const x of r.ignored) log(`ignored a tap from Teams (${x.file}): ${x.why}`);
+      teamsError = "";
+    } catch (e) {
+      const m = (e as Error).message;
+      if (m !== teamsError) log(`Teams: ${m}`);
+      teamsError = m;
+    }
+  };
+  const teamsTimer = setInterval(teamsPass, opts.teamsEveryMs ?? 3_000);
   return {
     url: `http://127.0.0.1:${port}/`,
     port,
@@ -428,6 +460,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         // Stop holding at once rather than after the beat goes stale.
         clearInterval(beating);
         clearInterval(learner);
+        clearInterval(teamsTimer);
         clearTimeout(first);
         closed = true;
         terms.closeAll();

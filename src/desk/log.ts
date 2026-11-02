@@ -39,10 +39,12 @@ export type DeskEvent = {
   reason?: string;
   // Copilot's own file for the session, when a hook was told where it is.
   transcript?: string;
-  // On a decision: who settled it, what was chosen, how long the session waited.
+  // On a decision: who settled it, what was chosen, how long the session waited, and for
+  // one answered on a Teams card, the account that tapped it.
   by?: string;
   choice?: string;
   waitedMs?: number;
+  who?: string;
 };
 
 const CUT = 300;

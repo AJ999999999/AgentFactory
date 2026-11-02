@@ -12,6 +12,8 @@
 //   npm run desk -- uninstall        stop recording
 //   npm run desk -- report [--days 7]  how often each repo's session stopped for you, and for what
 //   npm run desk -- tail [--n 20]    the last events, to check the hook is firing
+//   npm run desk -- away [on|off]    while you're away, asks go to Teams as cards (needs teams in config.json)
+//   npm run desk -- teams test       send one test card to Teams and wait for your tap
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -117,13 +119,39 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     console.log(threadList(process.env.AF_DESK_TERMINAL?.trim() || flag("from") || ""));
     break;
   }
+  case "away": {
+    const { awaySince, loadConfig, setAway, teamsOf } = await import("./hold.ts");
+    if (args[0] === "on" || args[0] === "off") {
+      if (args[0] === "on" && !teamsOf(loadConfig())) {
+        console.error(`set up Teams first: "teams": {"folder": ..., "me": ...} in ${path.join(deskHome(), "config.json")}; see docs/desk.md`);
+        process.exitCode = 1;
+        break;
+      }
+      setAway(args[0] === "on");
+    }
+    const since = awaySince();
+    console.log(since ? `away since ${new Date(since).toLocaleTimeString()}: asks go to Teams while the desk runs` : "at the desk: asks go where each terminal is set");
+    break;
+  }
+  case "teams": {
+    if (args[0] !== "test") {
+      console.error("usage: npm run desk -- teams test");
+      process.exitCode = 1;
+      break;
+    }
+    const { teamsTest } = await import("./teams.ts");
+    const r = await teamsTest();
+    console.log(r.lines.join("\n"));
+    if (!r.ok) process.exitCode = 1;
+    break;
+  }
   case "tail": {
     const n = Number(flag("n") ?? 20);
     for (const e of readLog().slice(-n)) console.log(`${new Date(e.at).toLocaleTimeString()}  ${path.basename(e.cwd).padEnd(20).slice(0, 20)}  ${e.event}${e.kind ? `:${e.kind}` : ""}${e.tool ? `  ${e.tool}` : ""}${e.detail ? `  ${e.detail}` : e.message ? `  ${e.message}` : ""}`);
     break;
   }
   default:
-    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | tail [--n 20]\nstate: ${deskHome()}`);
+    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | tail [--n 20] | away [on|off] | teams test\nstate: ${deskHome()}`);
     process.exit(1);
 }
 

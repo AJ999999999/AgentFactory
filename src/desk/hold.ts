@@ -9,6 +9,11 @@
 // desk runs, and lets go (Copilot then asks in the terminal) when you click "answer in
 // the terminal", the desk stops, or the wait runs out. Standing answers you gave on the
 // desk apply either way.
+//
+// When you're away from the desk and Teams is set up (teams.ts), every terminal's asks
+// are held, and the desk sends each one to Teams as a card; they wait longer, since
+// Copilot waits for you either way. Coming back hands the ones held only because you
+// were away back to their terminals.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { deskHome, type DeskEvent } from "./log.ts";
@@ -21,6 +26,20 @@ export type DeskConfig = {
   holdSec: number;
   // Where permission asks are answered, for terminals you haven't set either way.
   asks: "terminal" | "desk";
+  // Cards on Teams for asks, while you're away (teams.ts). Off unless both are set.
+  teams?: TeamsConfig;
+};
+
+export type TeamsConfig = {
+  // The desk's folder inside your OneDrive, as synced on this PC; the flow watches its `out`
+  // and writes to its `in`.
+  folder: string;
+  // Your Teams account: a tap from any other is ignored.
+  me: string;
+  // A terminal you answer on the desk: how long an ask waits there before it goes to Teams too.
+  afterSec?: number;
+  // How long an ask sent to Teams waits for you.
+  holdSec?: number;
 };
 
 export const DEFAULTS: DeskConfig = {
@@ -31,13 +50,15 @@ export const DEFAULTS: DeskConfig = {
 
 // Copilot kills a hook after its timeoutSec; this leaves the hold room to end first.
 export const HOOK_TIMEOUT_SEC = 3600;
+const TEAMS_HOLD_SEC = 3000;
 
 // `always` is what "allow from now on" would cover, when anything safely can: a whole
 // tool, or for a command the program and its first word (`npm run`). `pid` is the hook
 // waiting on it, so an ask whose hook died can be dropped.
 export type Ask = { id: string; at: number; session: string; cwd: string; terminal: string; tool: string; detail?: string; always?: { prefix?: string }; pid?: number };
 export type Choice = "allow" | "deny" | "terminal" | "always";
-export type Answer = { choice: Choice; note?: string; at: number };
+// `via` and `who`: answered on a Teams card, by that account.
+export type Answer = { choice: Choice; note?: string; at: number; via?: "teams"; who?: string };
 // "Allow this tool in this terminal from now on", given on the page.
 export type Rule = { terminal: string; tool: string; prefix?: string; at: number };
 
@@ -63,9 +84,46 @@ export const configFile = (home = deskHome()) => path.join(home, "config.json");
 export const rulesFile = (home = deskHome()) => path.join(home, "rules.json");
 export const modesFile = (home = deskHome()) => path.join(home, "modes.json");
 export const pageFile = (home = deskHome()) => path.join(home, "page.json");
+export const awayFile = (home = deskHome()) => path.join(home, "away.json");
 
 export function loadConfig(home = deskHome()): DeskConfig {
   return { ...DEFAULTS, ...readJson<Partial<DeskConfig>>(configFile(home), {}) };
+}
+
+// Teams, when it's set up: a folder and your account, and the waits filled in.
+export function teamsOf(cfg: DeskConfig): Required<TeamsConfig> | undefined {
+  const t = cfg.teams;
+  if (!t || typeof t.folder !== "string" || !t.folder || typeof t.me !== "string" || !t.me) return undefined;
+  const sec = (v: unknown, d: number) => (typeof v === "number" && v >= 0 ? v : d);
+  // Copilot stops a hook at HOOK_TIMEOUT_SEC, so the wait ends before that.
+  return { folder: t.folder, me: t.me, afterSec: sec(t.afterSec, 300), holdSec: Math.min(sec(t.holdSec, TEAMS_HOLD_SEC), HOOK_TIMEOUT_SEC - 300) };
+}
+
+// Away from the desk: since when, or undefined. Means nothing without Teams set up.
+export function awaySince(home = deskHome()): number | undefined {
+  const a = readJson<{ since?: number }>(awayFile(home), {});
+  return typeof a.since === "number" ? a.since : undefined;
+}
+
+export function setAway(on: boolean, home = deskHome(), now = Date.now()): void {
+  if (on) {
+    if (awaySince(home) === undefined) writeJson(awayFile(home), { since: now });
+  } else fs.rmSync(awayFile(home), { force: true });
+}
+
+// How long an ask waits while you're away with Teams set up; undefined otherwise.
+function awayHoldSec(home: string): number | undefined {
+  const t = teamsOf(loadConfig(home));
+  return t && awaySince(home) !== undefined ? t.holdSec : undefined;
+}
+
+// Where a terminal's asks are answered. Only a choice that differs from the config's
+// default is kept, so changing the default moves every terminal you didn't set.
+export function setMode(terminal: string, mode: "terminal" | "desk", home = deskHome()): void {
+  const modes = readJson<Record<string, string>>(modesFile(home), {});
+  if (mode === loadConfig(home).asks) delete modes[terminal];
+  else modes[terminal] = mode;
+  writeJson(modesFile(home), modes);
 }
 
 // A terminal's name: the launcher's, else the repo folder's.
@@ -114,7 +172,9 @@ export function commandOf(raw: Record<string, unknown>): string | undefined {
   return typeof c === "string" ? c : undefined;
 }
 
-export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "desk-command" | "page" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode"; choice?: Choice; waitedMs?: number; note?: string };
+// "teams": answered on a Teams card; "back": you came back to the desk, so an ask held
+// only because you were away went to its terminal.
+export type HoldResult = { output: Record<string, unknown>; by: "pass" | "rule" | "desk-command" | "page" | "teams" | "terminal" | "timeout" | "no-desk" | "desk-closed" | "terminal-mode" | "back"; choice?: Choice; waitedMs?: number; note?: string; who?: string };
 
 export type HoldDeps = { home?: string; now?: () => number; sleep?: (ms: number) => Promise<void>; pollMs?: number };
 
@@ -132,7 +192,9 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
   // A session sending a note or listing the threads: the desk's own command, nothing chained on.
   if (isDeskCommand(command)) return { output: { behavior: "allow" }, by: "desk-command", choice: "allow" };
   if (ruleMatches(readJson<Rule[]>(rulesFile(home), []), { terminal, tool, command })) return { output: { behavior: "allow" }, by: "rule", choice: "allow" };
-  if ((readJson<Record<string, string>>(modesFile(home), {})[terminal] ?? cfg.asks) !== "desk") return { output: usual, by: "terminal-mode" };
+  // Held for the desk because you chose so for this terminal, or only because you're away.
+  const forAway = (readJson<Record<string, string>>(modesFile(home), {})[terminal] ?? cfg.asks) !== "desk";
+  if (forAway && awayHoldSec(home) === undefined) return { output: usual, by: "terminal-mode" };
   if (!deskOpen(home, now())) return { output: usual, by: "no-desk" };
 
   const start = now();
@@ -144,18 +206,23 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
   const ask: Ask = { id, at: start, session: e.session, cwd: e.cwd, terminal, tool, ...(e.detail ? { detail: e.detail } : {}), ...(always ? { always } : {}), pid: process.pid };
   writeJson(askFile, ask);
   try {
-    while (now() - start < cfg.holdSec * 1000) {
+    for (;;) {
       const a = readJson<Answer | null>(answerFile, null);
       if (a) {
         const waitedMs = now() - start;
-        if (a.choice === "terminal") return { output: usual, by: "terminal", choice: a.choice, waitedMs };
-        if (a.choice === "deny") return { output: { behavior: "deny", message: a.note ? `Denied from the desk: ${a.note}` : "Denied from the desk." }, by: "page", choice: a.choice, waitedMs, ...(a.note ? { note: a.note } : {}) };
-        return { output: { behavior: "allow" }, by: "page", choice: a.choice, waitedMs };
+        const by = a.via === "teams" ? "teams" : "page";
+        const who = a.who ? { who: a.who } : {};
+        if (a.choice === "terminal") return { output: usual, by: "terminal", choice: a.choice, waitedMs, ...who };
+        if (a.choice === "deny") return { output: { behavior: "deny", message: a.note ? `Denied from the desk: ${a.note}` : "Denied from the desk." }, by, choice: a.choice, waitedMs, ...(a.note ? { note: a.note } : {}), ...who };
+        return { output: { behavior: "allow" }, by, choice: a.choice, waitedMs, ...who };
       }
       if (!deskOpen(home, now())) return { output: usual, by: "desk-closed", waitedMs: now() - start };
+      // Read each time round: you can leave or come back while it waits.
+      const away = awayHoldSec(home);
+      if (forAway && away === undefined) return { output: usual, by: "back", waitedMs: now() - start };
+      if (now() - start >= (away ?? cfg.holdSec) * 1000) return { output: usual, by: "timeout", waitedMs: now() - start };
       await sleep(deps.pollMs ?? 300);
     }
-    return { output: usual, by: "timeout", waitedMs: now() - start };
   } finally {
     fs.rmSync(askFile, { force: true });
     fs.rmSync(answerFile, { force: true });
@@ -164,7 +231,7 @@ export async function hold(e: DeskEvent, deps: HoldDeps = {}, command?: string):
 
 // What the page does when you answer: the answer file the hook is polling for, and for
 // "always" a standing rule for this terminal and tool.
-export function answer(id: string, choice: Choice, note: string | undefined, home = deskHome(), now = Date.now()): void {
+export function answer(id: string, choice: Choice, note: string | undefined, home = deskHome(), now = Date.now(), from?: { via: "teams"; who: string }): void {
   const { asks, answers } = dirs(home);
   const ask = readJson<Ask | null>(path.join(asks, `${id}.json`), null);
   if (!ask) throw new Error("that ask is gone: answered in the terminal, or its wait ran out");
@@ -174,7 +241,7 @@ export function answer(id: string, choice: Choice, note: string | undefined, hom
     const rule: Rule = { terminal: ask.terminal, tool: ask.tool, ...(ask.always.prefix ? { prefix: ask.always.prefix } : {}), at: now };
     if (!rules.some((r) => r.terminal === rule.terminal && r.tool === rule.tool && r.prefix === rule.prefix)) writeJson(rulesFile(home), [...rules, rule]);
   }
-  writeJson(path.join(answers, `${id}.json`), { choice, ...(note ? { note } : {}), at: now } satisfies Answer);
+  writeJson(path.join(answers, `${id}.json`), { choice, ...(note ? { note } : {}), at: now, ...(from ?? {}) } satisfies Answer);
 }
 
 export function pending(home = deskHome()): Ask[] {

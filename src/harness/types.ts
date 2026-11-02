@@ -281,6 +281,9 @@ export type HEvent = Base &
     | { type: "todo_blocked"; todo: string; reason: string; ask?: string }
     | { type: "ask_opened"; ask: Ask }
     | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision }
+    // A person fixes what their answer said. Only the note changes: the choice, and what
+    // it already did (work done or dropped, a goal closed), stand.
+    | { type: "answer_corrected"; ask: string; note: string }
     // The harness settled an ask without the person: the todo's own checker already
     // passed (criteria_met), or the same question was answered before (precedent). Always
     // follows the ask's ask_opened, and is never dressed up as a person's answer, so audits

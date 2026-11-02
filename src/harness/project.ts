@@ -111,6 +111,8 @@ export type AskState = Ask & {
   answeredBy?: string;
   choice?: string;
   note?: string;
+  correctedAt?: number; // the note was fixed after the answer (answer_corrected)
+  correctedBy?: string;
   revision?: GoalRevision;
 };
 
@@ -268,6 +270,11 @@ export function apply(s: State, e: HEvent): void {
     case "ask_answered": {
       const a = s.asks.get(e.ask);
       if (a && a.status === "open") Object.assign(a, { status: "answered", answeredAt: e.at, answeredBy: e.answeredBy, choice: e.choice, note: e.note, revision: e.revision });
+      break;
+    }
+    case "answer_corrected": {
+      const a = s.asks.get(e.ask);
+      if (a && a.status === "answered") Object.assign(a, { note: e.note, correctedAt: e.at, correctedBy: e.by });
       break;
     }
     case "ask_auto_closed": {

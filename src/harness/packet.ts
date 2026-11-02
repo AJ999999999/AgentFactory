@@ -47,6 +47,14 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
   const evidence = t.tests ? [...s.findings.values()].filter((f) => f.assumption === t.tests).slice(-2).reverse() : [];
   const freezes = activeFreezes(s).filter((f) => f.todo !== t.id);
   const b = g.def.budget;
+  // A retry hears what threw its last try away. Told only "validation_failed", retries
+  // in a real run repeated the same mistake until the todo ran out of tries.
+  const last = s.turns.findLast((x) => x.todo === t.id);
+  const thrownAway = last?.result === "validation_failed" && last.reasons?.length ? [`Your last try was thrown away: ${cut(last.reasons.join(" | "), 300)}`] : [];
+  // The checks see the whole worktree, so a test another todo broke fails this turn too.
+  // Agents that weren't told so called such failures "not mine" and said they were done.
+  const red = s.engagement?.redLines ?? [];
+  const checks = t.check || red.length ? [`Checked when you finish: ${[t.check, red.length ? `red lines ${red.join(", ")}` : ""].filter(Boolean).join("; ")}. Any failure throws the whole turn away, even one in code you didn't write: fix it, or set a blocker saying why you can't.`] : [];
 
   // Lines in priority order; the tail is dropped first when over budget.
   const must = [
@@ -54,6 +62,8 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
     ph ? `Phase: ${ph.category}. Riskiest open assumption ${ph.assumption}: "${cut(g.def.assumptions.find((a) => a.id === ph.assumption)?.text ?? "", 90)}"` : "Phase: no open assumptions",
     `Beliefs: ${count("supported")} supported, ${count("refuted")} refuted, ${count("contested")} contested, ${count("testing")} testing, ${count("untested")} untested`,
     `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, 600)}`,
+    ...thrownAway,
+    ...checks,
     ...answersFor(s, t).map((a) => `From ${a.answeredBy} (${a.id}): ${cut(a.note ?? `chose ${a.choice}`, 320)}`),
     ...about.slice(0, 2),
     `Why this one: ${cut(why, 160)}`,

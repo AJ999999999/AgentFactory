@@ -14,7 +14,7 @@ import { settle } from "../src/harness/rules.ts";
 import { blockers, nextWake, phase, rank, readyTodos } from "../src/harness/select.ts";
 import { budgetProblem, validateTurn } from "../src/harness/validate.ts";
 import type { TurnOutput } from "../src/harness/validate.ts";
-import { answerEvents } from "../src/harness/answers.ts";
+import { answerEvents, correctionEvents } from "../src/harness/answers.ts";
 import { buildPacket } from "../src/harness/packet.ts";
 import { criteriaHash } from "../src/harness/validate.ts";
 import { askView } from "../src/panel/view.ts";
@@ -585,4 +585,45 @@ test("what people said reaches the agents whose work depends on it, through earl
   for (const e of answerEvents(s, ask.id, { by: "pharmacist", choice: "done", note: "Loves trains. Loud crash sounds upset him. Plays on a laptop with the space bar." }, T0 + 1)) apply(s, e);
   for (const id of ["core", "levels"]) assert.match(buildPacket(s, s.todos.get(id)!, "test"), /From pharmacist .*Loves trains/, id);
   assert.doesNotMatch(buildPacket(s, s.todos.get("other")!, "test"), /Loves trains/, "work that doesn't depend on it doesn't get it");
+});
+
+test("a person can correct what their answer said: the agents get the new note, and the choice and what it did stand", () => {
+  const s = st(
+    goal({ id: "G" }),
+    todo("G", { id: "profile", kind: "action", lane: "intake", text: "Tell us about him", assignee: "pharmacist" }),
+    todo("G", { id: "core", lane: "build", text: "core", after: ["profile"] }),
+    todo("G", { id: "later", kind: "action", lane: "intake", text: "Tell us later", assignee: "pharmacist" }),
+  );
+  settle(s, T0);
+  const ask = [...s.asks.values()].find((a) => a.todo === "profile")!;
+  assert.throws(() => correctionEvents(s, ask.id, { by: "pharmacist", note: "Loves boats." }, T0 + 1), /hasn't been answered yet/);
+  for (const e of answerEvents(s, ask.id, { by: "pharmacist", choice: "done", note: "Loves trains." }, T0 + 1)) apply(s, e);
+  assert.throws(() => answerEvents(s, ask.id, { by: "pharmacist", choice: "done", note: "Loves boats." }, T0 + 2), /already answered; to fix what its note says, run correct/);
+  assert.throws(() => correctionEvents(s, ask.id, { by: "client", note: "Loves boats." }, T0 + 2), /can't correct it/);
+
+  for (const e of correctionEvents(s, ask.id, { by: "pharmacist", note: " Loves boats. Plays with the arrow keys. " }, T0 + 2)) apply(s, e);
+  const packet = buildPacket(s, s.todos.get("core")!, "test");
+  assert.match(packet, /From pharmacist .*Loves boats\. Plays with the arrow keys\./);
+  assert.doesNotMatch(packet, /Loves trains/, "the old note is gone from what the agents get");
+  assert.equal(s.todos.get("profile")!.status, "done", "the choice stands");
+  assert.equal(s.asks.get(ask.id)!.correctedBy, "pharmacist");
+  assert.deepEqual(correctionEvents(s, ask.id, { by: "partner", note: "Loves boats. Plays with the arrow keys." }, T0 + 3), [], "the same words again change nothing");
+  assert.equal(correctionEvents(s, ask.id, { by: "partner", note: "Loves boats and trains." }, T0 + 3).length, 1, "the partner can correct anyone's answer");
+
+  // A question the harness settled (moot, when its goal moved on) has no person's answer to fix.
+  const later = [...s.asks.values()].find((a) => a.todo === "later")!;
+  apply(s, { id: "moot-later", at: T0 + 4, by: "harness", type: "ask_answered", ask: later.id, answeredBy: "harness", choice: "moot", note: "goal closed" });
+  assert.throws(() => correctionEvents(s, later.id, { by: "partner", note: "Something else." }, T0 + 5), /settled by the harness/);
+});
+
+test("a note with no words in it is refused, so a placeholder copied from an example never stands in for what a person said", () => {
+  const s = st(goal({ id: "G" }), todo("G", { id: "profile", kind: "action", lane: "intake", text: "Tell us about him", assignee: "parent" }));
+  settle(s, T0);
+  const ask = [...s.asks.values()].find((a) => a.todo === "profile")!;
+  for (const note of ["...", "…", " - ", "???"]) assert.throws(() => answerEvents(s, ask.id, { by: "partner", choice: "done", note }, T0 + 1), /has no words in it/, note);
+  assert.equal(s.asks.get(ask.id)!.status, "open", "nothing was recorded");
+  assert.ok(answerEvents(s, ask.id, { by: "partner", choice: "done" }, T0 + 1).length, "no note at all is fine");
+  assert.ok(answerEvents(s, ask.id, { by: "partner", choice: "done", note: "喜欢火车" }, T0 + 1).length, "words in any script count");
+  for (const e of answerEvents(s, ask.id, { by: "partner", choice: "done", note: "Loves trains." }, T0 + 1)) apply(s, e);
+  assert.throws(() => correctionEvents(s, ask.id, { by: "partner", note: "..." }, T0 + 2), /has no words in it/, "nor can a correction be one");
 });

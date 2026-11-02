@@ -29,7 +29,7 @@ import type { AskState, HarnessPolicy, State, TodoState } from "./project.ts";
 import { apply, beliefs, compare, findAssumption, openAsks, project, seatOf, seatPermissions } from "./project.ts";
 import { settle } from "./rules.ts";
 import type { Answer } from "./answers.ts";
-import { answerEvents } from "./answers.ts";
+import { answerEvents, correctionEvents } from "./answers.ts";
 import type { Hint, Runner } from "./select.ts";
 import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.ts";
 import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
@@ -149,6 +149,18 @@ export class Harness {
     for (const e of events) apply(s, e);
     const follow = settle(s, this.clock.now());
     await appendEvents(this.control, this.engagement, [...events, ...follow], `answer ${askId}: ${ans.choice}`, { Ask: askId, "Answered-by": ans.by });
+    return events;
+  }
+
+  // Fix the note of an answer already given; the agents get the new note from then on.
+  // Returns nothing when the note already says that.
+  async correctAnswer(askId: string, c: { by: string; note: string }): Promise<HEvent[]> {
+    const s = await this.state();
+    const events = correctionEvents(s, askId, c, this.clock.now());
+    if (!events.length) return events;
+    for (const e of events) apply(s, e);
+    const follow = settle(s, this.clock.now());
+    await appendEvents(this.control, this.engagement, [...events, ...follow], `correct ${askId}`, { Ask: askId, "Corrected-by": c.by });
     return events;
   }
 

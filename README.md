@@ -74,6 +74,10 @@ What it rests on:
 - **Waiting is free**: jobs, market tests, calendar freezes and people's answers cost no turns, and a quiet wake is one `git ls-remote`.
 - **The team follows the work.** Each lane with open work in a goal gets a seat, staffed from the firm library (researcher, builder, experimenter, strategist...) with permissions filtered through the catalog. A lane the library doesn't cover gets a generated role with the least access, on probation: an independent reviewer on another model checks its work unless a checker or a named person already does.
 
+![The partner is called three times in the simulated engine case: over budget (narrow), split the work (approve), every criterion met (keep it open); the routing in between takes three seconds](docs/cinetty/agentfactory.en.gif)
+
+The clip above follows the simulated engine case and shows when the partner is called, and why. What in it is real and what's illustrative is in [docs/demo-animation.md](docs/demo-animation.md).
+
 It was designed against six engagements, simulated end to end through the real code: an Unreal-6-scale engine, Starship 3D-printing kits for kids, a medicine assistant for seniors, a legacy migration, an open research question, and perpetual library maintenance. The simulations found ten design flaws, each fixed and now covered by a test.
 
 ## Components

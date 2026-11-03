@@ -10,7 +10,29 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
 import { killTree, resolveCommand } from "../proc.ts";
 
-export type HostedView = { name: string; cwd: string; started: number; exited?: { at: number; code: number | null } };
+// `progress`: what Copilot's progress signal says (OSC 9;4, the one Windows Terminal
+// draws on a tab while Copilot works), read from the screen's bytes as they pass.
+export type Progress = "working" | "error" | "paused";
+export type HostedView = { name: string; cwd: string; started: number; exited?: { at: number; code: number | null }; progress?: Progress };
+
+// OSC 9;4;<state>[;<percent>], ended by BEL or ST. States: 0 cleared, 1 a percentage,
+// 2 error, 3 busy with no percentage, 4 paused.
+const PROGRESS = /\x1b\]9;4;(\d)(?:;\d*)?(?:\x07|\x1b\\)/g;
+const STATE: Record<string, Progress | undefined> = { "0": undefined, "1": "working", "2": "error", "3": "working", "4": "paused" };
+// The last progress a chunk of the screen sets, if it sets any. `carry` is the end of the
+// chunk before, so a signal split across two chunks is still read.
+export function progressIn(chunk: string, carry = ""): { set: boolean; progress?: Progress; carry: string } {
+  const text = carry + chunk;
+  let set = false;
+  let progress: Progress | undefined;
+  for (const m of text.matchAll(PROGRESS)) {
+    set = true;
+    progress = STATE[m[1]];
+  }
+  // Keep a possible unfinished signal for the next chunk.
+  const open = text.lastIndexOf("\x1b]");
+  return { set, ...(progress ? { progress } : {}), carry: open >= 0 && text.length - open < 32 && !/\x07|\x1b\\/.test(text.slice(open + 2)) ? text.slice(open) : "" };
+}
 
 // How to start a terminal's bridge. `env` is added to the desk's own.
 export type Bridge = (t: { name: string; cwd: string; cols: number; rows: number }) => { command: string; args: string[]; env?: Record<string, string> };
@@ -42,7 +64,7 @@ const frame = (type: number, body: Buffer) => {
   return Buffer.concat([head, body]);
 };
 
-type Hosted = HostedView & { proc: ChildProcess; chunks: Buffer[]; kept: number; watchers: Set<(b: Buffer) => void> };
+type Hosted = HostedView & { proc: ChildProcess; chunks: Buffer[]; kept: number; watchers: Set<(b: Buffer) => void>; carry: string };
 
 export class HostedTerminals {
   private all = new Map<string, Hosted>();
@@ -57,7 +79,7 @@ export class HostedTerminals {
   }
 
   list(): HostedView[] {
-    return [...this.all.values()].map(({ name, cwd, started, exited }) => ({ name, cwd, started, ...(exited ? { exited } : {}) }));
+    return [...this.all.values()].map(({ name, cwd, started, exited, progress }) => ({ name, cwd, started, ...(exited ? { exited } : {}), ...(progress && !exited ? { progress } : {}) }));
   }
 
   running(name: string): boolean {
@@ -77,9 +99,15 @@ export class HostedTerminals {
       // Its own process group off Windows, so closing it ends everything it started.
       detached: process.platform !== "win32",
     });
-    const t: Hosted = { name, cwd, started: this.now(), proc, chunks: [], kept: 0, watchers: new Set() };
+    const t: Hosted = { name, cwd, started: this.now(), proc, chunks: [], kept: 0, watchers: new Set(), carry: "" };
     this.all.set(name, t);
     const take = (b: Buffer) => {
+      const p = progressIn(b.toString("latin1"), t.carry);
+      t.carry = p.carry;
+      if (p.set && p.progress !== t.progress) {
+        t.progress = p.progress;
+        this.onChange();
+      }
       t.chunks.push(b);
       t.kept += b.length;
       while (t.kept > KEEP && t.chunks.length > 1) t.kept -= t.chunks.shift()!.length;

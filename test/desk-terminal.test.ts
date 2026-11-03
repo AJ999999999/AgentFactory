@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { startDesk } from "../src/desk/server.ts";
 import { conversation, follow, SessionFollow } from "../src/desk/session.ts";
-import type { Bridge } from "../src/desk/terminal.ts";
+import { type Bridge, HostedTerminals, progressIn } from "../src/desk/terminal.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const tmp = (n: string) => fs.mkdtempSync(path.join(os.tmpdir(), `af-term-${n}-`));
@@ -160,4 +160,30 @@ test("the desk follows a session of your own while Copilot works, though no hook
   const stale = await get(`since=${next.v}&epoch=not-this-one`);
   assert.equal(stale.turns.length, 2, "a page from before the desk restarted gets the session again");
   assert.deepEqual((await get("before=1&n=5")).turns.map((x: { text: string }) => x.text), ["Fix the rounding."]);
+});
+
+test("a terminal on the desk shows what Copilot's progress signal says, the one Windows Terminal draws on a tab", () => {
+  assert.deepEqual(progressIn("\x1b]9;4;3;0\x07 thinking"), { set: true, progress: "working", carry: "" });
+  assert.deepEqual(progressIn("done \x1b]9;4;0;0\x1b\\"), { set: true, carry: "" }, "cleared when it stops");
+  assert.deepEqual(progressIn("\x1b]9;4;2\x07"), { set: true, progress: "error", carry: "" });
+  // Split across two chunks of the screen.
+  const a = progressIn("text\x1b]9;4;");
+  assert.deepEqual([a.set, a.carry], [false, "\x1b]9;4;"]);
+  assert.deepEqual(progressIn("4;0\x07more", a.carry), { set: true, progress: "paused", carry: "" });
+  assert.deepEqual(progressIn("\x1b]0;a title\x07plain text"), { set: false, carry: "" }, "other signals change nothing");
+});
+
+test("the desk's list of its terminals carries the progress, until the terminal closes", { timeout: 60_000 }, async (t) => {
+  const node = process.execPath;
+  const say = (s: string) => `process.stdout.write(${JSON.stringify(s)});`;
+  const bridge: Bridge = () => ({ command: node, args: ["-e", `${say("\x1b]9;4;3;0\x07")} setTimeout(() => { ${say("\x1b]9;4;0;0\x07")} }, 400); setTimeout(() => process.exit(0), 900);`] });
+  let changes = 0;
+  const terms = new HostedTerminals({ bridge, onChange: () => changes++ });
+  t.after(() => terms.closeAll());
+  terms.open("billing", tmp("progress"));
+  const until = async (ok: () => boolean) => { for (let i = 0; i < 300 && !ok(); i++) await new Promise((r) => setTimeout(r, 10)); assert.ok(ok()); };
+  await until(() => terms.list()[0].progress === "working");
+  await until(() => terms.list()[0].progress === undefined);
+  await until(() => !!terms.list()[0].exited);
+  assert.ok(changes >= 3, "each change wakes the page");
 });

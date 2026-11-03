@@ -85,7 +85,10 @@ header .spacer { flex: 1; }
 .mode .seg button { padding: 3px 10px; font-size: 13px; }
 .did { font-size: 13.5px; color: var(--ink-2); }
 .did b { color: var(--ink); font-weight: 550; }
-.did .files { display: block; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; margin-top: 2px; }
+.did .files { list-style: none; margin: 4px 0 0; padding: 0; font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.did .files .dir { color: var(--ink-3); }
+.did .files .base { color: var(--ink); }
+.did .files .link-btn { font: inherit; font-family: Archivo, "Segoe UI", system-ui, sans-serif; font-size: 12.5px; background: none; border: 0; padding: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; }
 .said { white-space: pre-wrap; max-height: 16em; overflow: auto; }
 .th .live { margin-top: 12px; }
 .knows { margin-top: 16px; }
@@ -196,12 +199,32 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 #mirror { position: absolute; inset: 0; overflow: auto; overflow-anchor: none; padding: 12px 18px 18px; font-size: 13.5px; line-height: 1.5; }
 #mirror > * + *, #m-turns > * + * { margin-top: 6px; }
 #mirror .m-earlier { color: var(--term-dim); font-size: 12.5px; text-align: center; }
+#term-head .t-progress { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--term-dim); }
+#term-head .t-progress i { width: 8px; height: 8px; border-radius: 50%; background: #d9aa4a; }
+#term-head .t-progress.p-working i { animation: t-pulse 1.2s ease-in-out infinite; }
+#term-head .t-progress.p-error i { background: #e8735f; }
+@keyframes t-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { #term-head .t-progress.p-working i { animation: none; } }
 .m-new { position: absolute; right: 22px; bottom: 16px; padding: 5px 12px; border-radius: 14px; border: 1px solid #3b4a52; background: #24313a; color: var(--term-ink); font: inherit; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
 .m-new:hover { background: #2d3d47; }
 .m-new[hidden] { display: none; }
 #mirror .m-note { color: var(--term-dim); font-size: 13px; padding-bottom: 8px; border-bottom: 1px dashed rgba(255, 255, 255, .15); }
 #mirror .m-you { color: #9fd6b8; font-weight: 600; white-space: pre-wrap; margin-top: 14px; }
-#mirror .m-said { white-space: pre-wrap; max-width: 90ch; }
+#mirror .m-said { max-width: 90ch; }
+#mirror .md > * { margin: 0; }
+#mirror .md > * + * { margin-top: 6px; }
+#mirror .md ul, #mirror .md ol { padding-left: 1.4em; }
+#mirror .md li + li { margin-top: 2px; }
+#mirror .md code { font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12.5px; background: rgba(255, 255, 255, .07); border-radius: 3px; padding: 0 3px; overflow-wrap: anywhere; }
+#mirror .md pre { font-size: 12.5px; background: rgba(0, 0, 0, .25); border-radius: 3px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+#mirror .md pre code { background: none; padding: 0; }
+#mirror .md strong { color: #f1eee6; font-weight: 600; }
+#mirror .md a { color: #8cc3e8; }
+#mirror .md .md-h { font-weight: 650; color: #f1eee6; margin-top: 10px; }
+#mirror .md .md-h1, #mirror .md .md-h2 { font-size: 15px; }
+#mirror .md .md-quote { border-left: 3px solid rgba(255, 255, 255, .18); padding-left: 10px; color: var(--term-dim); }
+#mirror .m-more { margin-left: 8px; padding: 0 7px; border: 1px solid #3b4a52; border-radius: 10px; background: transparent; color: var(--term-dim); font: inherit; font-size: 12px; cursor: pointer; vertical-align: baseline; }
+#mirror .m-more:hover { color: var(--term-ink); border-color: #5b6a72; }
 #mirror .m-now { color: var(--term-dim); font-style: italic; }
 #mirror .m-run { font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12.5px; color: #c9cfd2; white-space: pre-wrap; overflow-wrap: anywhere; }
 #mirror .m-run .m-mark { display: inline-block; width: 1.2em; }
@@ -225,6 +248,14 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 #list .talk, #list .learning { padding: 0 4px; }
 #list .about { font-size: 13.5px; }
 
+/* Wide enough for both sides: the page is exactly one screen, the header takes what it
+   needs and the rest goes to the desk, so only the list, the thread and the terminal
+   scroll, never the page. */
+@media (min-width: 1001px) {
+  body { height: 100vh; display: flex; flex-direction: column; overflow: auto; }
+  body > header { flex: none; width: 100%; box-sizing: border-box; }
+  main.desk { flex: 1 1 auto; height: auto; min-height: 520px; width: 100%; box-sizing: border-box; }
+}
 @media (max-width: 1000px) {
   main.desk { grid-template-columns: minmax(0, 1fr); height: auto; }
   #list { max-height: none; }
@@ -420,7 +451,33 @@ function didEl(t) {
   if (t.failed) bits.push(`${t.failed} failed`);
   if (!bits.length) return null;
   return h("div", { class: "did" }, h("b", null, "So far: "), bits.join(", "), t.branch ? `, on ${t.branch}` : "",
-    t.files.length ? h("code", { class: "files" }, t.files.slice(-8).join("  ")) : null);
+    t.files.length ? filesEl(t) : null);
+}
+
+// A file as you'd look for it: inside the repo, its path from the repo's folder; the name
+// stands out from the folders it's in. Newest first; the rest behind "+N more".
+function relTo(f, cwd) {
+  const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const file = norm(f);
+  const root = norm(cwd || "");
+  if (root && file.toLowerCase().startsWith(root.toLowerCase() + "/")) return file.slice(root.length + 1);
+  // Outside the repo (a scratch file, another repo): its last folder and name are what
+  // tell it apart; the whole path is on hover.
+  const parts = file.split("/");
+  return parts.length > 3 ? `…/${parts.slice(-2).join("/")}` : file;
+}
+function filesEl(t) {
+  const k = `files:${t.name}`;
+  const all = [...t.files].reverse();
+  const open = ui.open.has(k);
+  const shown = open ? all : all.slice(0, 6);
+  return h("ul", { class: "files" },
+    shown.map((f) => {
+      const p = relTo(f, t.cwd);
+      const cut = p.lastIndexOf("/");
+      return h("li", { title: f }, cut > 0 ? h("span", { class: "dir" }, p.slice(0, cut + 1)) : null, h("span", { class: "base" }, p.slice(cut + 1)));
+    }),
+    all.length > 6 ? h("li", null, h("button", { class: "link-btn", onclick: () => toggle(k) }, open ? "fewer" : `+${all.length - 6} more`)) : null);
 }
 
 function knowsEl(t) {
@@ -576,6 +633,8 @@ function detailEl(d) {
 // followed from its session file, and "Type in its tab" brings that tab forward.
 
 let XT = { name: null };
+// What Copilot's own progress signal says, as its Windows Terminal tab would show it.
+const PROGRESS_SAYS = { working: "Copilot is working", error: "Copilot hit an error", paused: "Copilot is paused" };
 function attachTerm(name) {
   if (XT.name === name) return;
   detachTerm();
@@ -639,12 +698,93 @@ async function flushKeys(x) {
 // tool call's ending is marked where it stands: nothing you're reading is drawn again,
 // so it doesn't move and what you selected stays selected. Earlier turns load as you
 // scroll up; new ones below wait behind "new ↓" until you go down to them.
+// Copilot writes markdown. Drawn as elements built from text nodes, never as HTML, so
+// nothing in a session can put markup on the page.
+function mdInline(text) {
+  const out = [];
+  const re = /(`+)([\s\S]+?)\1|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|(?<![\w*])\*(?!\s)([^*\n]+?)\*(?![\w*])|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let at = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > at) out.push(text.slice(at, m.index));
+    if (m[2] !== undefined) out.push(h("code", null, m[2]));
+    else if (m[3] !== undefined || m[4] !== undefined) out.push(h("strong", null, mdInline(m[3] ?? m[4])));
+    else if (m[5] !== undefined) out.push(h("em", null, mdInline(m[5])));
+    else out.push(h("a", { href: m[7], target: "_blank", rel: "noopener noreferrer" }, m[6]));
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return out;
+}
+function md(text) {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const out = [];
+  let para = [];
+  let list = null;
+  const endPara = () => { if (para.length) out.push(h("p", null, para.flatMap((l, i) => i ? [h("br"), ...mdInline(l)] : mdInline(l)))); para = []; };
+  const endList = () => { if (list) out.push(list); list = null; };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const fence = /^\s*(```+|~~~+)/.exec(l);
+    if (fence) {
+      endPara(); endList();
+      const body = [];
+      while (++i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i]);
+      out.push(h("pre", null, h("code", null, body.join("\n"))));
+      continue;
+    }
+    if (!l.trim()) { endPara(); endList(); continue; }
+    const head = /^(#{1,6})\s+(.*)$/.exec(l);
+    if (head) { endPara(); endList(); out.push(h("div", { class: `md-h md-h${head[1].length}` }, mdInline(head[2]))); continue; }
+    const item = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(l);
+    if (item) {
+      endPara();
+      const ordered = /\d/.test(item[2]);
+      if (!list || list.tagName !== (ordered ? "OL" : "UL")) { endList(); list = h(ordered ? "ol" : "ul", ordered && parseInt(item[2], 10) !== 1 ? { start: String(parseInt(item[2], 10)) } : null); }
+      list.append(h("li", item[1].length >= 2 ? { style: `margin-left:${Math.min(4, Math.floor(item[1].length / 2)) * 1.2}em` } : null, mdInline(item[3])));
+      continue;
+    }
+    if (list && /^\s{2,}\S/.test(l)) { list.lastChild.append(" ", ...mdInline(l.trim())); continue; }
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      endPara(); endList();
+      const rows = [l];
+      while (i + 1 < lines.length && /^\s*\|.*\|\s*$/.test(lines[i + 1])) rows.push(lines[++i]);
+      out.push(h("pre", { class: "md-table" }, rows.filter((r) => !/^\s*\|[\s:|-]+\|\s*$/.test(r)).join("\n")));
+      continue;
+    }
+    const quote = /^\s*>\s?(.*)$/.exec(l);
+    if (quote) { endPara(); endList(); out.push(h("div", { class: "md-quote" }, mdInline(quote[1]))); continue; }
+    endList();
+    para.push(l);
+  }
+  endPara(); endList();
+  return out;
+}
+
+// Long text shows its start, with a button for the rest: a pasted script or a long
+// prompt shouldn't push everything else off the screen.
+function clamped(text, lines, chars) {
+  const all = text.split("\n");
+  let short = all.slice(0, lines).join("\n");
+  if (short.length > chars) short = short.slice(0, chars);
+  if (short.length >= text.length) return [h("span", { class: "m-text" }, text)];
+  const rest = all.length - short.split("\n").length;
+  const body = h("span", { class: "m-text" }, `${short.trimEnd()}…`);
+  const more = rest > 0 ? `+${rest} ${rest === 1 ? "line" : "lines"}` : "more";
+  const btn = h("button", { class: "m-more", "aria-expanded": "false", onclick: () => {
+    const open = btn.getAttribute("aria-expanded") !== "true";
+    body.textContent = open ? text : `${short.trimEnd()}…`;
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? "less" : more;
+  } }, more);
+  return [body, btn];
+}
+
 const markOf = (x) => x.running ? ["…", "running"] : x.ok ? ["✓", "done"] : ["✗", "failed"];
 const runClass = (x) => `m-run${x.running ? " running" : x.ok ? " ok" : " bad"}`;
-const turnEl = (x) => x.k === "you" ? h("div", { class: "m-you" }, "› ", x.text)
-  : x.k === "said" ? h("div", { class: "m-said" }, x.text)
+const turnEl = (x) => x.k === "you" ? h("div", { class: "m-you" }, "› ", clamped(x.text, 8, 900))
+  : x.k === "said" ? h("div", { class: "m-said md" }, md(x.text))
   : x.k === "now" ? h("div", { class: "m-now" }, x.text)
-  : h("div", { class: runClass(x) }, h("span", { class: "m-mark", "aria-label": markOf(x)[1] }, markOf(x)[0]), x.text);
+  : h("div", { class: runClass(x) }, h("span", { class: "m-mark", "aria-label": markOf(x)[1] }, markOf(x)[0]), clamped(x.text, 1, 240));
 function updateTurn(el, x) {
   if (x.k !== "run") return;
   el.className = runClass(x);
@@ -778,7 +918,8 @@ function rightEl(d) {
         ? [h("button", { onclick: () => act("/api/start", { folder: x.cwd, name }, "term") }, "Open again"), h("button", { onclick: () => { act("/api/term/close", { name }, "term"); if (ui.focus === name) ui.focus = null; } }, "Remove")]
         : closing
           ? [h("span", { class: "on-desk" }, "Copilot stops with it."), h("button", { class: "danger", onclick: () => { ui.closing = null; act("/api/term/close", { name }, "term"); } }, "Close it"), h("button", { onclick: () => { ui.closing = null; render(); } }, "Keep")]
-          : [h("span", { class: "on-desk" }, "on the desk"), h("button", { onclick: () => { ui.closing = name; render(); } }, "Close")]].flat());
+          : [x.progress ? h("span", { class: `t-progress p-${x.progress}` }, h("i"), PROGRESS_SAYS[x.progress]) : null,
+             h("span", { class: "on-desk" }, "on the desk"), h("button", { onclick: () => { ui.closing = name; render(); } }, "Close")]].flat().filter(Boolean));
     return;
   }
   detachTerm();

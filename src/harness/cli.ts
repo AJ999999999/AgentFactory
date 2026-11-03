@@ -5,7 +5,8 @@
 //   npm run harness -- loop [--runner r1] [--poll 10] [--log file] ...        keep waking, sleeping as told
 //   npm run harness -- doctor [--copilot path]                                check this machine end to end
 //   npm run harness -- status [--goal G] [--for partner]                      handoff packets and open questions
-//   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300]
+//   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300] [--from-now-on]
+//   npm run harness -- standing [revoke <goal> <shape>]              standing answers ("from now on"), or take one back
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
 //   npm run harness -- pause [--reason ..] | resume                         stop anything new from starting, or let it start
 //   npm run harness -- budget <goal> turns=300[,usd=50]                     a new budget for a goal
@@ -342,8 +343,24 @@ async function main(): Promise<void> {
         revision: revFile ? (JSON.parse(fs.readFileSync(revFile, "utf8")) as GoalRevision) : undefined,
         budget: budget ? kv(budget) : undefined,
         finding: result ? { assumption: flag("assumption") ?? tests, direction: result, text: flag("note") ?? "", metrics: metrics ? kv(metrics) : undefined, runs: flag("runs") ? Number(flag("runs")) : undefined } : undefined,
+        ...(rest.includes("--from-now-on") ? { standing: true } : {}),
       });
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
+      return;
+    }
+    case "standing": {
+      const h = await harness(currentEngagement());
+      if (rest[0] === "revoke") {
+        if (!rest[1] || !rest[2]) throw new Error("usage: standing revoke <goal> <shape>");
+        console.log((await h.revokeStanding(rest[1], rest[2], flag("by", "partner"), flag("reason"))) ? `taken back: ${rest[2]} questions in ${rest[1]} reach you again` : `no standing answer to ${rest[2]} in ${rest[1]}`);
+        return;
+      }
+      const s = await h.state();
+      if (!s.standing.size) console.log('no standing answers: answer with --from-now-on to make one');
+      for (const d of s.standing.values()) {
+        const used = [...s.asks.values()].filter((a) => a.autoReason === "standing" && a.precedentAsk === d.ask).length;
+        console.log(`${d.goal.padEnd(16)} ${d.shape.padEnd(34)} "${d.choice}" by ${d.by} on ${new Date(d.at).toISOString().slice(0, 10)} (goal v${d.goalVersion}), settled ${used} since`);
+      }
       return;
     }
     case "pause":

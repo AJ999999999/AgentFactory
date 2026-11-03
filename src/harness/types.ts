@@ -280,12 +280,17 @@ export type HEvent = Base &
     | { type: "todo_superseded"; todo: string; reason: string }
     | { type: "todo_blocked"; todo: string; reason: string; ask?: string }
     | { type: "ask_opened"; ask: Ask }
-    | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision }
+    // standing: "from now on", so the next question of the same shape is settled with
+    // this choice (standing.ts).
+    | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision; standing?: boolean }
     // The harness settled an ask without the person: the todo's own checker already
-    // passed (criteria_met), or the same question was answered before (precedent). Always
+    // passed (criteria_met), the same question was answered before (precedent), or a standing
+    // answer covers questions of its shape (standing; precedentAsk is that answer's ask). Always
     // follows the ask's ask_opened, and is never dressed up as a person's answer, so audits
     // can sample these decisions and the escalation numbers stay honest.
-    | { type: "ask_auto_closed"; ask: string; reason: "criteria_met" | "precedent"; precedentAsk?: string; choice?: string; note?: string }
+    | { type: "ask_auto_closed"; ask: string; reason: "criteria_met" | "precedent" | "standing"; precedentAsk?: string; choice?: string; note?: string }
+    // A standing answer taken back: questions of that shape reach the person again.
+    | { type: "standing_revoked"; goal: string; shape: string; reason?: string }
     | { type: "finding"; finding: Finding }
     | { type: "finding_discounted"; finding: string; reason: string }
     | { type: "assumption_reset"; goal: string; assumption: string; reason: string }

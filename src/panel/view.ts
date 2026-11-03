@@ -7,6 +7,7 @@ import { beliefs, capacityFor, findAssumption, seatKey, seatPermissions } from "
 import { vendorOfModel } from "../harness/agents.ts";
 import { blockers, phase } from "../harness/select.ts";
 import { irreversibleEffect } from "../harness/types.ts";
+import { cannotStand } from "../harness/standing.ts";
 import type { AskKind, BeliefStatus, Budget, GoalRevision, Granularity, TurnResult } from "../harness/types.ts";
 import { isBlind } from "../harness/escalation.ts";
 
@@ -17,7 +18,8 @@ export type Needs = "budget" | "revision" | "observation";
 // step; danger: it stops or drops something.
 // irreversible: by its effect, or because the asker says so. Only ever adds caution: an
 // asker can mark an option irreversible but can't make one with a final effect undoable.
-export type OptionView = { id: string; label: string; needs?: Needs; hint?: string; confirm?: boolean; danger?: boolean; consequence?: string; irreversible?: boolean };
+// standable: this choice can be kept "from now on" for questions of the same kind (standing.ts).
+export type OptionView = { id: string; label: string; needs?: Needs; hint?: string; confirm?: boolean; danger?: boolean; consequence?: string; irreversible?: boolean; standable?: boolean };
 
 export type AskView = {
   engagement: string;
@@ -117,6 +119,8 @@ export type EngagementView = {
   goals: GoalView[];
   asks: AskView[];
   runners: RunnerView[];
+  // Answers given "from now on": the kind of question each settles, and how often it has.
+  standing: Array<{ goal: string; shape: string; what: string; choice: string; by: string; at: number; settled: number }>;
   folder?: string; // where it was opened, when the panel shows more than one folder
   error?: string;
 };
@@ -198,6 +202,7 @@ export function askView(s: State, engagement: string, a: AskState, now = s.lastA
     // Can't be undone, or the card itself says to look first: a second step, not one click.
     ...(final(o) || lookFirst.length ? { confirm: true } : {}),
     ...((o.effect?.type === "close" && o.effect.status === "killed") || o.effect?.type === "supersede" ? { danger: true } : {}),
+    ...(a.status === "open" && !optionNeeds(a, o) && !cannotStand(s, a, o.id) ? { standable: true } : {}),
   }));
   return {
     engagement,
@@ -314,10 +319,27 @@ export function goalView(s: State, goalId: string, now: number, ctx: ViewContext
   };
 }
 
+// A standing answer's kind of question, in words: "rule:failures|build" is "a todo in
+// build failing three times".
+const RULE_WORDS: Record<string, string> = {
+  failures: "failing again and again", idle: "running out of work", staffing: "a seat to staff", turn_cap: "taking too many turns",
+};
+function standingWhat(shape: string): string {
+  const [origin, lane] = shape.split("|");
+  const [kind, name] = origin.split(":");
+  const what = kind === "monitor" ? `the monitor ${name} firing` : kind === "event" ? `events matched by ${name}` : `work ${RULE_WORDS[name] ?? name.replace(/_/g, " ")}`;
+  return lane ? `${what}, in ${lane}` : what;
+}
+
 export function engagementView(s: State, id: string, now: number, runners: RunnerView[], ctx: ViewContext = {}): EngagementView {
   // Goals in the order they were opened; closed ones after the active ones.
   const goals = [...s.goals.values()].sort((a, b) => Number(a.status !== "active") - Number(b.status !== "active") || a.openedAt - b.openedAt);
   const asked = askedWork(s);
   const asks = [...s.asks.values()].filter((a) => a.status === "open").map((a) => askView(s, id, a, now, asked));
-  return { id, title: s.engagement?.title ?? id, paused: s.paused, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason, kind: c.kind })), goals: goals.map((g) => goalView(s, g.id, now, ctx)), asks, runners };
+  const standing = [...s.standing.values()].map((d) => {
+    const ask = s.asks.get(d.ask);
+    const opt = ask?.options.find((o) => o.id === d.choice);
+    return { goal: d.goal, shape: d.shape, what: standingWhat(d.shape), choice: opt ? splitLabel(opt.label).label : d.choice, by: d.by, at: d.at, settled: [...s.asks.values()].filter((a) => a.autoReason === "standing" && a.precedentAsk === d.ask).length };
+  });
+  return { id, title: s.engagement?.title ?? id, paused: s.paused, standing, capacity: [...s.capacity.values()].filter((c) => c.until > now).map((c) => ({ vendor: c.vendor, until: c.until, reason: c.reason, kind: c.kind })), goals: goals.map((g) => goalView(s, g.id, now, ctx)), asks, runners };
 }

@@ -2,6 +2,8 @@
 // events with ids derived from their cause, so running the rules twice, or on two
 // runners at once, writes each consequence exactly once. settle() applies rules until
 // nothing new comes out (a superseded todo can orphan the todos after it).
+import { standingEvents } from "./answers.ts";
+import { standingFor } from "./standing.ts";
 import { sha256 } from "../util.ts";
 import type { Ask, AskOption, HEvent, TodoDraft } from "./types.ts";
 import type { GoalState, State, TodoState } from "./project.ts";
@@ -92,6 +94,12 @@ function rules(s: State, now: number, emitOut: Emit): void {
     // Questions about a direction the goal has already left are moot.
     for (const a of openAsks(s, g.id)) {
       if (a.goalVersion !== undefined && a.goalVersion < g.version) emit({ id: eid("moot", a.id), at: now, by: H, type: "ask_answered", ask: a.id, answeredBy: H, choice: "moot", note: `goal moved to v${g.version}` });
+    }
+
+    // Questions a standing answer covers ("from now on") are settled with it.
+    for (const a of openAsks(s, g.id)) {
+      const d = standingFor(s, a, now);
+      if (d) for (const e of standingEvents(s, a.id, d, now)) emit(e);
     }
 
     // Staffing: the first open task in a lane gets that lane a seat.

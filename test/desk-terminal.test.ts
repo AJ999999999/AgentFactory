@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { startDesk } from "../src/desk/server.ts";
-import { conversation } from "../src/desk/session.ts";
+import { conversation, follow, SessionFollow } from "../src/desk/session.ts";
 import type { Bridge } from "../src/desk/terminal.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -92,4 +92,72 @@ test("a terminal of your own is followed from its session: your prompts, what Co
     { k: "said", text: "Rounded the total only." },
     { k: "run", text: "npm test", running: true },
   ]);
+});
+
+// A session file as Copilot writes it: one JSON event per line, appended as it works.
+const line = (type: string, data: Record<string, unknown>) => JSON.stringify({ type, data }) + "\n";
+
+test("following a session reads only what was added, and a tool call that ends later changes the turn it started", () => {
+  const f = path.join(tmp("follow"), "events.jsonl");
+  fs.writeFileSync(f, line("user.message", { content: "Fix the rounding." }) + line("tool.execution_start", { toolCallId: "1", toolName: "powershell", arguments: { command: "npm test" } }));
+  const s = new SessionFollow(f);
+  s.update();
+  const first = s.changes();
+  assert.deepEqual(first.turns.map((t) => [t.i, t.k, t.text, t.running]), [[0, "you", "Fix the rounding.", undefined], [1, "run", "npm test", true]]);
+
+  // Half a line is still being written: it waits for the rest.
+  fs.appendFileSync(f, line("tool.execution_complete", { toolCallId: "1", success: true }) + '{"type":"assistant.mes');
+  s.update();
+  const next = s.changes(first.v);
+  assert.deepEqual(next.turns.map((t) => [t.i, t.k, t.running, t.ok]), [[1, "run", false, true]], "only the turn that changed");
+  fs.appendFileSync(f, 'sage","data":{"content":"Rounded the total only."}}');
+  s.update();
+  assert.deepEqual(s.changes(next.v).turns.map((t) => [t.i, t.text]), [[2, "Rounded the total only."]], "a whole last line is taken even before its newline");
+  assert.equal(s.changes(s.v).turns.length, 0, "nothing new, nothing sent");
+  assert.equal(s.summarize().title, "Fix the rounding.");
+});
+
+test("a session file written again from the start is followed from the start, as a new epoch", () => {
+  const f = path.join(tmp("rewrite"), "events.jsonl");
+  fs.writeFileSync(f, line("user.message", { content: "First." }) + line("assistant.message", { content: "A long answer that makes the file longer." }));
+  const a = follow(f);
+  fs.writeFileSync(f, line("user.message", { content: "Again." }));
+  const b = follow(f);
+  assert.notEqual(a.epoch, b.epoch);
+  assert.deepEqual(b.changes().turns.map((t) => t.text), ["Again."]);
+});
+
+test("a long session opens at its last turns, and earlier ones come a page at a time", () => {
+  const f = path.join(tmp("pages"), "events.jsonl");
+  fs.writeFileSync(f, Array.from({ length: 450 }, (_, i) => line("user.message", { content: `prompt ${i}` })).join(""));
+  const s = follow(f);
+  const open = s.changes(0, 200);
+  assert.deepEqual([open.total, open.turns[0].i, open.turns.at(-1)!.i], [450, 250, 449]);
+  const up = s.earlier(250, 200);
+  assert.deepEqual([up.turns[0].i, up.turns.at(-1)!.i, up.turns[0].text], [50, 249, "prompt 50"]);
+  assert.deepEqual(s.earlier(50, 200).turns.map((t) => t.i), Array.from({ length: 50 }, (_, i) => i));
+});
+
+test("the desk follows a session of your own while Copilot works, though no hook fires until it stops", { timeout: 30_000 }, async (t) => {
+  const home = tmp("live");
+  const f = path.join(home, "session.jsonl");
+  fs.writeFileSync(f, line("user.message", { content: "Fix the rounding." }));
+  fs.writeFileSync(path.join(home, "events.jsonl"), JSON.stringify({ at: Date.now(), event: "sessionStart", session: "s1", cwd: home, terminal: "billing", transcript: f }) + "\n");
+  const desk = await startDesk({ home, port: 0, learnEveryMs: 3_600_000 });
+  t.after(() => desk.close());
+  const get = async (q: string) => (await fetch(new URL(`/api/session?id=s1&${q}`, desk.url), { headers: { "x-desk-token": desk.token } })).json();
+
+  const open = await get("since=0");
+  assert.deepEqual(open.turns.map((x: { text: string }) => x.text), ["Fix the rounding."]);
+  // The page waits; Copilot runs a command a moment later. Only its session file changes.
+  const started = Date.now();
+  const waiting = get(`since=${open.v}&epoch=${open.epoch}&wait=20000`);
+  setTimeout(() => fs.appendFileSync(f, line("tool.execution_start", { toolCallId: "1", toolName: "powershell", arguments: { command: "npm test" } })), 300);
+  const next = await waiting;
+  assert.deepEqual(next.turns.map((x: { i: number; text: string; running: boolean }) => [x.i, x.text, x.running]), [[1, "npm test", true]]);
+  assert.ok(Date.now() - started < 3000, `it came while Copilot worked, not when the wait ran out (${Date.now() - started} ms)`);
+
+  const stale = await get(`since=${next.v}&epoch=not-this-one`);
+  assert.equal(stale.turns.length, 2, "a page from before the desk restarted gets the session again");
+  assert.deepEqual((await get("before=1&n=5")).turns.map((x: { text: string }) => x.text), ["Fix the rounding."]);
 });

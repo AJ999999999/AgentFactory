@@ -23,7 +23,7 @@ import { type Analysis, type Analyst, analysesDir, copilotAnalyst, learn, learnC
 import { deskHome, readLog } from "./log.ts";
 import { terminals } from "./others.ts";
 import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts";
-import { conversation, readEvents, sessionFile, sessionTail, summarize, type Summary } from "./session.ts";
+import { follow, sessionFile, sessionTail, type Summary } from "./session.ts";
 import { slackReplies, slackSentIds, slackTick } from "./slack.ts";
 import { type About, sentIds, teamsTick } from "./teams.ts";
 import { type Bridge, HostedTerminals, type HostedView } from "./terminal.ts";
@@ -123,20 +123,11 @@ export function recentAnalyses(dir: string, n = 6): Analysis[] {
   }
 }
 
-// What a session's file says about it, read again only when the file has changed (and
-// not more than once a second while Copilot writes to it).
-const summaries = new Map<string, { key: string; at: number; value: Summary }>();
-export function summaryFor(session: string, transcript?: string, now = Date.now()): Summary | undefined {
+// What a session's file says about it. Only what Copilot added since the last look is
+// read, so this stays cheap however long the session gets.
+export function summaryFor(session: string, transcript?: string): Summary | undefined {
   const f = sessionFile(session, transcript);
-  if (!f) return undefined;
-  const st = fs.statSync(f, { throwIfNoEntry: false });
-  if (!st) return undefined;
-  const key = `${st.size}:${st.mtimeMs}`;
-  const c = summaries.get(f);
-  if (c && (c.key === key || now - c.at < 1000)) return c.value;
-  const value = summarize(readEvents(f));
-  summaries.set(f, { key, at: now, value });
-  return value;
+  return f ? follow(f).summarize() : undefined;
 }
 
 export function snapshot(home: string, now = Date.now(), learning: Learning = { queued: 0, recent: [] }, hosted: HostedView[] = []) {
@@ -148,7 +139,7 @@ export function snapshot(home: string, now = Date.now(), learning: Learning = { 
   const log = readLog(home);
   const dir = knowledgeDir(home);
   const notes = recentNotes(home);
-  const list = threads(log, asks, rules, modes, (s, t) => summaryFor(s, t, now), { now, askMode: cfg.asks }).map((t) => {
+  const list = threads(log, asks, rules, modes, (s, t) => summaryFor(s, t), { now, askMode: cfg.asks }).map((t) => {
     const repo = repoNameOf(t.cwd);
     const transcript = log.find((e) => e.session === t.session && e.transcript)?.transcript;
     const tail = t.state === "closed" ? [] : cached(`tail:${t.session}`, 1500, now, () => {
@@ -233,12 +224,35 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         return;
       }
       if (req.method === "GET" && url.pathname === "/api/session") {
-        // A session in a terminal of your own, as it goes, to follow it from the desk.
+        // A session in a terminal of your own, as Copilot writes it, to follow it from the
+        // desk. `since`: the version the page has; the answer waits until there's more.
+        // `before`: a page of earlier turns, as you scroll up.
         const id = str(url.searchParams.get("id"), "id", 200);
         if (!/^[\w.-]+$/.test(id)) return json(res, 400, { error: "bad session id" });
+        const num = (k: string, d: number) => {
+          const raw = url.searchParams.get(k);
+          const v = raw === null || raw === "" ? NaN : Number(raw);
+          return Number.isFinite(v) && v >= 0 ? Math.floor(v) : d;
+        };
         const transcript = readLog(home).find((e) => e.session === id && e.transcript)?.transcript;
-        const f = sessionFile(id, transcript);
-        return json(res, 200, { turns: f ? cached(`talk:${id}:${fs.statSync(f, { throwIfNoEntry: false })?.size ?? 0}`, 1000, Date.now(), () => conversation(readEvents(f))) : [] });
+        const before = url.searchParams.get("before");
+        if (before !== null) {
+          const f = sessionFile(id, transcript);
+          return json(res, 200, f ? follow(f).earlier(num("before", 0), Math.min(num("n", 200), 500)) : { epoch: "", v: 0, total: 0, turns: [] });
+        }
+        const since = num("since", 0);
+        const epoch = url.searchParams.get("epoch") ?? "";
+        const until = Date.now() + Math.min(num("wait", 0), 25_000);
+        for (;;) {
+          const f = sessionFile(id, transcript);
+          const fl = f ? follow(f) : undefined;
+          // A page on another epoch has turns that no longer line up: it starts over.
+          const fresh = fl && epoch && fl.epoch !== epoch;
+          if (fl && (fresh || fl.v > since || Date.now() >= until || req.destroyed)) return json(res, 200, fl.changes(fresh ? 0 : since, Math.min(num("last", 200), 500)));
+          if (!fl && (Date.now() >= until || req.destroyed)) return json(res, 200, { epoch: "", v: 0, total: 0, turns: [] });
+          // Copilot writes in bursts; a quarter second feels live without busy work.
+          await new Promise((r) => setTimeout(r, 250));
+        }
       }
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
       if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "send JSON" });

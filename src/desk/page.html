@@ -192,8 +192,13 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 #term-body { flex: 1; min-height: 0; position: relative; }
 #xterm { position: absolute; inset: 6px 4px 4px 12px; }
 #xterm .xterm-viewport { scrollbar-color: #3b4a52 transparent; }
-#mirror { position: absolute; inset: 0; overflow: auto; padding: 12px 18px 18px; font-size: 13.5px; line-height: 1.5; }
-#mirror > * + * { margin-top: 6px; }
+/* Scroll position is kept by hand when earlier turns go in above (loadEarlier). */
+#mirror { position: absolute; inset: 0; overflow: auto; overflow-anchor: none; padding: 12px 18px 18px; font-size: 13.5px; line-height: 1.5; }
+#mirror > * + *, #m-turns > * + * { margin-top: 6px; }
+#mirror .m-earlier { color: var(--term-dim); font-size: 12.5px; text-align: center; }
+.m-new { position: absolute; right: 22px; bottom: 16px; padding: 5px 12px; border-radius: 14px; border: 1px solid #3b4a52; background: #24313a; color: var(--term-ink); font: inherit; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+.m-new:hover { background: #2d3d47; }
+.m-new[hidden] { display: none; }
 #mirror .m-note { color: var(--term-dim); font-size: 13px; padding-bottom: 8px; border-bottom: 1px dashed rgba(255, 255, 255, .15); }
 #mirror .m-you { color: #9fd6b8; font-weight: 600; white-space: pre-wrap; margin-top: 14px; }
 #mirror .m-said { white-space: pre-wrap; max-width: 90ch; }
@@ -260,6 +265,7 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
     <div id="term-body">
       <div id="xterm" hidden></div>
       <div id="mirror" hidden></div>
+      <button id="m-new" class="m-new" hidden></button>
       <div id="term-empty" hidden></div>
     </div>
   </section>
@@ -271,7 +277,7 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 const TOKEN = "__TOKEN__";
 // `sel`: the thread shown bottom left. `focus`: the one whose terminal is on the right,
 // once you've picked one with its terminal button (until then, the selected thread's).
-const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0, tab: "threads", sel: null, focus: null, closing: null, mirror: { session: null, key: "", turns: [] } };
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0, tab: "threads", sel: null, focus: null, closing: null, mirror: { session: null } };
 
 // "New since you last looked": when you left the page, kept in this browser only, so
 // the desk stays a view of the log with no state of its own.
@@ -286,9 +292,9 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("pagehide", leave);
 const isNew = (at) => ui.looked > 0 && at > ui.looked;
 
-async function api(path, body) {
+async function api(path, body, signal) {
   const res = await fetch(path, body === undefined
-    ? { headers: { "x-desk-token": TOKEN } }
+    ? { headers: { "x-desk-token": TOKEN }, signal }
     : { method: "POST", headers: { "x-desk-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body) });
   const out = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
@@ -629,32 +635,128 @@ async function flushKeys(x) {
   x.flushing = false;
 }
 
+// A session of your own, followed as Copilot writes it. Turns are added at the end and a
+// tool call's ending is marked where it stands: nothing you're reading is drawn again,
+// so it doesn't move and what you selected stays selected. Earlier turns load as you
+// scroll up; new ones below wait behind "new ↓" until you go down to them.
+const markOf = (x) => x.running ? ["…", "running"] : x.ok ? ["✓", "done"] : ["✗", "failed"];
+const runClass = (x) => `m-run${x.running ? " running" : x.ok ? " ok" : " bad"}`;
 const turnEl = (x) => x.k === "you" ? h("div", { class: "m-you" }, "› ", x.text)
   : x.k === "said" ? h("div", { class: "m-said" }, x.text)
   : x.k === "now" ? h("div", { class: "m-now" }, x.text)
-  : h("div", { class: `m-run${x.running ? " running" : x.ok ? " ok" : " bad"}` }, h("span", { class: "m-mark", "aria-label": x.running ? "running" : x.ok ? "done" : "failed" }, x.running ? "…" : x.ok ? "✓" : "✗"), x.text);
-function drawMirror(t) {
-  const m = document.getElementById("mirror");
-  const atEnd = m.scrollHeight - m.scrollTop - m.clientHeight < 60;
-  m.replaceChildren(
+  : h("div", { class: runClass(x) }, h("span", { class: "m-mark", "aria-label": markOf(x)[1] }, markOf(x)[0]), x.text);
+function updateTurn(el, x) {
+  if (x.k !== "run") return;
+  el.className = runClass(x);
+  const [mark, label] = markOf(x);
+  el.firstChild.textContent = mark;
+  el.firstChild.setAttribute("aria-label", label);
+}
+const mirrorEl = () => document.getElementById("mirror");
+const nearEnd = (m) => m.scrollHeight - m.scrollTop - m.clientHeight < 60;
+function stopMirror() {
+  if (ui.mirror.ctrl) ui.mirror.ctrl.abort();
+  ui.mirror = { session: null };
+  document.getElementById("m-new").hidden = true;
+}
+function followMirror(t) {
+  if (ui.mirror.session === t.session && ui.mirror.ctrl && !ui.mirror.ctrl.signal.aborted) return;
+  stopMirror();
+  const st = ui.mirror = { session: t.session, epoch: "", v: 0, first: 0, total: 0, loaded: false, els: new Map(), ctrl: new AbortController(), unseen: 0, earlier: false };
+  mirrorEl().replaceChildren(
     h("div", { class: "m-note" }, `${t.name} runs in a window of its own; this follows its session. To type, use "Type in its tab". A thread you start with New thread runs here, where you can type.`),
-    ...(ui.mirror.turns.length ? ui.mirror.turns.map(turnEl) : [h("div", { class: "m-now" }, "Nothing in its session yet.")]));
-  if (atEnd || ui.mirror.fresh) m.scrollTop = m.scrollHeight;
-  ui.mirror.fresh = false;
+    h("div", { class: "m-earlier", id: "m-earlier", hidden: true }),
+    h("div", { id: "m-turns" }),
+    h("div", { class: "m-now", id: "m-nothing", hidden: true }, "Nothing in its session yet."));
+  pullMirror(st);
 }
-async function followMirror(t) {
-  const key = `${t.session}:${t.lastAt}:${t.state}`;
-  if (ui.mirror.session !== t.session) { ui.mirror = { session: t.session, key: "", turns: [], fresh: true }; drawMirror(t); }
-  if (ui.mirror.key === key || ui.mirror.loading === key) return;
-  ui.mirror.loading = key;
+async function pullMirror(st) {
+  while (!st.ctrl.signal.aborted) {
+    try {
+      const r = await api(`/api/session?id=${encodeURIComponent(st.session)}&since=${st.v}&epoch=${encodeURIComponent(st.epoch)}&wait=${st.loaded ? 25000 : 0}`, undefined, st.ctrl.signal);
+      if (st !== ui.mirror) return;
+      applyTurns(st, r);
+    } catch {
+      if (st.ctrl.signal.aborted) return;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+function applyTurns(st, r) {
+  const m = mirrorEl();
+  const box = document.getElementById("m-turns");
+  const atEnd = !st.loaded || nearEnd(m);
+  if (r.epoch !== st.epoch) {
+    // The file was written again from the start: what's shown no longer lines up.
+    box.replaceChildren();
+    st.els.clear();
+    st.epoch = r.epoch;
+    st.first = r.turns.length ? r.turns[0].i : r.total;
+  }
+  let added = 0;
+  for (const x of r.turns) {
+    const el = st.els.get(x.i);
+    if (el) updateTurn(el, x);
+    else if (x.i >= st.first) {
+      const n = turnEl(x);
+      st.els.set(x.i, n);
+      box.append(n);
+      added++;
+    }
+  }
+  st.v = r.v;
+  st.total = r.total;
+  st.loaded = true;
+  document.getElementById("m-nothing").hidden = st.total > 0;
+  earlierLine(st);
+  if (atEnd) { m.scrollTop = m.scrollHeight; st.unseen = 0; } else st.unseen += added;
+  newPill(st);
+}
+function earlierLine(st) {
+  const el = document.getElementById("m-earlier");
+  if (!el) return;
+  el.hidden = st.first <= 0;
+  el.textContent = st.earlier ? "Loading earlier turns…" : `${st.first.toLocaleString()} earlier ${st.first === 1 ? "turn" : "turns"} above: scroll up`;
+}
+function newPill(st) {
+  const b = document.getElementById("m-new");
+  b.hidden = !st.unseen;
+  b.textContent = `${st.unseen} new ↓`;
+}
+async function loadEarlier() {
+  const st = ui.mirror;
+  if (!st.session || !st.loaded || st.earlier || st.first <= 0) return;
+  st.earlier = true;
+  earlierLine(st);
+  let r;
   try {
-    const r = await api(`/api/session?id=${encodeURIComponent(t.session)}`);
-    if (ui.mirror.session !== t.session) return;
-    ui.mirror.key = key;
-    ui.mirror.turns = r.turns;
-    drawMirror(t);
-  } catch { /* the next change tries again */ } finally { if (ui.mirror.loading === key) ui.mirror.loading = ""; }
+    r = await api(`/api/session?id=${encodeURIComponent(st.session)}&before=${st.first}&n=200`, undefined, st.ctrl.signal);
+  } catch { /* scrolling up again tries again */ }
+  st.earlier = false;
+  if (!r || st !== ui.mirror || r.epoch !== st.epoch) { earlierLine(st); return; }
+  const m = mirrorEl();
+  const height = m.scrollHeight;
+  const top = m.scrollTop;
+  const frag = document.createDocumentFragment();
+  for (const x of r.turns) if (x.i < st.first && !st.els.has(x.i)) { const n = turnEl(x); st.els.set(x.i, n); frag.append(n); }
+  document.getElementById("m-turns").prepend(frag);
+  st.first = r.turns.length ? Math.min(st.first, r.turns[0].i) : 0;
+  earlierLine(st);
+  // Keep what you were looking at where it was, with the earlier turns above it (and the
+  // line saying more are above gone, once there are none).
+  m.scrollTop = top + (m.scrollHeight - height);
 }
+mirrorEl().addEventListener("scroll", () => {
+  const m = mirrorEl();
+  if (m.scrollTop < 400) loadEarlier();
+  if (ui.mirror.unseen && nearEnd(m)) { ui.mirror.unseen = 0; newPill(ui.mirror); }
+}, { passive: true });
+document.getElementById("m-new").addEventListener("click", () => {
+  const m = mirrorEl();
+  m.scrollTop = m.scrollHeight;
+  ui.mirror.unseen = 0;
+  newPill(ui.mirror);
+});
 
 function rightEl(d) {
   const name = focusName();
@@ -664,6 +766,7 @@ function rightEl(d) {
   const mirror = document.getElementById("mirror");
   const empty = document.getElementById("term-empty");
   if (x) {
+    stopMirror();
     attachTerm(name);
     mirror.hidden = true;
     empty.hidden = true;
@@ -689,6 +792,7 @@ function rightEl(d) {
     followMirror(t);
     return;
   }
+  stopMirror();
   mirror.hidden = true;
   empty.hidden = false;
   head.replaceChildren(h("span", { class: "tt" }, "Terminal"));

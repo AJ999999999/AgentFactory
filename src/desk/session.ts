@@ -184,15 +184,18 @@ export function titleOf(prompt: string, max = 80): string {
   return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), max - 20)).trimEnd()}…`;
 }
 
-export function summarize(events: Ev[]): Summary {
-  const s: Summary = { prompts: 0, files: [], commands: 0, failed: 0 };
-  const running = new Map<string, string>();
-  const files = new Set<string>();
-  const wrote = (f: string) => {
-    files.delete(f); // newest last
-    files.add(f);
-  };
-  for (const e of events) {
+// What a session is about and how far it got, folded one event at a time, so a session
+// still being written is read only where it grew (see SessionFollow).
+class SummaryFold {
+  private s: Summary = { prompts: 0, files: [], commands: 0, failed: 0 };
+  private running = new Map<string, string>();
+  private files = new Set<string>();
+  private wrote(f: string) {
+    this.files.delete(f); // newest last
+    this.files.add(f);
+  }
+  feed(e: Ev): void {
+    const s = this.s;
     const x = e.data ?? {};
     switch (e.type) {
       case "session.start":
@@ -217,75 +220,224 @@ export function summarize(events: Ev[]): Summary {
         }
         if (SHELL.test(name)) s.commands++;
         const what = typeof a === "string" ? a : a?.command ?? a?.path ?? a?.file_path ?? a?.url ?? "";
-        if (x.toolCallId) running.set(String(x.toolCallId), `${name}${what ? `: ${String(what).split("\n")[0].slice(0, 120)}` : ""}`);
+        if (x.toolCallId) this.running.set(String(x.toolCallId), `${name}${what ? `: ${String(what).split("\n")[0].slice(0, 120)}` : ""}`);
         if (WRITES.test(name)) {
           const text = typeof a === "string" ? a : typeof a?.patch === "string" ? a.patch : typeof a?.input === "string" ? a.input : "";
-          for (const m of text.matchAll(PATCHED)) wrote(m[1].trim());
-          for (const p of [a?.path, a?.file_path, a?.filePath]) if (typeof p === "string" && p) wrote(p);
+          for (const m of text.matchAll(PATCHED)) this.wrote(m[1].trim());
+          for (const p of [a?.path, a?.file_path, a?.filePath]) if (typeof p === "string" && p) this.wrote(p);
         }
         break;
       }
       case "tool.execution_complete": {
-        if (x.toolCallId) running.delete(String(x.toolCallId));
+        if (x.toolCallId) this.running.delete(String(x.toolCallId));
         const exit = x.shellExecution?.exitCode;
         if (x.success === false || (typeof exit === "number" && exit !== 0)) s.failed++;
         break;
       }
     }
   }
-  // A tool still running says more about now than an intent stated earlier.
-  const last = [...running.values()].pop();
-  if (last) s.now = s.now ? `${s.now} (running ${last})` : `running ${last}`;
-  s.files = [...files].slice(-30);
-  return s;
+  result(): Summary {
+    const s: Summary = { ...this.s };
+    // A tool still running says more about now than an intent stated earlier.
+    const last = [...this.running.values()].pop();
+    if (last) s.now = s.now ? `${s.now} (running ${last})` : `running ${last}`;
+    s.files = [...this.files].slice(-30);
+    return s;
+  }
+}
+
+export function summarize(events: Ev[]): Summary {
+  const f = new SummaryFold();
+  for (const e of events) f.feed(e);
+  return f.result();
 }
 
 export type Turn = { k: "you" | "said" | "run" | "now"; text: string; ok?: boolean; running?: boolean };
 
 // A session as it goes, for following a terminal from the desk: your prompts, what
 // Copilot said (not its sub-agents), each tool call with how it ended, and what it says
-// it's doing. Its tools' output stays in the terminal.
-export function conversation(events: Ev[], max = 200): Turn[] {
-  const out: Turn[] = [];
-  const open = new Map<string, Turn>();
-  for (const e of events) {
+// it's doing. Its tools' output stays in the terminal. Each turn keeps the version it
+// last changed at, so the page can ask for only what changed since it last looked.
+class TalkFold {
+  readonly turns: Turn[] = [];
+  readonly changed: number[] = [];
+  v = 0;
+  private open = new Map<string, number>();
+  private push(t: Turn) {
+    this.turns.push(t);
+    this.changed.push(++this.v);
+  }
+  feed(e: Ev): void {
     const x = e.data ?? {};
     switch (e.type) {
       case "user.message": {
         const t = typeof x.content === "string" ? x.content : typeof x.text === "string" ? x.text : "";
-        if (t.trim()) out.push({ k: "you", text: t.trim() });
+        if (t.trim()) this.push({ k: "you", text: t.trim() });
         break;
       }
       case "assistant.message":
-        if (!x.parentToolCallId && typeof x.content === "string" && x.content.trim()) out.push({ k: "said", text: x.content.trim() });
+        if (!x.parentToolCallId && typeof x.content === "string" && x.content.trim()) this.push({ k: "said", text: x.content.trim() });
         break;
       case "tool.execution_start": {
         const name = String(x.toolName ?? x.name ?? "tool");
         const a = x.arguments ?? x.args ?? x.input;
         if (name === "report_intent") {
           const intent = typeof a === "string" ? a : a?.intent;
-          if (typeof intent === "string" && intent.trim()) out.push({ k: "now", text: intent.trim() });
+          if (typeof intent === "string" && intent.trim()) this.push({ k: "now", text: intent.trim() });
           break;
         }
         // A patch reads as the files it touches.
         const patch = typeof a === "string" ? a : typeof a?.patch === "string" ? a.patch : typeof a?.input === "string" ? a.input : "";
         const files = [...patch.matchAll(PATCHED)].map((m) => m[1].trim());
         const what = files.length ? files.join(", ") : typeof a === "string" ? a : a?.command ?? a?.path ?? a?.file_path ?? a?.url ?? "";
-        const t: Turn = { k: "run", text: SHELL.test(name) && what ? String(what) : `${name}${what ? ` ${String(what).split("\n")[0]}` : ""}`, running: true };
-        out.push(t);
-        if (x.toolCallId) open.set(String(x.toolCallId), t);
+        this.push({ k: "run", text: SHELL.test(name) && what ? String(what) : `${name}${what ? ` ${String(what).split("\n")[0]}` : ""}`, running: true });
+        if (x.toolCallId) this.open.set(String(x.toolCallId), this.turns.length - 1);
         break;
       }
       case "tool.execution_complete": {
-        const t = open.get(String(x.toolCallId));
-        if (!t) break;
-        open.delete(String(x.toolCallId));
+        const i = this.open.get(String(x.toolCallId));
+        if (i === undefined) break;
+        this.open.delete(String(x.toolCallId));
         const exit = x.shellExecution?.exitCode;
+        const t = this.turns[i];
         t.running = false;
         t.ok = !(x.success === false || (typeof exit === "number" && exit !== 0));
+        this.changed[i] = ++this.v;
         break;
       }
     }
   }
-  return out.slice(-max).map((t) => (t.text.length > 4000 ? { ...t, text: `${t.text.slice(0, 4000)}…` } : t));
+}
+
+const cutTurn = (t: Turn): Turn => (t.text.length > 4000 ? { ...t, text: `${t.text.slice(0, 4000)}…` } : { ...t });
+
+export function conversation(events: Ev[], max = 200): Turn[] {
+  const f = new TalkFold();
+  for (const e of events) f.feed(e);
+  return f.turns.slice(-max).map(cutTurn);
+}
+
+// ---------- following a session while it's written ----------
+
+export type Placed = Turn & { i: number };
+export type Changes = {
+  // Starts again when the file was rewritten from the beginning: drop what you have.
+  epoch: string;
+  // Pass this back as `since` to get only what changed after it.
+  v: number;
+  total: number;
+  turns: Placed[];
+};
+
+// Copilot appends to a session's file as it works, and the file grows to megabytes. A
+// follower remembers how far it read and reads only what was added, so the desk can look
+// several times a second without parsing the whole session again.
+export class SessionFollow {
+  readonly epoch = Math.random().toString(36).slice(2, 10);
+  private offset = 0;
+  private talk = new TalkFold();
+  private sum = new SummaryFold();
+  private summary?: { v: number; value: Summary };
+  // Counts every event read, not only those that change a turn, so a summary that
+  // moves (a running tool) is seen too.
+  private events = 0;
+  readonly file: string;
+  constructor(file: string) {
+    this.file = file;
+  }
+
+  get v(): number {
+    return this.talk.v;
+  }
+  get read(): number {
+    return this.offset;
+  }
+
+  // Reads what was added since the last call. A last line still being written is left
+  // for the next call; one that's whole without its newline is taken.
+  update(): void {
+    const size = fs.statSync(this.file, { throwIfNoEntry: false })?.size ?? 0;
+    if (size <= this.offset) return;
+    const fd = fs.openSync(this.file, "r");
+    try {
+      let carry = Buffer.alloc(0);
+      let pos = this.offset;
+      while (pos < size) {
+        const buf = Buffer.alloc(Math.min(CHUNK, size - pos));
+        const got = fs.readSync(fd, buf, 0, buf.length, pos);
+        if (got <= 0) break;
+        pos += got;
+        const data = carry.length ? Buffer.concat([carry, buf.subarray(0, got)]) : buf.subarray(0, got);
+        const nl = data.lastIndexOf(10);
+        if (nl < 0) {
+          carry = data;
+          continue;
+        }
+        for (const line of data.subarray(0, nl).toString("utf8").split("\n")) this.line(line);
+        carry = data.subarray(nl + 1);
+        this.offset = pos - carry.length;
+      }
+      if (carry.length && this.line(carry.toString("utf8"))) this.offset = pos;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  private line(l: string): boolean {
+    const t = l.trim();
+    if (!t.startsWith("{")) return false;
+    let e: Ev;
+    try {
+      e = JSON.parse(t) as Ev;
+    } catch {
+      return false;
+    }
+    if (typeof e.type !== "string") return false;
+    const ev = { ...e, data: e.data ?? (e as { payload?: Record<string, any> }).payload ?? {} };
+    this.talk.feed(ev);
+    this.sum.feed(ev);
+    this.events++;
+    return true;
+  }
+
+  summarize(): Summary {
+    if (this.summary?.v !== this.events) this.summary = { v: this.events, value: this.sum.result() };
+    return this.summary.value;
+  }
+
+  // What changed after version `since`. The first look (since 0) gets only the last
+  // `last` turns; earlier ones come a page at a time with `earlier`.
+  changes(since = 0, last = 200): Changes {
+    const { turns, changed } = this.talk;
+    const out: Placed[] = [];
+    const from = since > 0 ? 0 : Math.max(0, turns.length - last);
+    // Not only the newest turns: a tool call that started long ago can end now.
+    if (since > 0) {
+      for (let i = turns.length - 1; i >= 0; i--) if (changed[i] > since) out.push({ ...cutTurn(turns[i]), i });
+      out.reverse();
+    } else for (let i = from; i < turns.length; i++) out.push({ ...cutTurn(turns[i]), i });
+    return { epoch: this.epoch, v: this.v, total: turns.length, turns: out };
+  }
+
+  earlier(before: number, n = 200): Changes {
+    const end = Math.max(0, Math.min(before, this.talk.turns.length));
+    const turns = this.talk.turns.slice(Math.max(0, end - n), end).map((t, k) => ({ ...cutTurn(t), i: Math.max(0, end - n) + k }));
+    return { epoch: this.epoch, v: this.v, total: this.talk.turns.length, turns };
+  }
+}
+
+const CHUNK = 4 * 1024 * 1024;
+// One follower per file, made again when the file shrank (rewritten from the start).
+const followers = new Map<string, SessionFollow>();
+export function follow(file: string): SessionFollow {
+  let f = followers.get(file);
+  const size = fs.statSync(file, { throwIfNoEntry: false })?.size ?? 0;
+  if (!f || size < f.read) f = new SessionFollow(file);
+  // Most recently looked at last: a desk runs for days, and sessions it no longer shows
+  // needn't stay in memory.
+  followers.delete(file);
+  followers.set(file, f);
+  if (followers.size > 40) followers.delete(followers.keys().next().value as string);
+  f.update();
+  return f;
 }

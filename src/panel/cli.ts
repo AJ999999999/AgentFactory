@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadPolicy } from "../harness/project.ts";
+import { loadAgentsConfig } from "../harness/setup.ts";
 import { panelFolders } from "./folders.ts";
 import { startPanel } from "./server.ts";
 
@@ -20,6 +21,7 @@ const flag = (name: string) => {
   return i >= 0 && i + 1 < args.length && !args[i + 1].startsWith("--") ? args[i + 1] : undefined;
 };
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
+const models = loadAgentsConfig(ROOT).models;
 
 const asked = args.flatMap((a, i) => (a === "--dir" && i + 1 < args.length && !args[i + 1].startsWith("--") ? [args[i + 1]] : []));
 const demo = args.includes("--demo");
@@ -36,7 +38,7 @@ const withWork = dirs.filter((d) => fs.existsSync(path.join(d, ".af", "harness")
 if (!withWork.length) console.log(`no engagements in ${dirs.join(", ")} yet (open one with: npm run harness -- open <engagement.json>)`);
 else console.log(`engagements from: ${withWork.join(", ")}`);
 
-const panel = await startPanel({ dir: dirs, policy, port: Number(flag("port") ?? 4700), log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
+const panel = await startPanel({ dir: dirs, policy, models, port: Number(flag("port") ?? 4700), log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
 console.log(`panel: ${panel.url}  (Ctrl+C to stop)`);
 if (!args.includes("--no-open")) openBrowser(panel.url);
 

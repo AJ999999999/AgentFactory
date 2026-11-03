@@ -137,6 +137,16 @@ main {
 .holds { display: flex; align-items: center; gap: 2px; border-left: 1px solid var(--rule); }
 .holds i { display: block; width: 3px; height: 14px; background: var(--ink-2); border-radius: 1px; }
 .holds:empty { padding: 0; border: 0; }
+.stalls .holds i { background: var(--bad); }
+.flow-q { font-size: 13.5px; color: var(--ink-2); display: grid; gap: 3px; }
+.flow-q .stop { color: var(--bad); font-weight: 600; }
+.flow-q .past { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.flow-q .past .r-host_failure, .flow-q .past .r-validation_failed { color: var(--bad); }
+.flow { font-size: 12.5px; color: var(--ink-2); margin-top: 8px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.flow .ask { color: var(--warn); }
+.flow .bad { color: var(--bad); }
+.flow .day { color: var(--ink-3); }
+.flow-q .flow { margin-top: 0; display: inline-flex; }
 .age { border-left: 1px solid var(--rule); color: var(--ink-2); font-size: 13px; text-align: right; padding-left: 0; padding-right: 12px; font-stretch: 87%; }
 
 .body { padding: 2px 18px 16px calc(7px + 150px + 15px); display: none; }
@@ -300,6 +310,27 @@ main {
 .pips i { width: 5px; height: 5px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--ink-2); }
 .pips i.on { background: var(--ink); box-shadow: none; }
 
+button.team { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; align-items: center; }
+button.team .open { font-size: 12.5px; color: var(--ink-3); padding-left: 2px; }
+button.team:hover .open, button.team[aria-expanded="true"] .open { color: var(--ink); }
+.agents { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.agent { border-left: 2px solid var(--rule); padding: 4px 0 4px 10px; font-size: 13.5px; display: grid; gap: 3px; min-width: 0; }
+.agent.a-running { border-left-color: var(--ink); }
+.agent.a-waiting, .agent.a-asking { border-left-color: var(--warn); }
+.agent .a-head { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.agent .a-name { font-weight: 600; white-space: nowrap; }
+.agent .a-runs { color: var(--ink-2); font-size: 12.5px; white-space: nowrap; }
+.agent .a-now { margin-left: auto; color: var(--ink-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.agent.a-running .a-now { color: var(--ink); }
+.agent.a-waiting .a-now, .agent.a-asking .a-now { color: var(--warn); }
+.agent .a-meta { color: var(--ink-3); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.agent .a-perm { border: 1px solid var(--rule); border-radius: 2px; padding: 0 5px; color: var(--ink-2); }
+.agent .a-perm.asking { border-style: dashed; border-color: var(--warn); color: var(--warn); }
+.agent .a-perm.declined { text-decoration: line-through; }
+.agent .a-charter { color: var(--ink-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .ticks { margin-top: 0; height: 15px; }
+.agent .tick.g-milestone { height: 15px; }
+
 .ticks { display: flex; align-items: flex-end; gap: 2px; height: 22px; margin-top: 12px; }
 .tick { width: 4px; border-radius: 1px; background: var(--ink); flex: none; }
 .tick.g-none { height: 5px; }
@@ -352,7 +383,7 @@ main {
 const TOKEN = "__TOKEN__";
 const POLL_MS = 10_000;
 const LIVE_POLL_MS = 3_000; // while a turn is running, so its log reads as it happens
-const ui = { open: null, choice: null, drafts: {}, budget: null, seen: null, data: null, pending: false, sending: false, armed: null };
+const ui = { open: null, choice: null, drafts: {}, budget: null, seen: null, data: null, pending: false, sending: false, armed: null, agents: new Set() };
 
 // ---------- plumbing ----------
 
@@ -441,7 +472,8 @@ document.addEventListener("visibilitychange", () => {
 function allAsks(d) {
   const out = [];
   for (const e of d.engagements) for (const a of e.asks) out.push(a);
-  return out.sort((x, y) => Number(y.urgent) - Number(x.urgent) || y.holds.length - x.holds.length || x.openedAt - y.openedAt);
+  // Urgent first, then the ones a whole goal is stopped on, then by how much they hold.
+  return out.sort((x, y) => Number(y.urgent) - Number(x.urgent) || Number(y.stalls) - Number(x.stalls) || y.holds.length - x.holds.length || x.openedAt - y.openedAt);
 }
 
 const PERSON = () => {
@@ -466,10 +498,46 @@ function strip(a, now, fresh) {
       a.to !== "partner" ? h("span", { class: "to" }, PERSON(), a.to) : null),
     h("span", { class: "q" }, a.question,
       a.recommend ? h("span", { class: "rec" }, "Recommends ", h("b", null, a.recommend.label)) : null),
-    h("span", { class: "holds", title: a.holds.length ? `Holds up ${a.holds.length} piece${a.holds.length > 1 ? "s" : ""} of work` : null }, ticks),
+    h("span", { class: "holds", title: a.holds.length ? `Holds up ${a.holds.length} piece${a.holds.length > 1 ? "s" : ""} of work${a.stalls ? `; nothing else in ${a.goalTitle} can move` : ""}` : null }, ticks),
     h("span", { class: "age", title: `Asked ${day(a.openedAt)}` }, ago(a.openedAt, now)));
-  return h("article", { class: `strip k-${a.kind}${a.urgent ? " urgent" : ""}${isOpen ? " open" : ""}${fresh ? " fresh" : ""}`, "data-key": k },
+  return h("article", { class: `strip k-${a.kind}${a.urgent ? " urgent" : ""}${a.stalls ? " stalls" : ""}${isOpen ? " open" : ""}${fresh ? " fresh" : ""}`, "data-key": k },
     head, isOpen ? body(a) : null);
+}
+
+// The flow around a question: is the goal stopped on it, how is the goal moving, and how
+// did the turns that led here go. What you need to weigh "try again" against "drop it".
+function flowAtQuestion(a) {
+  const g = goalOf(a);
+  const line = g ? flowLine(g.flow) : null;
+  if (!a.stalls && !a.history.length && !line) return null;
+  return h("div", { class: "flow-q" },
+    a.stalls ? h("div", { class: "stop" }, a.stalledWith
+      ? `Nothing in ${a.goalTitle} can move until its questions are answered: this one and ${a.stalledWith} more.`
+      : `Nothing else in ${a.goalTitle} can move until this is answered.`) : null,
+    line ? h("div", null, `${a.goalTitle}: `, line) : null,
+    a.history.length ? h("div", { class: "past" }, "Its last turns:", a.history.map((t) =>
+      h("span", { class: `r-${t.result}`, title: `${day(t.at)}${t.reason ? `\n${t.reason}` : ""}` }, RESULT[t.result] || t.result))) : null);
+}
+
+function goalOf(a) {
+  const e = ui.data && ui.data.engagements.find((x) => x.id === a.engagement);
+  return e && e.goals.find((g) => g.id === a.goal);
+}
+
+// "1 running, 3 ready, 2 held by questions · last day: 2 added, 1 done, 1 failed"
+function flowLine(f) {
+  const now = [
+    f.running ? h("span", null, `${f.running} running`) : null,
+    f.ready ? h("span", null, `${f.ready} ready`) : null,
+    f.asking ? h("span", { class: "ask" }, `${f.asking} held by questions`) : null,
+    f.person ? h("span", null, `${f.person} with a person`) : null,
+    f.held ? h("span", null, `${f.held} held`) : null,
+  ].filter(Boolean);
+  const d = f.day;
+  const day = d.added || d.done || d.failed ? h("span", { class: "day" }, "last day: ",
+    [d.added ? `${d.added} added` : null, d.done ? `${d.done} done` : null].filter(Boolean).join(", "),
+    d.failed ? h("span", { class: "bad" }, `${d.added || d.done ? ", " : ""}${d.failed} failed`) : null) : null;
+  return now.length || day ? h("span", { class: "flow" }, now, day) : null;
 }
 
 function body(a) {
@@ -479,6 +547,7 @@ function body(a) {
   const told = a.options.filter((o) => o.consequence || o.irreversible);
   return h("div", { class: "body" },
     a.about ? h("div", { class: "about" }, a.about) : null,
+    flowAtQuestion(a),
     // The card says when it isn't enough to answer from.
     a.lookFirst.length ? h("div", { class: "look", role: "note" }, "Look before you answer: ", a.lookFirst.join("; "), ".") : null,
     a.recommend ? h("div", { class: "why" }, h("b", null, a.recommend.label), ": ", a.recommend.why, " ", h("span", { class: "by" }, `(${a.recommend.by}'s opinion)`)) : null,
@@ -698,6 +767,46 @@ function team(seats) {
   }, name, s.probation ? h("span", { class: "pips" }, Array.from({ length: s.promoteAfter }, (_, i) => h("i", { class: i < s.accepted ? "on" : "" }))) : null));
 }
 
+const CLI = { claude: "Claude Code", copilot: "Copilot", codex: "Codex", pi: "pi", omp: "omp" };
+const RESULT = { completed: "done", progress: "progress", blocked: "blocked", validation_failed: "failed its checks", host_failure: "failed to run", claim_lost: "lost its claim", stopped: "stopped by you" };
+
+function agentNow(a, now) {
+  const n = a.now;
+  if (n.state === "running") return { text: `on: ${n.text}`, title: `${n.text}\nturn ${n.turn}, started ${ago(n.since, now) === "now" ? "just now" : `${ago(n.since, now)} ago`}` };
+  if (n.state === "waiting") return { text: `${CLI[n.vendor] || "Model"} ${n.kind === "unreachable" ? "can't be reached" : n.kind === "setup" ? "setup problem" : "usage limit"}, back ${day(n.until)}`, title: n.reason };
+  if (n.state === "asking") return { text: "waiting on your decision", title: n.why };
+  const parts = [n.underway ? `${n.underway} under way` : null, n.open ? `${n.open} not started` : null].filter(Boolean);
+  return { text: parts.length ? parts.join(", ") : "nothing to do", title: n.underway ? "Started: a job, a person's task, a review, or a turn on another PC" : "" };
+}
+
+function agentBlock(s, now, seats) {
+  const a = s.agent;
+  // A role that works several lanes is one agent per lane: say which.
+  const shared = !s.generated && seats.filter((x) => x.role === s.role).length > 1;
+  const name = s.generated ? s.lane : shared ? `${s.role} · ${s.lane}` : s.role;
+  const runs = a.runsOn ? `${CLI[a.runsOn.cli] || a.runsOn.cli}${a.runsOn.model ? ` · ${a.runsOn.model}` : " · its default model"}` : a.model;
+  const st = agentNow(a, now);
+  const kind = s.generated
+    ? (s.probation ? `generated, on probation: ${s.accepted} of ${s.promoteAfter} reviews passed${s.rejected ? `, ${s.rejected} sent back` : ""}` : "generated, promoted")
+    : `library role ${a.template}`;
+  const t = a.turns;
+  const tally = t.total ? [`${t.total} turn${t.total > 1 ? "s" : ""}`, t.done ? `${t.done} done` : null, t.failed ? `${t.failed} failed` : null, t.stopped ? `${t.stopped} stopped` : null].filter(Boolean).join(", ") + ` · last ${ago(t.lastAt, now)}` : "no turns yet";
+  return h("li", { class: `agent a-${a.now.state}` },
+    h("div", { class: "a-head" },
+      h("span", { class: "a-name", title: `${s.lane} work${s.generated ? "" : ` as ${s.role}`}` }, name),
+      h("span", { class: "a-runs", title: `Model placeholder ${a.model}${a.runsOn ? `, mapped in policy/harness-agents.json` : ""}` }, runs),
+      h("span", { class: "a-now", title: st.title }, st.text)),
+    a.charter ? h("div", { class: "a-charter", title: a.charter }, a.charter) : null,
+    h("div", { class: "a-meta" },
+      h("span", null, kind),
+      h("span", null, tally),
+      a.recent.length ? h("span", { class: "ticks", role: "img", "aria-label": `Its last ${a.recent.length} turns` }, [...a.recent].reverse().map((r) =>
+        h("i", { class: `tick r-${r.result} g-${r.granularity}`, title: `${day(r.at)} · ${RESULT[r.result] || r.result}\n${r.text}${r.reason ? `\n${r.reason}` : ""}` }))) : null),
+    h("div", { class: "a-meta" },
+      a.permissions.map((p) => h("span", { class: "a-perm", title: "It may do this" }, p)),
+      a.pending.map((p) => h("span", { class: `a-perm ${p.state}`, title: p.state === "asking" ? `Waiting on your decision (${p.decision})` : "You chose to work without it" }, p.permission))));
+}
+
 function goalBlock(e, g) {
   if (g.status !== "active") {
     return h("div", { class: `eng-goal closed ${g.status}` },
@@ -710,15 +819,29 @@ function goalBlock(e, g) {
       h("span", { class: "t", title: g.title }, g.title),
       g.version > 1 ? h("span", { class: "v", title: `Changed direction ${g.version - 1} time${g.version > 2 ? "s" : ""}` }, `v${g.version}`) : null),
     budgetRow(e, g),
+    flowLine(g.flow),
     g.beliefs.length ? h("div", { class: "beliefs" },
       g.beliefs.map((b) => h("span", { class: `mark ${b.status}${b.loadBearing ? " lb" : ""}${b.riskiest ? " riskiest" : ""}`, title: `${b.id} ${b.status} (${b.category}${b.loadBearing ? ", load-bearing" : ""}): ${b.text}` })),
       risky ? h("span", { class: "risk", title: risky.text }, h("b", null, risky.id), risky.text) : null) : null,
     g.work.length ? h("ul", { class: "work" },
       g.work.map((w) => h("li", { class: `w-${w.state}`, title: `${w.lane} · ${w.state}${w.why ? `: ${w.why}` : ""}` }, h("i", { class: "g" }), h("span", null, w.text))),
       g.workMore ? h("li", null, h("span", { class: "more" }, `${g.workMore} more`)) : null) : null,
-    g.seats.length ? h("div", { class: "team" }, team(g.seats)) : null,
+    g.seats.length ? teamRow(e, g) : null,
     g.turnLog.length ? h("div", { class: "ticks", role: "img", "aria-label": `Last ${g.turnLog.length} turns` }, g.turnLog.map((t) =>
       h("i", { class: `tick r-${t.result} g-${t.granularity}`, title: `${day(t.at)} · ${t.result}${t.granularity !== "none" ? `, ${t.granularity}` : ""}\n${t.text}${t.reasons.length ? `\n${t.reasons.join("\n")}` : ""}` }))) : null);
+}
+
+// The team's chips open the agents behind them: what each is doing, what runs it, what
+// it may do, and how its turns went.
+function teamRow(e, g) {
+  const k = `${e.id}/${g.id}`;
+  const open = ui.agents.has(k);
+  const busy = g.seats.filter((s) => s.agent.now.state === "running").length;
+  const toggle = h("button", { class: "team", "aria-expanded": open ? "true" : "false", title: open ? "Hide the agents" : "Show each agent: what it's doing, what runs it, its permissions and its turns", onclick: () => {
+    if (ui.agents.has(k)) ui.agents.delete(k); else ui.agents.add(k);
+    render();
+  } }, team(g.seats), h("span", { class: "open" }, `${open ? "▾" : "▸"} ${g.seats.length} agent${g.seats.length > 1 ? "s" : ""}${busy ? `, ${busy} working` : ""}`));
+  return h("div", null, toggle, open ? h("ul", { class: "agents" }, g.seats.map((s) => agentBlock(s, ui.data.now, g.seats))) : null);
 }
 
 // A turn running now: what it's on, the end of its log, and a stop button that asks

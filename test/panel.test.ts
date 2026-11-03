@@ -12,13 +12,13 @@ import { createWorkspace } from "../src/foundation/workspace.ts";
 import type { TurnAgent } from "../src/harness/agents.ts";
 import { Harness } from "../src/harness/harness.ts";
 import { LiveTurns } from "../src/harness/live.ts";
-import { loadPolicy } from "../src/harness/project.ts";
+import { loadPolicy, project } from "../src/harness/project.ts";
 import { blockers, readyTodos } from "../src/harness/select.ts";
-import type { EngagementDef } from "../src/harness/types.ts";
+import type { EngagementDef, HEvent } from "../src/harness/types.ts";
 import { SystemClock } from "../src/harness/world.ts";
 import { panelFolders, readFolders, rememberFolder } from "../src/panel/folders.ts";
 import { answerFromBody, startPanel, Workspace } from "../src/panel/server.ts";
-import { askView, splitLabel } from "../src/panel/view.ts";
+import { askView, engagementView, flowView, runsOn, splitLabel } from "../src/panel/view.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
@@ -228,6 +228,90 @@ test("the panel shows turns running on this PC with the end of their log, and as
   } finally {
     await panel.close();
   }
+});
+
+test("each agent says what it's doing, what runs it, what it may do and how its turns went", () => {
+  const T = Date.parse("2026-11-02T09:00:00Z");
+  const seat = (lane: string, extra: Partial<Extract<HEvent, { type: "seat_staffed" }>["seat"]>, ask?: string): HEvent => ({
+    id: `seat-${lane}`, at: T, by: "harness", type: "seat_staffed", ask,
+    seat: { goal: "g", lane, role: "builder", template: "builder@v1", model: "model-a", agent: "builder", skills: [], permissions: ["repo:read"], pending: [], generated: false, ...extra },
+  });
+  const turn = (n: number, todo: string, result: string, seatKey?: string): HEvent => ({
+    id: `turn-${n}`, at: T + n * 60_000, by: "r1", type: "turn",
+    turn: { id: `t${n}`, todo, goal: "g", agent: "r1", result: result as never, granularity: "surface", reasons: result === "host_failure" ? ["copilot exited 1"] : [], files: [], ...(seatKey ? { seat: seatKey } : {}) },
+  });
+  const events: HEvent[] = [
+    { id: "open", at: T, by: "partner", type: "engagement_opened", engagement: { id: "shop", title: "Shop", principals: { partner: "you" } } },
+    { id: "goal-g", at: T, by: "partner", type: "goal_opened", criteriaHash: "x", goal: { id: "g", title: "Game", objective: "o", owner: "partner", scope: ["game"], assumptions: [], budget: { turns: 10 } } },
+    ...["core", "more"].map((id): HEvent => ({ id: `add-${id}`, at: T, by: "partner", type: "todo_added", provenance: "seed", todo: { id, goal: "g", lane: "build", text: id === "core" ? "Build the core loop" : "More" } })),
+    { id: "add-scan", at: T, by: "partner", type: "todo_added", provenance: "seed", todo: { id: "scan", goal: "g", lane: "research", text: "Read the reviews" } },
+    { id: "add-art", at: T, by: "partner", type: "todo_added", provenance: "seed", todo: { id: "art", goal: "g", lane: "art", text: "Draw the hero" } },
+    seat("build", {}),
+    seat("research", { role: "researcher", template: "researcher@v1", model: "model-b", pending: [{ permission: "web:read", decision: "owner" }] }, "ask-seat-research"),
+    { id: "ask-seat-research", at: T, by: "harness", type: "ask_opened", ask: { id: "ask-seat-research", goal: "g", to: "partner", kind: "decision", question: "Grant web:read?", options: [{ id: "grant", label: "Grant", effect: { type: "ack" } }, { id: "without", label: "Work without it", effect: { type: "ack" } }] } },
+    seat("art", { role: "gen-art", template: "generated:art@v1", generated: true, charter: "Do the art work" }),
+    turn(1, "core", "completed", "g/build"),
+    turn(2, "core", "host_failure"), // an older record without its seat: the todo's lane says whose
+    turn(3, "art", "stopped", "g/art"),
+    { id: "cap", at: T + 4 * 60_000, by: "r1", type: "capacity", vendor: "copilot", until: T + 3_600_000, reason: "rate limited", streak: 1, models: ["model-a"] },
+  ];
+  const s = project(events, policy);
+  const now = T + 5 * 60_000;
+  const models = { "model-a": "", "model-b": "claude:opus" };
+  const running = [{ turn: "core-9", todo: "core", goal: "g", text: "Build the core loop", startedAt: now - 60_000 }];
+  const agents = (ctx: Parameters<typeof engagementView>[4]) => Object.fromEntries(engagementView(s, "shop", now, [], ctx).goals[0].seats.map((x) => [x.lane, x.agent]));
+
+  let a = agents({ models, running });
+  assert.deepEqual(a.build.now, { state: "running", turn: "core-9", text: "Build the core loop", since: now - 60_000 }, "a turn running on this PC beats the usage limit");
+  assert.deepEqual(a.build.runsOn, { cli: "copilot", model: "" }, "an empty mapping is Copilot's default model");
+  assert.deepEqual(a.build.turns, { total: 2, done: 1, failed: 1, stopped: 0, lastAt: T + 120_000 });
+  assert.deepEqual(a.build.recent.map((r) => [r.result, r.reason]), [["host_failure", "copilot exited 1"], ["completed", undefined]], "newest first, with why it went wrong");
+  assert.equal(a.research.now.state, "asking", "a permission waiting on the owner holds the lane");
+  assert.deepEqual(a.research.runsOn, { cli: "claude", model: "opus" });
+  assert.deepEqual(a.research.pending, [{ permission: "web:read", decision: "owner", state: "asking" }]);
+  assert.deepEqual(a.research.permissions, ["repo:read"]);
+  assert.equal(a.art.now.state, "waiting", "open work on a model that hit its limit waits");
+  assert.equal(a.art.charter, "Do the art work");
+  assert.deepEqual(a.art.turns, { total: 1, done: 0, failed: 0, stopped: 1, lastAt: T + 180_000 }, "a stopped turn is counted apart from failures");
+
+  a = agents({});
+  assert.equal(a.build.now.state, "waiting", "nothing running here: the limit shows");
+  assert.equal(a.build.runsOn, undefined, "without the mapping, only the placeholder is known");
+
+  const granted = project([...events, { id: "ans", at: T + 1, by: "partner", type: "ask_answered", ask: "ask-seat-research", answeredBy: "partner", choice: "grant" }], policy);
+  const r = engagementView(granted, "shop", now, []).goals[0].seats.find((x) => x.lane === "research")!.agent;
+  assert.deepEqual([r.permissions, r.pending, r.now], [["repo:read", "web:read"], [], { state: "idle", open: 1, underway: 0 }], "once granted, it may do it");
+  const without = project([...events, { id: "ans", at: T + 1, by: "partner", type: "ask_answered", ask: "ask-seat-research", answeredBy: "partner", choice: "without" }], policy);
+  assert.equal(engagementView(without, "shop", now, []).goals[0].seats.find((x) => x.lane === "research")!.agent.pending[0].state, "declined");
+});
+
+test("a question says when its goal can't move without it, and how work is flowing around it", async () => {
+  const { h } = await workspace();
+  let s = await h.state();
+  const now = Date.now();
+  const budget = askView(s, "shop", [...s.asks.values()].find((a) => a.origin === "rule:budget_exhausted")!, now);
+  assert.equal(budget.goal, "h");
+  assert.equal(budget.stalls, true, "goal h has no turns left: its only work waits on the raise");
+  assert.equal(budget.stalledWith, 0, "the raise alone frees it");
+  const spend = askView(s, "shop", [...s.asks.values()].find((a) => a.origin === "rule:money")!, now);
+  assert.equal(spend.stalls, false, "the core loop can still be built while the ads wait");
+  assert.deepEqual(spend.history, [], "no turns on that work yet");
+  const g = flowView(s, "g", now);
+  assert.equal(g.ready, 1, "the core loop");
+  assert.equal(g.asking, 1, "the ads, held by the spending question");
+  assert.equal(g.person + g.running + g.held + g.asking + g.ready, 3, "every piece of live work is counted once");
+  assert.deepEqual(g.day, { added: 3, done: 0, failed: 0 });
+  await h.pause(true, "partner");
+  s = await h.state();
+  assert.equal(askView(s, "shop", s.asks.get(budget.id)!, now).stalls, false, "paused, nothing moves anyway: the question isn't what stops it");
+});
+
+test("what runs an agent, read from the model mapping", () => {
+  assert.deepEqual(runsOn(""), { cli: "copilot", model: "" });
+  assert.deepEqual(runsOn("gpt-5"), { cli: "copilot", model: "gpt-5" });
+  assert.deepEqual(runsOn("claude:opus"), { cli: "claude", model: "opus" });
+  assert.deepEqual(runsOn("pi:"), { cli: "pi", model: "" });
+  assert.deepEqual(runsOn("pi:anthropic/claude-sonnet"), { cli: "pi", model: "anthropic/claude-sonnet" });
 });
 
 test("one panel over several project folders: the same id in two folders gets the folder's name, and answers reach the right one", async () => {

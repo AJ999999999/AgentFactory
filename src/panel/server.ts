@@ -20,7 +20,9 @@ import { SystemClock } from "../harness/world.ts";
 import type { EngagementView, RunnerView } from "./view.ts";
 import { engagementView } from "./view.ts";
 
-export type PanelOptions = { dir: string | string[]; policy: HarnessPolicy; port?: number; log?: (line: string) => void };
+// models: the agents policy's placeholder -> CLI mapping, so the page can say what runs
+// each agent. It's the policy's mapping; a loop started with --models overrides it.
+export type PanelOptions = { dir: string | string[]; policy: HarnessPolicy; models?: Record<string, string>; port?: number; log?: (line: string) => void };
 export type Panel = { url: string; port: number; token: string; close: () => Promise<void> };
 
 const PAGE = path.join(import.meta.dirname, "page.html");
@@ -40,11 +42,13 @@ type Entry = { key: string; id: string; dir: string };
 export class Workspace {
   dirs: string[];
   policy: HarnessPolicy;
+  models?: Record<string, string>;
   private harnesses = new Map<string, Harness>();
   private lastGood = new Map<string, EngagementView>();
-  constructor(dirs: string | string[], policy: HarnessPolicy) {
+  constructor(dirs: string | string[], policy: HarnessPolicy, models?: Record<string, string>) {
     this.dirs = typeof dirs === "string" ? [dirs] : dirs;
     this.policy = policy;
+    this.models = models;
   }
 
   get dir(): string {
@@ -122,7 +126,8 @@ export class Workspace {
     const engagements = await Promise.all(this.entries().map(async (e) => {
       const home = this.home(e);
       try {
-        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key)), running: this.live(e.key).list(now), folder: e.dir };
+        const running = this.live(e.key).list(now);
+        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key), { models: this.models, running }), running, folder: e.dir };
         this.lastGood.set(home, v);
         return v;
       } catch (err) {
@@ -184,7 +189,7 @@ function sameToken(given: string | undefined, token: string): boolean {
 }
 
 export async function startPanel(opts: PanelOptions): Promise<Panel> {
-  const ws = new Workspace(opts.dir, opts.policy);
+  const ws = new Workspace(opts.dir, opts.policy, opts.models);
   const token = randomBytes(24).toString("hex");
   const log = opts.log ?? (() => {});
   let port = 0;

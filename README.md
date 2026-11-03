@@ -74,6 +74,10 @@ What it rests on:
 - **Waiting is free**: jobs, market tests, calendar freezes and people's answers cost no turns, and a quiet wake is one `git ls-remote`.
 - **The team follows the work.** Each lane with open work in a goal gets a seat, staffed from the firm library (researcher, builder, experimenter, strategist...) with permissions filtered through the catalog. A lane the library doesn't cover gets a generated role with the least access, on probation: an independent reviewer on another model checks its work unless a checker or a named person already does.
 
+![The partner is called three times in the simulated engine case: over budget (narrow), split the work (approve), every criterion met (keep it open); the routing in between takes three seconds](docs/cinetty/agentfactory.en.gif)
+
+The clip above follows the simulated engine case and shows when the partner is called, and why. What in it is real and what's illustrative is in [docs/demo-animation.md](docs/demo-animation.md).
+
 It was designed against six engagements, simulated end to end through the real code: an Unreal-6-scale engine, Starship 3D-printing kits for kids, a medicine assistant for seniors, a legacy migration, an open research question, and perpetual library maintenance. The simulations found ten design flaws, each fixed and now covered by a test.
 
 ## Components
@@ -136,6 +140,7 @@ Each guide is its own file, so a change to one feature touches only its own page
 - [The desk](docs/desk.md): all your Copilot CLI terminals as threads on one page, like a Claude project: the threads on the left, the terminal you are working in on the right, notes between them, what their sessions teach kept in git, and permission asks on Teams or Slack while you are away (company-setup branch)
 - [From your own Copilot or Claude Code session](docs/partner-tools.md): the partner's MCP tools
 - [Memory about the people you serve](docs/memory.md): typed memory, what it may be used for, and how it expires
+- [A terminal animation of one engagement](docs/demo-animation.md): when the partner is called, and why, in 15 seconds
 - [What testing found](docs/testing-findings.md)
 - [Not real yet](docs/not-real-yet.md)
 - [Harness design](docs/harness.md), against the six cases

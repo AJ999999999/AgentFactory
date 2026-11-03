@@ -1,4 +1,4 @@
-# project.en.yaml 的中文版：同一段故事、同样的时间线。哪些是真的、哪些是示意，见英文版顶部的说明。
+# project.en.yaml 的中文版：同一段故事、同样的时间线。哪些来自真实案例、哪些是示意，见英文版顶部的说明。
 template: pipeline
 template_version: 1
 name: agentfactory-zh
@@ -10,14 +10,14 @@ fields:
     - {name: router, role: router}
     - {name: 合伙人, role: advisor}
     - {name: builder, role: workers}
-    - {name: reviewer, role: workers}
-    - {name: 商标律师, role: workers}
+    - {name: strategist, role: workers}
+    - {name: gpu-bench, role: workers}
   advisor:
     name: 合伙人
     state_idle: "合伙人：不在"
     state_active: "合伙人：拍板中"
-    moments: [定目标范围, 连续失败三次, 关闭目标]
-    about: [只读一页, 状态简报，, 只答该自己, 做的决定]
+    moments: [超出预算, 拆分工作, 标准全部达成]
+    about: [简报：当前判断, 待办和卡在哪, 最后是一个, 要你定的问题]
     advice_label: "最近的回答："
     calls_label: 回答次数
     tokens_label: 已读简报
@@ -30,7 +30,7 @@ fields:
     counter_label: 回合
     counter_start: 0
     questions: [哪个席位, 哪个 CLI, 该谁决定]
-    start_values: [1.0, 1.0, 1.0]
+    start_values: [1.0, 1.0, 0.0]
     sharp_word: 按规则
     split_word: 问人
     sharp_footer: 规则 → 直接跑回合
@@ -39,9 +39,9 @@ fields:
     split_route: 问人 → 合伙人
   delegate: {label: 每席位一回合, effort: 各自 git 工作树, effort_label: 租约, effort_short: 开}
   workers:
-    - {name: builder, model: Copilot CLI, task: 改工作树}
-    - {name: reviewer, model: Claude Code opus, task: 评审产出}
-    - {name: 商标律师, model: 真人, task: 人工作答}
+    - {name: builder, model: Copilot CLI, task: 落地页和原型}
+    - {name: strategist, model: Claude Code opus, task: 权衡证据}
+    - {name: gpu-bench, model: GPU 任务, task: 实测帧率}
   worker_states: {idle: 空闲, running: 运行中, waiting: 等待中, passed: 已实测, done: 完成}
   review: {title: 检查+合并, effort: 校验, subtitle: "先检查，再 git 提交"}
   log_title: 项目日志
@@ -59,22 +59,23 @@ fields:
     counter_unit: 回合
 
 events:
-  - {t: 0.0, type: advise, until: 2.8, moment: 0, who: 合伙人, lines: [收窄范围：, 只做风格化渲染], tokens: 1,
-     log: "范围提问：合伙人读简报", log_end: "回答：收窄，来自合伙人"}
-  - {t: 2.9, type: log, who: harness, text: "最大风险：渲染能否 60 fps", route: plan}
-  - {t: 3.3, type: decision, who: router, text: 哪个席位 → builder, row: 0, p: 1.0, route: dispatch, card: 0, forks: 1}
-  - {t: 3.7, type: decision, who: router, text: 哪个 CLI → claude:opus, row: 1, p: 1.0, route: dispatch, card: 1, forks: 2}
-  - {t: 4.1, type: decision, who: router, text: 哪个席位 → 真人, row: 0, p: 1.0, route: dispatch, card: 2, forks: 2}
-  - {t: 5.0, type: log, who: 商标律师, text: "名称核查：没问题", route: handback, card: 2, result: done}
-  - {t: 5.4, type: log, who: reviewer, text: "评审：接受这个原型", route: handback, card: 1, result: done}
-  - {t: 5.6, type: log, who: builder, text: "第 3 次检查失败：踩了商标红线"}
-  - {t: 5.7, type: decision, who: router, text: "该谁决定 → 合伙人", row: 2, p: 0.0, route: escalate, forks: 3}
-  - {t: 6.0, type: advise, until: 8.6, moment: 1, who: 合伙人, lines: [去掉品牌名，, 然后重试], tokens: 3, hold_card: 0,
-     log: "连续失败 3 次：问合伙人", log_end: "回答：重试，来自合伙人"}
-  - {t: 8.8, type: log, who: harness, text: "去掉品牌名，重试 builder", route: plan}
-  - {t: 9.2, type: decision, who: router, text: 哪个 CLI → copilot, row: 1, p: 1.0, route: dispatch, card: 0, forks: 4}
-  - {t: 10.4, type: log, who: builder, text: "meshlet：百万实例 60 fps", route: handback, card: 0, result: passed}
-  - {t: 11.0, type: advise, until: 13.6, moment: 2, who: 合伙人, lines: [60 fps 成立，, 关闭这个目标], tokens: 4,
-     log: "关目标？只有合伙人能定", log_end: "回答：关闭，来自合伙人"}
-  - {t: 13.6, type: review, until: 15.0}
-  - {t: 14.0, type: log, who: harness, text: "事件已提交到 git"}
+  - {t: 0.0, type: advise, until: 3.4, moment: 0, who: 合伙人, lines: [收窄：挑一个, 能赢的切口], tokens: 1,
+     log: "提问：估算 60000 回合，预算 400", log_end: "收窄：挑一个能赢的切口"}
+  - {t: 3.5, type: log, who: harness, text: "最大风险：meshlet 能否 60 fps", route: plan}
+  - {t: 3.7, type: decision, who: router, text: 哪个席位 → builder, row: 0, p: 1.0, route: dispatch, card: 0, forks: 1}
+  - {t: 3.9, type: decision, who: router, text: 哪个席位 → GPU 任务, row: 0, p: 1.0, route: dispatch, card: 2, forks: 2}
+  - {t: 4.5, type: log, who: builder, text: "红线：Unreal 是注册商标"}
+  - {t: 4.9, type: log, who: gpu-bench, text: "FA 实测成立，FB 被推翻", route: handback, card: 2, result: passed}
+  - {t: 5.1, type: decision, who: router, text: 哪个 CLI → claude:opus, row: 1, p: 1.0, route: dispatch, card: 1, forks: 3}
+  - {t: 5.6, type: log, who: strategist, text: "接口：渲染器、编辑器", route: handback, card: 1, result: done}
+  - {t: 5.8, type: decision, who: router, text: "该谁决定 → 拆分？问人", row: 2, p: 0.0, route: escalate, forks: 3}
+  - {t: 6.0, type: advise, until: 9.4, moment: 1, who: 合伙人, lines: [批准：拆成, 三条工作流], tokens: 2, hold_card: 0,
+     log: "提问：拆出渲染、编辑器、资源？", log_end: "批准，来自合伙人"}
+  - {t: 9.5, type: log, who: harness, text: "拆成 3 条工作流，预算已划分", route: plan}
+  - {t: 9.7, type: decision, who: router, text: 哪个席位 → builder x3, row: 0, p: 1.0, route: dispatch, card: 0, forks: 6}
+  - {t: 10.4, type: log, who: builder, text: "渲染、编辑器、资源：v1", route: handback, card: 0, result: done}
+  - {t: 10.7, type: decision, who: router, text: "该谁决定 → 关闭？问人", row: 2, p: 0.0, route: escalate, forks: 6}
+  - {t: 10.9, type: advise, until: 14.3, moment: 2, who: 合伙人, lines: [继续：先不关, 等工作流做完], tokens: 3,
+     log: "提问：成功标准全部达成，关闭吗？", log_end: "继续：工作流还在推进"}
+  - {t: 14.3, type: review, until: 15.0}
+  - {t: 14.5, type: log, who: harness, text: "目标保持打开：合伙人定的"}

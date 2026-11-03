@@ -1,14 +1,14 @@
-# AgentFactory as a cinetty "pipeline" animation: one stretch of an engagement, from the
-# partner's scope answer to the partner closing the goal. Play it with cinetty (docs/demo-animation.md).
+# AgentFactory as a cinetty "pipeline" animation: when the partner is called, and why.
+# docs/architecture.gif maps the parts and one turn; this clip spends most of its 15 seconds on the
+# three questions the harness brought to its one human in the simulated "Unreal 6 engine" case
+# (`npm run demo:harness`), and keeps the routing short. How to play or re-render it: docs/demo-animation.md.
 #
-# What is real: the parts and the rules. The harness picks the riskiest open work, TurnRouter sends
-# each seat to its CLI by the model's <cli>: prefix (judges run on Claude, a different model from
-# the workers), people take the work only a person can do, a red line fails the check, three failed
-# turns ask the partner, and only the partner closes a goal. The story follows the simulated
-# "Unreal 6 engine" case in `npm run demo:harness`.
-# What is illustrative: the clock, the turn counter and the "packet read" counter. The router bars
-# are 1.00 when a rule decides and 0.00 when the call is not the harness's to make; there are no
-# probabilities in the harness.
+# Real, from that case and the code: the questions' wording (src/harness/rules.ts, validate.ts),
+# the 60k-turn estimate against a budget of 400, the partner's answers (narrow, approve, continue)
+# and note, the trademark red line, FA measured and FB refuted, the three workstreams, judges on
+# Claude, and 12 of 250 turns spent on the narrowed goal.
+# Illustrative: the clock and the pacing, the turn counter and the "packet read" counter. Router bars
+# are 1.00 where a rule decides and 0.00 where the call is the partner's; the harness has no probabilities.
 template: pipeline
 template_version: 1
 name: agentfactory-en
@@ -20,14 +20,14 @@ fields:
     - {name: router, role: router}
     - {name: partner, role: advisor}
     - {name: builder, role: workers}
-    - {name: reviewer, role: workers}
-    - {name: ip-lawyer, role: workers}
+    - {name: strategist, role: workers}
+    - {name: gpu-bench, role: workers}
   advisor:
     name: THE PARTNER
     state_idle: "partner: away"
     state_active: "partner: deciding"
-    moments: [scope a goal, fails three times, close the goal]
-    about: [reads a short, status packet, answers only, its own calls]
+    moments: [over budget, split the work, criteria met]
+    about: ["packet: beliefs,", open work and why, "it waits, then", one question]
     advice_label: "last answer:"
     calls_label: answers
     tokens_label: packet read
@@ -40,7 +40,7 @@ fields:
     counter_label: turns
     counter_start: 0
     questions: [which seat, which CLI, partner call]
-    start_values: [1.0, 1.0, 1.0]
+    start_values: [1.0, 1.0, 0.0]
     sharp_word: by rule
     split_word: ask
     sharp_footer: rule → runs the turn
@@ -49,9 +49,9 @@ fields:
     split_route: ask → partner
   delegate: {label: one turn a seat, effort: own git worktree, effort_label: lease, effort_short: "on"}
   workers:
-    - {name: builder, model: Copilot CLI, task: edits worktree}
-    - {name: reviewer, model: Claude Code opus, task: judges the work}
-    - {name: ip-lawyer, model: a person, task: answers by hand}
+    - {name: builder, model: Copilot CLI, task: page and spikes}
+    - {name: strategist, model: Claude Code opus, task: weighs evidence}
+    - {name: gpu-bench, model: a GPU job, task: measures fps}
   worker_states: {idle: idle, running: running, waiting: waiting, passed: measured, done: done}
   review: {title: check+merge, effort: validate, subtitle: "checked, then a git commit"}
   log_title: engagement log
@@ -69,22 +69,23 @@ fields:
     counter_unit: turns
 
 events:
-  - {t: 0.0, type: advise, until: 2.8, moment: 0, who: partner, lines: ["narrow scope to", a stylized look], tokens: 1,
-     log: "scope ask: partner reads the packet", log_end: "answer: narrow, by partner"}
-  - {t: 2.9, type: log, who: harness, text: "riskiest: renderer at 60 fps", route: plan}
-  - {t: 3.3, type: decision, who: router, text: which seat    → builder, row: 0, p: 1.0, route: dispatch, card: 0, forks: 1}
-  - {t: 3.7, type: decision, who: router, text: which CLI     → claude:opus, row: 1, p: 1.0, route: dispatch, card: 1, forks: 2}
-  - {t: 4.1, type: decision, who: router, text: which seat    → a person, row: 0, p: 1.0, route: dispatch, card: 2, forks: 2}
-  - {t: 5.0, type: log, who: ip-lawyer, text: "name check: clear", route: handback, card: 2, result: done}
-  - {t: 5.4, type: log, who: reviewer, text: "review: accepts the spike", route: handback, card: 1, result: done}
-  - {t: 5.6, type: log, who: builder, text: "3rd failed check: red line"}
-  - {t: 5.7, type: decision, who: router, text: "partner call  → yes, ask", row: 2, p: 0.0, route: escalate, forks: 3}
-  - {t: 6.0, type: advise, until: 8.6, moment: 1, who: partner, lines: ["drop the brand,", then retry], tokens: 3, hold_card: 0,
-     log: "3 failed turns: partner asked", log_end: "answer: retry, by partner"}
-  - {t: 8.8, type: log, who: harness, text: "retry builder, no brand", route: plan}
-  - {t: 9.2, type: decision, who: router, text: which CLI     → copilot, row: 1, p: 1.0, route: dispatch, card: 0, forks: 4}
-  - {t: 10.4, type: log, who: builder, text: "meshlets: 60 fps, 1M instances", route: handback, card: 0, result: passed}
-  - {t: 11.0, type: advise, until: 13.6, moment: 2, who: partner, lines: ["60 fps holds,", close the goal], tokens: 4,
-     log: "close the goal? partner's call", log_end: "answer: close, by partner"}
-  - {t: 13.6, type: review, until: 15.0}
-  - {t: 14.0, type: log, who: harness, text: "events committed to git"}
+  - {t: 0.0, type: advise, until: 3.4, moment: 0, who: partner, lines: ["narrow: pick", a wedge to win], tokens: 1,
+     log: "ask: est. 60000 turns, budget 400", log_end: "narrow: a wedge we can win"}
+  - {t: 3.5, type: log, who: harness, text: "riskiest: meshlets at 60 fps", route: plan}
+  - {t: 3.7, type: decision, who: router, text: which seat    → builder, row: 0, p: 1.0, route: dispatch, card: 0, forks: 1}
+  - {t: 3.9, type: decision, who: router, text: which seat    → gpu job, row: 0, p: 1.0, route: dispatch, card: 2, forks: 2}
+  - {t: 4.5, type: log, who: builder, text: "red line: Unreal is a trademark"}
+  - {t: 4.9, type: log, who: gpu-bench, text: "FA measured, FB refuted", route: handback, card: 2, result: passed}
+  - {t: 5.1, type: decision, who: router, text: which CLI     → claude:opus, row: 1, p: 1.0, route: dispatch, card: 1, forks: 3}
+  - {t: 5.6, type: log, who: strategist, text: "contracts: renderer, editor", route: handback, card: 1, result: done}
+  - {t: 5.8, type: decision, who: router, text: "partner call  → spawn? ask", row: 2, p: 0.0, route: escalate, forks: 3}
+  - {t: 6.0, type: advise, until: 9.4, moment: 1, who: partner, lines: ["approve: three", workstreams], tokens: 2, hold_card: 0,
+     log: "ask: spawn renderer, editor, assets?", log_end: "approve, by partner"}
+  - {t: 9.5, type: log, who: harness, text: "3 workstreams, budget carved", route: plan}
+  - {t: 9.7, type: decision, who: router, text: which seat    → builder x3, row: 0, p: 1.0, route: dispatch, card: 0, forks: 6}
+  - {t: 10.4, type: log, who: builder, text: "renderer, editor, assets: v1", route: handback, card: 0, result: done}
+  - {t: 10.7, type: decision, who: router, text: "partner call  → close? ask", row: 2, p: 0.0, route: escalate, forks: 6}
+  - {t: 10.9, type: advise, until: 14.3, moment: 2, who: partner, lines: ["continue: keep", it open], tokens: 3,
+     log: "ask: every criterion met. Close it?", log_end: "continue: workstreams still build"}
+  - {t: 14.3, type: review, until: 15.0}
+  - {t: 14.5, type: log, who: harness, text: "goal stays open: partner's call"}

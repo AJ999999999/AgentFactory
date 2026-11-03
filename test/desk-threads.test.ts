@@ -50,6 +50,11 @@ test("a session's file says what it's for, what it's doing now, and what it chan
     files: ["src/index.ts", "src/refunds.ts"],
     commands: 2,
     failed: 1,
+    arc: [
+      { ask: "Add a refunds endpoint", tone: "bad", kind: "ask" },
+      { ask: "Use the finance schema", tone: "run", kind: "ask" },
+    ],
+    headline: "Switching to finance.",
   });
 });
 

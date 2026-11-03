@@ -4,7 +4,7 @@
 // you and takes you there.
 import type { Ask, Rule } from "./hold.ts";
 import type { DeskEvent } from "./log.ts";
-import type { Summary } from "./session.ts";
+import type { Arc, Summary } from "./session.ts";
 import { deskView, type TerminalState, type TerminalView } from "./view.ts";
 
 export type ThreadState = "needs you" | "your turn" | "working" | "closed";
@@ -26,6 +26,9 @@ export type Thread = TerminalView & {
   files: string[];
   commands: number;
   failed: number;
+  // One dot per prompt, latest last, and the first sentence of what it said last.
+  arc?: Arc[];
+  headline?: string;
   started: number;
   lastAt: number;
 };
@@ -105,6 +108,8 @@ export function threads(
       files: s?.files ?? [],
       commands: s?.commands ?? 0,
       failed: s?.failed ?? 0,
+      ...(s?.arc ? { arc: s.arc } : {}),
+      ...(s?.headline ? { headline: s.headline } : {}),
       started: first.get(t.session) ?? t.since,
       lastAt: Math.max(last.get(t.session)?.at ?? t.since, t.since),
     };

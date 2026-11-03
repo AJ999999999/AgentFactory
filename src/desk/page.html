@@ -196,7 +196,7 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 #xterm { position: absolute; inset: 6px 4px 4px 12px; }
 #xterm .xterm-viewport { scrollbar-color: #3b4a52 transparent; }
 /* Scroll position is kept by hand when earlier turns go in above (loadEarlier). */
-#mirror { position: absolute; inset: 0; overflow: auto; overflow-anchor: none; padding: 12px 18px 18px; font-size: 13.5px; line-height: 1.5; }
+#mirror { position: absolute; inset: 0; overflow: auto; overflow-anchor: none; padding: 12px 50px 18px 18px; font-size: 13.5px; line-height: 1.5; }
 #mirror > * + *, #m-turns > * + * { margin-top: 6px; }
 #mirror .m-earlier { color: var(--term-dim); font-size: 12.5px; text-align: center; }
 #term-head .t-progress { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--term-dim); }
@@ -248,6 +248,257 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 #list .talk, #list .learning { padding: 0 4px; }
 #list .about { font-size: 13.5px; }
 
+/* ---------- loading: a thin bar while anything is on its way, and grey shapes where
+   things will be, so the page never sits blank ---------- */
+#busy { position: fixed; inset: 0 0 auto 0; height: 2px; z-index: 50; overflow: hidden; pointer-events: none; }
+#busy[hidden] { display: none; }
+#busy::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 30%; background: var(--ink-2); animation: busy 1.1s ease-in-out infinite; }
+@keyframes busy { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.skel { border-radius: 3px; background: linear-gradient(90deg, rgba(127, 127, 127, .13) 25%, rgba(127, 127, 127, .24) 45%, rgba(127, 127, 127, .13) 65%); background-size: 300% 100%; animation: shimmer 1.3s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -50% 0; } }
+.skel-card { padding: 12px 14px; display: grid; gap: 8px; }
+.skel-line { height: 11px; }
+@media (prefers-reduced-motion: reduce) { #busy::before, .skel { animation: none; } }
+
+/* ---------- a thread's card: a dot for its state, one dot per prompt (how each went),
+   its numbers, and more under the arrow ---------- */
+:root { --t-ok: #3f9d6e; --t-warn: #c08a1e; --t-bad: #c8553f; --t-run: #2f6fd0; --t-talk: #9aa3a6; }
+.th-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.sdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 6px 1px 0; vertical-align: middle; background: var(--kind, var(--ink-3)); }
+.k-working .sdot { background: var(--t-run); animation: t-pulse 1.4s ease-in-out infinite; }
+.k-closed .sdot { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.th-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin-top: 5px; font-size: 12.5px; color: var(--ink-2); font-stretch: 87%; }
+.arc { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.arc i { width: 7px; height: 7px; border-radius: 50%; background: var(--t-talk); flex: none; }
+.arc i.r { width: 5px; height: 5px; opacity: .8; }
+.arc i.k-resume { border-radius: 1px; transform: rotate(45deg); width: 5px; height: 5px; }
+.arc .older { color: var(--ink-3); font-size: 11.5px; margin-right: 3px; }
+.t-ok { --tone: var(--t-ok); } .t-warn { --tone: var(--t-warn); } .t-bad { --tone: var(--t-bad); } .t-run { --tone: var(--t-run); } .t-talk { --tone: var(--t-talk); }
+.arc i[class*="t-"] { background: var(--tone); }
+.arc i.t-talk { background: none; box-shadow: inset 0 0 0 1.3px var(--t-talk); }
+.arc i.t-run { animation: t-pulse 1.2s ease-in-out infinite; }
+.th-stats span + span::before { content: "·"; margin: 0 6px; color: var(--ink-3); }
+.th-stats .bad { color: var(--t-bad); }
+.th-chev { align-self: start; margin: 6px 0 0 -6px; width: 26px; height: 30px; border: 0; border-radius: 2px; background: none; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; }
+.th-chev:hover { color: var(--ink); background: var(--paper-hi); }
+.th-chev svg { transition: transform .18s ease; }
+.th-chev[aria-expanded="true"] svg { transform: rotate(180deg); }
+#list .th-chev { margin-top: 4px; }
+.th-more { padding: 2px 16px 12px calc(7px + 12px + var(--namew) + 14px); font-size: 13px; color: var(--ink-2); }
+.th-more.anim { animation: open-down .18s ease-out; }
+@keyframes open-down { from { opacity: 0; transform: translateY(-4px); } }
+.th-more ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.th-more li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; }
+.th-more li > b { color: var(--ink-3); font-weight: 500; }
+.th-more li > span { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.th-more .asks { display: grid; gap: 2px; }
+.th-more .asks div { display: flex; gap: 7px; align-items: baseline; }
+.th-more .asks i { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--tone, var(--t-talk)); transform: translateY(-1px); }
+.th-more .asks .t-talk i { background: none; box-shadow: inset 0 0 0 1.3px var(--t-talk); }
+@media (max-width: 620px) { .th-more { padding-left: 21px; } }
+
+/* ---------- right: a thread's story. Each prompt you gave is a step on a line from the
+   start; a new topic branches off the start, a follow-up hangs off the step before.
+   Drag to move around, Ctrl+wheel or the buttons to zoom. ---------- */
+#term-head .vseg { display: inline-flex; border: 1px solid rgba(255, 255, 255, .25); border-radius: 3px; overflow: hidden; flex: none; }
+#term-head .vseg button { border: 0; border-radius: 0; padding: 2px 10px; color: var(--term-dim); }
+#term-head .vseg button[aria-pressed="true"] { background: rgba(255, 255, 255, .14); color: var(--term-ink); }
+#story { position: absolute; inset: 0; --s-ok: #5eba8b; --s-warn: #d9aa4a; --s-bad: #e8735f; --s-run: #6aa8e8; --s-talk: #8f989c; }
+#story[hidden] { display: none; }
+#s-vp { position: absolute; inset: 42px 0 0 0; overflow: auto; cursor: grab; scrollbar-color: #3b4a52 transparent; outline: none; }
+#s-vp.drag { cursor: grabbing; user-select: none; }
+#s-size { position: relative; }
+#s-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; padding: 14px 28px 120px 10px; }
+#s-edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+#s-edges path { fill: none; stroke-width: 1.6; stroke-linecap: round; opacity: .75; }
+#s-edges .spine { stroke: #4b5a62; stroke-dasharray: 2 4; }
+#s-edges circle { stroke: var(--term-bg); stroke-width: 2.5; }
+#s-edges circle.t-ok { fill: var(--s-ok); } #s-edges circle.t-warn { fill: var(--s-warn); } #s-edges circle.t-bad { fill: var(--s-bad); }
+#s-edges circle.t-run { fill: var(--s-run); animation: t-pulse 1.2s ease-in-out infinite; }
+#s-edges circle.t-talk { fill: var(--term-bg); stroke: var(--s-talk); stroke-width: 1.6; }
+#s-edges circle.root { fill: var(--term-ink); }
+#s-rows { position: relative; width: calc(var(--gutter, 40px) + 600px); }
+#s-rows > * { margin-left: var(--gutter, 40px); }
+#s-rows > * + * { margin-top: 6px; }
+.s-root { padding: 2px 0 12px; }
+.s-root .s-title { font-size: 16px; font-weight: 600; color: #f1eee6; line-height: 1.35; }
+.s-root .s-sub { margin-top: 3px; color: var(--term-dim); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.s-node { border-radius: 4px; background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .06); border-left: 3px solid var(--topic, #4b5a62); transition: background .15s, border-color .15s; }
+.s-node.fresh { animation: node-in .35s ease-out; }
+@keyframes node-in { from { opacity: 0; transform: translateY(6px); } }
+.s-node:hover { background: rgba(255, 255, 255, .06); }
+.s-node.open { background: rgba(255, 255, 255, .07); border-color: rgba(255, 255, 255, .12); border-left-color: var(--topic, #4b5a62); }
+.s-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; width: 100%; padding: 6px 10px 6px 9px; border: 0; background: none; color: var(--term-ink); text-align: left; font: inherit; font-size: 13.5px; cursor: pointer; }
+.s-n { color: #6b767b; font-size: 11.5px; font-variant-numeric: tabular-nums; min-width: 1.6em; }
+.s-ask { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-meta { display: inline-flex; gap: 9px; color: var(--term-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.s-meta .bad { color: var(--s-bad); }
+.s-node.k-reply, .s-node.k-stop, .s-node.k-resume { background: none; border-color: transparent; border-left-color: transparent; }
+.s-node.k-reply .s-head, .s-node.k-stop .s-head, .s-node.k-resume .s-head { padding-top: 2px; padding-bottom: 2px; font-size: 12.5px; }
+.s-node.k-reply .s-ask, .s-node.k-stop .s-ask, .s-node.k-resume .s-ask { font-weight: 400; color: var(--term-dim); }
+.s-node.k-stop .s-ask { color: var(--s-bad); }
+.s-node.k-resume .s-ask { font-style: italic; }
+.s-node.k-reply.open, .s-node.k-stop.open, .s-node.k-resume.open { background: rgba(255, 255, 255, .05); }
+.s-body { padding: 2px 12px 10px calc(9px + 1.6em + 10px); font-size: 13px; line-height: 1.5; color: #d5d2c9; cursor: auto; }
+.s-body > * + * { margin-top: 7px; }
+.s-body .s-lbl { display: inline-block; min-width: 58px; color: #6b767b; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+.s-body .s-you { white-space: pre-wrap; overflow-wrap: anywhere; color: #9fd6b8; }
+.s-body .s-steps { color: var(--term-dim); font-style: italic; }
+.s-body ul { margin: 0; padding-left: 1.2em; }
+.s-body li + li { margin-top: 2px; }
+.s-body li::marker { color: #5b6a72; }
+.s-body li.bad { color: #f0a091; }
+.s-body li.bad::marker { content: "✗  "; color: var(--s-bad); }
+.s-body .s-said ul { padding-left: 1.2em; }
+.s-body .s-saidhead { color: #f1eee6; }
+.s-body code { font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12px; background: rgba(255, 255, 255, .07); border-radius: 3px; padding: 0 4px; }
+.s-body .s-files { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--term-dim); font-size: 12px; }
+.s-body .s-act button { border: 1px solid #3b4a52; background: none; color: var(--term-dim); border-radius: 10px; padding: 1px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.s-body .s-act button:hover { color: var(--term-ink); border-color: #5b6a72; }
+.s-body .skel, .s-skel .skel { background: linear-gradient(90deg, rgba(255, 255, 255, .05) 25%, rgba(255, 255, 255, .11) 45%, rgba(255, 255, 255, .05) 65%); background-size: 300% 100%; }
+.s-skel { padding: 9px 10px; display: grid; gap: 7px; border-left: 3px solid #2b363c; }
+#story .m-more { margin-left: 8px; padding: 0 7px; border: 1px solid #3b4a52; border-radius: 10px; background: transparent; color: var(--term-dim); font: inherit; font-size: 12px; cursor: pointer; }
+.s-empty { color: var(--term-dim); padding: 8px 0; }
+/* zoomed out: only the shape and the few words */
+#s-world.far .s-meta, #s-world.far .s-body, #s-world.far .s-root .s-sub { display: none; }
+/* zoomed out, the words grow so they stay readable at the smaller scale */
+#s-world.far .s-head { font-size: 19px; padding-top: 8px; padding-bottom: 8px; }
+#s-world.far .s-node.k-reply .s-head, #s-world.far .s-node.k-stop .s-head, #s-world.far .s-node.k-resume .s-head { font-size: 16px; }
+#s-world.far .s-n { font-size: 15px; }
+#story::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 42px; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+#s-world.far .s-root .s-title { font-size: 22px; }
+.s-tools { position: absolute; top: 8px; right: 12px; display: flex; gap: 4px; align-items: center; padding: 2px; border-radius: 4px; background: rgba(22, 27, 30, .92); }
+.s-tools button { border: 1px solid #3b4a52; background: rgba(22, 27, 30, .85); color: var(--term-ink); border-radius: 3px; min-width: 28px; height: 26px; padding: 0 8px; font: inherit; font-size: 13px; cursor: pointer; }
+.s-tools button:hover { border-color: #5b6a72; }
+.s-tools .z { color: var(--term-dim); font-size: 12px; min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+.s-legend { position: absolute; left: 12px; top: 13px; display: flex; gap: 12px; font-size: 11.5px; color: var(--term-dim); background: rgba(22, 27, 30, .85); padding: 3px 8px; border-radius: 3px; pointer-events: none; }
+.s-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--c); }
+#mirror .m-flash { animation: flash 1.6s ease-out; border-radius: 3px; }
+@keyframes flash { from { background: rgba(106, 168, 232, .28); } }
+@media (prefers-reduced-motion: reduce) { .s-node.fresh, .th-more.anim, #s-edges circle.t-run, .arc i.t-run, .k-working .sdot { animation: none; } }
+
+/* ---------- the rail on the right edge: one mark per prompt, the one you're reading
+   drawn long and bright. Point at a mark to see the prompt; click it to go there. ---------- */
+#rail { position: absolute; right: 16px; top: 56px; bottom: 40px; width: 24px; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; z-index: 3; }
+#rail[hidden], #rail-tip[hidden] { display: none; }
+.rk { flex: none; width: 24px; min-height: 2px; border: 0; padding: 0; background: none; cursor: pointer; display: flex; align-items: center; justify-content: flex-end; }
+.rk::before { content: ""; height: 2px; width: 10px; border-radius: 1px; background: #56646b; transition: width .12s ease, background .12s ease; }
+.rk.r::before { width: 6px; }
+.rk.t-bad::before { background: #9a5446; }
+.rk.t-run::before { background: #6aa8e8; animation: t-pulse 1.2s ease-in-out infinite; }
+.rk:hover::before, .rk:focus-visible::before { width: 16px; background: #c9cfd2; }
+.rk.on::before { width: 20px; height: 3px; background: var(--term-ink); }
+.rk:focus-visible { outline: none; }
+#rail-tip { position: absolute; right: 46px; transform: translateY(-50%); max-width: min(360px, 70%); padding: 5px 10px; border-radius: 4px; background: #24313a; border: 1px solid #3b4a52; color: var(--term-ink); font-size: 12.5px; line-height: 1.4; pointer-events: none; z-index: 4; box-shadow: 0 4px 14px rgba(0, 0, 0, .4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#rail-tip .n { color: var(--term-dim); margin-right: 7px; font-variant-numeric: tabular-nums; }
+#rail-tip .w { color: var(--term-dim); margin-left: 7px; }
+.s-node.flash { animation: flash 1.4s ease-out; }
+@media (prefers-reduced-motion: reduce) { .rk.t-run::before { animation: none; } }
+
+/* ---------- the look, one pass: softer corners, depth by light rather than lines, one
+   accent per state. Later rules here refine the ones above. ---------- */
+#right { border-radius: 8px; background: linear-gradient(180deg, #1b2125 0%, #151a1d 100%); box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 8px 28px rgba(16, 24, 28, .22); }
+#term-head { min-height: 46px; align-items: center; padding: 8px 12px 8px 16px; background: rgba(255, 255, 255, .025); border-bottom: 1px solid rgba(255, 255, 255, .07); }
+#term-head .call { font-size: 16px; font-weight: 650; letter-spacing: .01em; }
+#term-head .vseg { border: 0; background: rgba(255, 255, 255, .06); border-radius: 7px; padding: 2px; gap: 2px; }
+#term-head .vseg button { border-radius: 5px; padding: 3px 12px; font-size: 12.5px; transition: background .15s, color .15s; }
+#term-head .vseg button[aria-pressed="true"] { background: rgba(255, 255, 255, .16); color: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+#term-head > button { border-radius: 6px; border-color: rgba(255, 255, 255, .2); transition: border-color .15s, background .15s; }
+#term-head > button:hover { background: rgba(255, 255, 255, .06); }
+#story::before { background: rgba(255, 255, 255, .015); }
+.s-tools { background: none; }
+.s-tools button { border-radius: 6px; border-color: rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .04); transition: background .15s, border-color .15s; }
+.s-tools button:hover { background: rgba(255, 255, 255, .1); }
+.s-legend { background: none; }
+
+/* a step in the story: a card that lifts a little under the pointer and rings in its
+   topic's color when open */
+.s-node { border-radius: 7px; background: #1e262a; border: 1px solid #283237; border-left: 3px solid var(--topic, #4b5a62); transition: background .15s, border-color .15s, box-shadow .2s, transform .15s; }
+.s-node:hover { background: #222b30; border-color: #334046; border-left-color: var(--topic, #4b5a62); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+.s-node.open { background: #222b30; border-color: color-mix(in srgb, var(--topic, #4b5a62) 45%, #283237); border-left-color: var(--topic, #4b5a62); box-shadow: 0 10px 30px rgba(0, 0, 0, .35); transform: none; }
+.s-node.k-reply:hover, .s-node.k-stop:hover, .s-node.k-resume:hover { transform: none; box-shadow: none; background: rgba(255, 255, 255, .03); }
+.s-head { padding: 8px 12px 8px 10px; }
+.s-n { display: inline-block; min-width: 22px; height: 18px; line-height: 18px; text-align: center; border-radius: 9px; background: rgba(255, 255, 255, .06); color: #8c979c; font-size: 11px; }
+.s-node.k-ask .s-ask { color: #eeebe3; }
+.s-meta span { padding: 0 6px; border-radius: 8px; background: rgba(255, 255, 255, .05); }
+.s-meta .bad { background: rgba(232, 115, 95, .12); }
+.s-body { padding: 4px 14px 12px 44px; border-top: 1px solid rgba(255, 255, 255, .05); }
+.s-body .s-you { padding: 7px 10px; border-radius: 6px; background: rgba(94, 186, 139, .07); border: 1px solid rgba(94, 186, 139, .14); margin-top: 8px; }
+.s-node.flash { animation: ring 1.4s ease-out; }
+@keyframes ring { from { box-shadow: 0 0 0 3px rgba(106, 168, 232, .55); } to { box-shadow: 0 0 0 0 rgba(106, 168, 232, 0); } }
+
+/* the session view: one box per prompt, its head pinned while you read inside it */
+#mirror { padding-top: 14px; }
+#m-turns > * + * { margin-top: 14px; }
+.m-prompt { border: 1px solid #2a3439; border-radius: 9px; background: rgba(255, 255, 255, .02); box-shadow: inset 3px 0 0 var(--tone, #4b5a62); transition: box-shadow .2s; }
+.m-prompt.t-ok { --tone: #5eba8b; } .m-prompt.t-warn { --tone: #d9aa4a; } .m-prompt.t-bad { --tone: #e8735f; } .m-prompt.t-run { --tone: #6aa8e8; } .m-prompt.t-talk { --tone: #5b6a72; }
+.m-prompt.m-orphan { border-style: dashed; box-shadow: none; }
+.m-ph { position: sticky; top: -14px; z-index: 1; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: start; padding: 10px 10px 10px 14px; background: #20282c; border-bottom: 1px solid #2a3439; border-radius: 9px 9px 0 0; }
+.m-pn { min-width: 24px; height: 20px; line-height: 20px; margin-top: 1px; text-align: center; border-radius: 10px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: #0f1416; background: var(--tone, #5b6a72); }
+.m-prompt.t-talk .m-pn { color: var(--term-ink); background: #3a464c; }
+#mirror .m-ph .m-you { margin: 0; color: #f1eee6; font-weight: 550; }
+.m-pm { display: inline-flex; gap: 5px; margin-top: 2px; color: var(--term-dim); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.m-pm span { padding: 0 6px; border-radius: 8px; background: rgba(255, 255, 255, .06); }
+.m-pm .bad { color: #f0a091; background: rgba(232, 115, 95, .12); }
+.m-fold { width: 24px; height: 22px; border: 0; border-radius: 5px; background: none; color: var(--term-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.m-fold:hover { background: rgba(255, 255, 255, .08); color: var(--term-ink); }
+.m-fold svg { transition: transform .18s; }
+.m-fold[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.m-work { padding: 10px 14px 12px 16px; }
+.m-work > * + * { margin-top: 6px; }
+.m-prompt.folded .m-work, .m-work:empty { display: none; }
+.m-ph:has(+ .m-work:empty) { border-bottom: 0; border-radius: 9px; }
+.m-ph:has(+ .m-work:empty) .m-fold { visibility: hidden; }
+#mirror .m-ph .m-you.m-quiet { font-weight: 400; font-style: italic; color: var(--term-dim); }
+#mirror .m-carried { margin-top: 8px; font-style: normal; white-space: pre-wrap; max-height: 40vh; overflow: auto; padding: 8px 10px; border-radius: 6px; background: rgba(0, 0, 0, .2); color: #c9cfd2; font-size: 12.5px; }
+#mirror .m-carried[hidden] { display: none; }
+.m-prompt.folded .m-ph { border-bottom: 0; border-radius: 9px; position: static; }
+#mirror .m-prompt.m-flash { animation: ring 1.6s ease-out; }
+#mirror .m-run { padding: 1px 0; }
+#mirror .m-said { padding: 2px 0; }
+
+/* the left side is the threads, all of it */
+#list { flex: 1 1 auto; max-height: none; gap: 8px; --namew: 116px; }
+#list .th-name .arc { margin-top: 5px; max-width: var(--namew); }
+#list .th-row { align-items: center; }
+#list .th-head { align-items: start; }
+#list .th-now { padding-top: 2px; }
+#list .th-now .ps { max-height: 6em; }
+
+/* right, the Details tab: the same pieces as before, drawn on the dark side */
+#info { position: absolute; inset: 0; overflow: auto; padding: 16px 22px 24px; font-size: 14px; color: var(--term-ink);
+  --ink: #e6e3da; --ink-2: #a3acb0; --ink-3: #6b767b; --paper: #151a1d; --paper-hi: #263036; --rule: #34414720; --rack: #151a1d; --good: #5eba8b; --bad: #e8735f; --action: #8cc3e8; }
+#info[hidden] { display: none; }
+#info > * + * { margin-top: 12px; }
+.i-sec { background: #1e262a; border: 1px solid #2a3439; border-radius: 9px; padding: 12px 16px 14px; }
+.i-sec > h3 { margin: 0 0 9px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8c979c; }
+#info .notes, #info .knows { margin-top: 0; }
+#info .md > * { margin: 0; }
+#info .md > * + * { margin-top: 6px; }
+#info .md ul, #info .md ol { padding-left: 1.4em; }
+#info .md code { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12.5px; background: rgba(255, 255, 255, .07); border-radius: 3px; padding: 0 3px; overflow-wrap: anywhere; }
+#info .md pre { font-size: 12.5px; background: rgba(0, 0, 0, .25); border-radius: 4px; padding: 8px 10px; overflow-x: auto; }
+#info .md strong, #info .md .md-h { color: #f1eee6; font-weight: 600; }
+#info .said { max-height: 22em; overflow: auto; font-size: 13.5px; line-height: 1.5; }
+#info .send input, #info .send select { color: var(--ink); background: #151a1d; border-color: #34414a; border-radius: 6px; }
+#info .send button, #info .opt, #info .seg button { color: var(--ink); border-color: #45535a; border-radius: 6px; background: none; }
+#info .seg button[aria-pressed="true"] { background: var(--ink); color: #151a1d; }
+#info .goal-head { display: none; }
+#info .hint { color: var(--ink-2); }
+#info .did .files .base { color: var(--ink); }
+#term-head .vseg .vdot { display: inline-block; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: #8cc3e8; vertical-align: middle; }
+
+/* the left side: cards with soft depth, the picked one ringed */
+#list .th { border-radius: 6px; transition: box-shadow .18s, transform .18s, background .18s; }
+#list .th:hover { box-shadow: 0 2px 4px rgba(16, 24, 28, .06), 0 8px 22px rgba(16, 24, 28, .1); }
+#list .th.sel { box-shadow: 0 0 0 1.5px var(--ink), 0 8px 22px rgba(16, 24, 28, .12); }
+#detail { border-radius: 6px; }
+.th-meta { gap: 4px 12px; }
+.th-stats span + span::before { margin: 0 7px; }
+.th-more { border-top: 1px dashed var(--rule); padding-top: 10px; margin-top: 2px; }
+#tabs button { border-radius: 5px 5px 0 0; transition: color .15s, background .15s; }
+@media (prefers-reduced-motion: reduce) { .s-node, .s-node:hover, #list .th { transition: none; transform: none; } .s-node.flash, #mirror .m-prompt.m-flash { animation: none; } }
+
 /* Wide enough for both sides: the page is exactly one screen, the header takes what it
    needs and the rest goes to the desk, so only the list, the thread and the terminal
    scroll, never the page. */
@@ -275,6 +526,7 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 </style>
 </head>
 <body>
+<div id="busy" role="progressbar" aria-label="Loading"></div>
 <header>
   <h1 class="call">AgentFactory desk</h1>
   <span class="tally" id="tally" role="status"></span>
@@ -288,15 +540,32 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
   <section id="left" aria-label="Threads">
     <div id="start-slot"></div>
     <div id="tabs" role="tablist"></div>
-    <div id="list" role="tabpanel"></div>
-    <div id="detail" aria-label="The thread you picked" aria-live="polite"></div>
+    <div id="list" role="tabpanel">
+      <div class="strip skel-card"><div class="skel skel-line" style="width:38%"></div><div class="skel skel-line" style="width:82%"></div><div class="skel skel-line" style="width:56%"></div></div>
+      <div class="strip skel-card"><div class="skel skel-line" style="width:30%"></div><div class="skel skel-line" style="width:74%"></div><div class="skel skel-line" style="width:48%"></div></div>
+      <div class="strip skel-card"><div class="skel skel-line" style="width:34%"></div><div class="skel skel-line" style="width:66%"></div></div>
+    </div>
   </section>
   <section id="right" aria-label="Terminal">
     <div id="term-head"></div>
     <div id="term-body">
+      <div id="story" hidden>
+        <div id="s-vp" tabindex="-1"><div id="s-size"><div id="s-world"><svg id="s-edges" aria-hidden="true"></svg><div id="s-rows"></div></div></div></div>
+        <div class="s-tools">
+          <button id="s-out" title="Zoom out (Ctrl+wheel)" aria-label="Zoom out">−</button>
+          <span class="z" id="s-z">100%</span>
+          <button id="s-in" title="Zoom in (Ctrl+wheel)" aria-label="Zoom in">+</button>
+          <button id="s-fit" title="See it all">Fit</button>
+          <button id="s-end" title="Go to the latest prompt">Latest ↓</button>
+        </div>
+        <div class="s-legend" aria-hidden="true"><span><i style="--c:#5eba8b"></i>done</span><span><i style="--c:#d9aa4a"></i>failed, went on</span><span><i style="--c:#e8735f"></i>ended failing</span><span><i style="--c:#6aa8e8"></i>working</span><span><i style="--c:transparent;box-shadow:inset 0 0 0 1.3px #8f989c"></i>talk only</span></div>
+      </div>
+      <div id="info" hidden></div>
       <div id="xterm" hidden></div>
       <div id="mirror" hidden></div>
       <button id="m-new" class="m-new" hidden></button>
+      <nav id="rail" aria-label="Prompts" hidden></nav>
+      <div id="rail-tip" hidden></div>
       <div id="term-empty" hidden></div>
     </div>
   </section>
@@ -308,7 +577,15 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 const TOKEN = "__TOKEN__";
 // `sel`: the thread shown bottom left. `focus`: the one whose terminal is on the right,
 // once you've picked one with its terminal button (until then, the selected thread's).
-const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0, tab: "threads", sel: null, focus: null, closing: null, mirror: { session: null } };
+const ui = { open: new Set(), data: null, version: "", pending: false, sending: false, composing: false, seen: new Set(), err: {}, drop: new Set(), starting: false, looked: 0, tab: "threads", sel: null, focus: null, closing: null, mirror: { session: null },
+  // The right side shows the thread's story (its prompts as steps) or its terminal.
+  view: "story", story: { session: null }, rail: { mode: null, session: null, steps: [], sig: "", active: -1 }, storyOpen: new Map(), busy: 0, opened: null };
+
+// The thin bar at the top: on while the first state or anything you asked for is on its way.
+function busy(d) {
+  ui.busy = Math.max(0, ui.busy + d);
+  document.getElementById("busy").hidden = ui.busy === 0 && !!ui.data;
+}
 
 // "New since you last looked": when you left the page, kept in this browser only, so
 // the desk stays a view of the log with no state of its own.
@@ -364,6 +641,7 @@ const base = (f) => f.split(/[\\/]/).pop();
 // `clear`: the boxes to empty once it went through (what you typed stays if it failed).
 async function act(path, body, errKey, clear) {
   ui.sending = true;
+  busy(1);
   let ok = false;
   try {
     await api(path, body);
@@ -374,20 +652,22 @@ async function act(path, body, errKey, clear) {
     ui.err[errKey] = e.message;
   } finally {
     ui.sending = false;
+    busy(-1);
     render();
   }
   return ok;
 }
-const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); render(); };
+const toggle = (k) => { ui.open.has(k) ? ui.open.delete(k) : (ui.open.add(k), ui.opened = k); render(); ui.opened = null; };
 const jump = (name, k) => act("/api/jump", { terminal: name }, k || `t:${name}`);
 // What you picked and which terminal is on the right survive a reload of this tab.
 const PICKED = "af-desk-picked";
 try { Object.assign(ui, JSON.parse(sessionStorage.getItem(PICKED) || "{}")); } catch { /* nothing kept */ }
-const keepPicked = () => { try { sessionStorage.setItem(PICKED, JSON.stringify({ sel: ui.sel, focus: ui.focus })); } catch { /* private window */ } };
-const select = (name) => { ui.sel = name; keepPicked(); render(); };
+const keepPicked = () => { try { sessionStorage.setItem(PICKED, JSON.stringify({ sel: ui.sel, focus: ui.focus, view: ui.view })); } catch { /* private window */ } };
+// Picking a thread shows it below and its story on the right.
+const select = (name) => { if (ui.focus !== name || ui.sel !== name) ui.view = "story"; ui.sel = name; ui.focus = name; keepPicked(); render(); };
 const focusName = () => ui.focus || ui.sel;
 // Put a thread's terminal on the right, and the keyboard in it when it's one on the desk.
-const show = (name) => { ui.focus = name; if (!ui.sel) ui.sel = name; keepPicked(); render(); setTimeout(() => { if (XT.name === name) XT.term.focus(); }, 0); };
+const show = (name) => { ui.focus = name; ui.sel = name; ui.view = "live"; keepPicked(); render(); setTimeout(() => { if (XT.name === name) XT.term.focus(); }, 0); };
 function termIcon() {
   const s = h("span", { class: "icon", "aria-hidden": "true" });
   s.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 6.5l2.2 1.6-2.2 1.6M8.5 10.2h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -398,17 +678,60 @@ function termIcon() {
 // button. Picking the row shows the thread below; the button puts its terminal on the
 // right. They're two buttons side by side, never one inside the other.
 function rowEl(o) {
+  const k = `card:${o.name}`;
+  const open = !!o.more && ui.open.has(k);
   return h("div", { class: `strip th compact k-${o.kind}${o.sel ? " sel" : ""}${o.fresh ? " fresh" : ""}` },
     h("div", { class: "th-row" },
       h("button", { class: "th-head", "aria-pressed": String(!!o.sel), title: o.tip, onclick: o.pick },
+        // Under the name: its prompts as dots (else where it runs), so a card is two lines.
         h("span", { class: "th-name" },
-          h("span", { class: "call" }, o.isNew ? h("i", { class: "dot", title: "New since you last looked" }) : null, o.isNew ? h("span", { class: "sr" }, "New: ") : null, o.name),
-          o.where ? h("span", { class: "where" }, o.where) : null),
+          h("span", { class: "call" }, h("i", { class: "sdot", "aria-hidden": "true" }), o.isNew ? h("i", { class: "dot", title: "New since you last looked" }) : null, o.isNew ? h("span", { class: "sr" }, "New: ") : null, o.name),
+          o.arc || (o.where ? h("span", { class: "where" }, o.where) : null)),
         h("span", { class: "th-text" },
           h("span", { class: "th-title" }, o.title),
           o.lines)),
       h("span", { class: `th-age${o.waiting ? " waiting" : ""}`, title: o.ageTip }, o.age),
-      o.show ? h("button", { class: `th-go${o.focused ? " on" : ""}`, title: o.focused ? `${o.name}'s terminal is on the right` : `Show ${o.name}'s terminal on the right`, "aria-label": `Show ${o.name}'s terminal on the right`, "aria-pressed": String(!!o.focused), onclick: o.show }, termIcon()) : null));
+      o.more ? h("button", { class: "th-chev", "aria-expanded": String(open), "aria-label": `More about ${o.name}`, title: open ? "Less" : "What it did, in short", onclick: () => toggle(k) }, chevron()) : h("span"),
+      o.show ? h("button", { class: `th-go${o.focused && ui.view === "live" ? " on" : ""}`, title: `Show ${o.name}'s terminal on the right`, "aria-label": `Show ${o.name}'s terminal on the right`, "aria-pressed": String(!!o.focused && ui.view === "live"), onclick: o.show }, termIcon()) : null),
+    // What it waits on, with the answer buttons: always shown, it's why the card is there.
+    o.now ? h("div", { class: "th-now" }, o.now) : null,
+    open ? h("div", { class: `th-more${ui.opened === k ? " anim" : ""}` }, o.more()) : null);
+}
+function chevron() {
+  const s = h("span", { class: "icon", "aria-hidden": "true" });
+  s.innerHTML = '<svg viewBox="0 0 12 12" width="12" height="12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return s;
+}
+
+// One dot per prompt, oldest first, colored by how it went: the shape of a session at a
+// glance. Short answers (yes, b) are smaller dots; a context reset is a diamond.
+const TONE_SAYS = { ok: "done", warn: "a step failed, it went on", bad: "ended on a failure", run: "working on it now", talk: "talk only, no tools" };
+function arcEl(arc, prompts) {
+  if (!arc || !arc.length) return null;
+  const older = Math.max(0, prompts - arc.length);
+  return h("span", { class: "arc", "aria-label": `${plural(arc.length + older, "prompt")}, latest last` },
+    older ? h("span", { class: "older" }, `+${older}`) : null,
+    arc.map((a) => h("i", { class: `t-${a.tone} k-${a.kind}${a.kind === "ask" ? "" : " r"}`, title: `${a.ask}: ${TONE_SAYS[a.tone]}` })));
+}
+function statsEl(t) {
+  const s = [];
+  if (t.prompts) s.push(h("span", null, plural(t.prompts, "prompt")));
+  if (t.files.length) s.push(h("span", null, plural(t.files.length, "file")));
+  if (t.commands) s.push(h("span", null, plural(t.commands, "command")));
+  if (t.failed) s.push(h("span", { class: "bad" }, `${t.failed} failed`));
+  return s.length ? h("span", { class: "th-stats" }, s) : null;
+}
+// Under a card's arrow: what it's doing or said, your last few prompts, what it edited.
+function cardMore(t) {
+  const asks = (t.arc || []).filter((a) => a.kind !== "resume").slice(-4).reverse();
+  const row = (label, ...v) => h("li", null, h("b", null, label), h("span", null, ...v));
+  return h("ul", null,
+    statsEl(t) ? row("So far", statsEl(t)) : null,
+    t.branch || t.repo !== t.name ? row("Where", [t.repo !== t.name ? t.repo : null, t.branch].filter(Boolean).join(" · ")) : null,
+    t.thread === "working" && t.now ? row("Now", t.now) : null,
+    t.headline ? row("Said", t.headline) : null,
+    asks.length ? row("You", h("span", { class: "asks" }, asks.map((a) => h("div", { class: `t-${a.tone}`, title: TONE_SAYS[a.tone] }, h("i"), a.ask)))) : null,
+    t.files.length ? row("Edited", `${t.files.slice(-4).reverse().map(base).join(", ")}${t.files.length > 4 ? ` +${t.files.length - 4}` : ""}`) : null);
 }
 
 // ---------- the threads ----------
@@ -443,16 +766,6 @@ function askEl(t, a, d) {
       h("button", { class: "opt deny", onclick: () => act("/api/answer", { ask: a.id, choice: "deny", note: note.value }, k, `ask:${a.id}:note`) }, "Deny")));
 }
 
-function didEl(t) {
-  const bits = [];
-  if (t.prompts) bits.push(plural(t.prompts, "prompt"));
-  if (t.files.length) bits.push(`edited ${plural(t.files.length, "file")}`);
-  if (t.commands) bits.push(`ran ${plural(t.commands, "command")}`);
-  if (t.failed) bits.push(`${t.failed} failed`);
-  if (!bits.length) return null;
-  return h("div", { class: "did" }, h("b", null, "So far: "), bits.join(", "), t.branch ? `, on ${t.branch}` : "",
-    t.files.length ? filesEl(t) : null);
-}
 
 // A file as you'd look for it: inside the repo, its path from the repo's folder; the name
 // stands out from the folders it's in. Newest first; the rest behind "+N more".
@@ -535,11 +848,14 @@ function threadRow(t, d) {
   const fresh = needs && !ui.seen.has(`${k}:${t.since}`);
   ui.seen.add(`${k}:${t.since}`);
   const mail = d.forYou.filter((n) => n.from === t.name);
-  const line = needs ? (t.wants ? h("code", null, t.wants) : t.why) : t.thread === "your turn" ? t.why : t.thread === "working" ? t.now : edited(t);
+  const line = needs ? null : t.thread === "your turn" ? t.why : t.thread === "working" ? t.now : edited(t);
+  const where = t.branch || (t.repo !== t.name ? t.repo : null);
   return rowEl({
-    kind: kindOf(t), name: t.name, where: t.branch || (t.repo !== t.name ? t.repo : null),
-    title: t.title, tip: t.title, ...ageOf(t, d.now), fresh, isNew: t.thread !== "working" && isNew(t.since),
+    kind: kindOf(t), name: t.name, where,
+    title: t.title, tip: [t.title, where].filter(Boolean).join("\n"), ...ageOf(t, d.now), fresh, isNew: t.thread !== "working" && isNew(t.since),
     lines: [line ? h("span", { class: "th-line" }, line) : null, mail.length ? h("span", { class: "th-line mail" }, `To you: ${mail[mail.length - 1].text}`) : null],
+    arc: arcEl((t.arc || []).slice(-10), t.prompts), more: t.prompts ? () => cardMore(t) : null,
+    now: needs ? [needsEl(t, d, k), ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null] : null,
     sel: ui.sel === t.name, focused: focusName() === t.name,
     pick: () => select(t.name), show: () => show(t.name),
   });
@@ -578,54 +894,37 @@ function threadsList(d) {
   return out;
 }
 
-// ---------- bottom left: the thread you picked ----------
+// ---------- right, the Details tab: what you set and say for a thread ----------
+// What a card and the story don't show: notes to and from it, where its asks are answered,
+// what it may run without asking, what its repo's sessions are told, everything it said
+// last, and every file it edited.
 
-function detailEl(d) {
-  const el = document.getElementById("detail");
-  const t = d.threads.find((x) => x.name === ui.sel);
-  const x = d.hosted.find((y) => y.name === ui.sel);
-  if (!t && !x) {
-    el.className = "";
-    return [h("p", { class: "pick" }, d.threads.length ? "Pick a thread above to see what it's doing, what it changed, and its notes. Its terminal button puts its terminal on the right." : "Threads show up above as Copilot sessions start.")];
-  }
-  const showBtn = (name) => h("button", { class: "ghost-btn", "aria-pressed": String(focusName() === name), onclick: () => show(name) }, termIcon(), focusName() === name ? "Its terminal is on the right" : "Show its terminal");
-  if (!t) {
-    el.className = "k-working";
-    return [h("div", { class: "dt-head" }, h("span", { class: "call" }, x.name), h("span", { class: "where" }, x.cwd), h("span", { class: "grow" }), showBtn(x.name)),
-      h("p", { class: "pick" }, x.exited ? "Its terminal closed. Open it again from the right." : "Copilot is starting in its terminal on the right. Give it your first prompt there.")];
-  }
+function section(title, ...kids) {
+  return h("section", { class: "i-sec" }, h("h3", null, title), ...kids);
+}
+function infoEl(t, d) {
   const k = `thread:${t.name}:${t.session}`;
-  const now = d.now;
   const open = t.state !== "closed";
-  const a = ageOf(t, now);
-  el.className = `k-${kindOf(t)}`;
-  const mail = d.forYou.filter((n) => n.from === t.name);
   return [
-    h("div", { class: "dt-head" },
-      h("span", { class: "call" }, t.name),
-      h("span", { class: "where" }, [t.repo !== t.name ? t.repo : null, t.branch].filter(Boolean).join(", ")),
-      h("span", { class: "grow" }),
-      h("span", { class: `th-age${a.waiting ? " waiting" : ""}`, title: a.ageTip }, a.age),
-      showBtn(t.name)),
-    h("h2", { class: "dt-title" }, t.title),
-    t.thread === "needs you" ? h("div", { class: "th-now" }, needsEl(t, d, k)) : null,
-    t.thread === "working" && t.now ? h("div", { class: "hint" }, t.now) : null,
-    mail.length ? h("div", { class: "th-line mail" }, `To you: ${mail[mail.length - 1].text}`) : null,
     ui.err[k] ? h("div", { class: "err" }, ui.err[k]) : null,
-    t.thread === "your turn" && (t.lastSaid || t.said) ? h("div", { class: "why said" }, t.lastSaid || t.said) : null,
-    didEl(t),
-    knowsEl(t),
-    open || t.notes.length ? h("div", { class: "notes" },
-      t.notes.map((n) => noteLine(n, now, t.name)),
-      open ? h("div", { class: "send" }, sendBox(t.name, `A note for ${t.name} (read during its work)`)) : null,
-      ui.err[`send:${t.name}`] ? h("div", { class: "err" }, ui.err[`send:${t.name}`]) : null) : null,
-    h("div", { class: "options" },
-      open && !t.onDesk ? modeEl(t, k) : null,
-      h("button", { class: "opt quiet-opt", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
-    t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
-      t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
-        h("button", { title: "Ask again", "aria-label": `Ask again before ${r.prefix || r.tool}`, onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null,
-  ];
+    section("Notes",
+      h("div", { class: "notes" },
+        t.notes.length ? t.notes.map((n) => noteLine(n, d.now, t.name)) : h("div", { class: "hint" }, "No notes yet. A note is read while the session works; it never starts one."),
+        open ? h("div", { class: "send" }, sendBox(t.name, `A note for ${t.name}`)) : null,
+        ui.err[`send:${t.name}`] ? h("div", { class: "err" }, ui.err[`send:${t.name}`]) : null)),
+    section("Permission asks",
+      h("div", { class: "options" }, open && !t.onDesk ? modeEl(t, k) : h("span", { class: "hint" }, t.onDesk ? "Answered in its terminal on the desk." : "Closed.")),
+      t.rules.length ? h("div", { class: "team", title: "Allowed in this terminal without asking" },
+        h("span", { class: "hint" }, "Runs without asking: "),
+        t.rules.map((r) => h("span", { class: "seat" }, r.prefix ? `${r.prefix} …` : r.tool,
+          h("button", { title: "Ask again", "aria-label": `Ask again before ${r.prefix || r.tool}`, onclick: () => act("/api/forget", { terminal: t.name, tool: r.tool, prefix: r.prefix || "" }, k) }, "×")))) : null),
+    (t.lastSaid || t.said) ? section("What it said last", h("div", { class: "said md" }, md(t.lastSaid || t.said))) : null,
+    t.files.length ? section(`Files it edited (${t.files.length})`, h("div", { class: "did" }, filesEl(t))) : null,
+    t.knowledge.items.length ? section("What its repo's sessions are told", knowsEl(t)) : null,
+    section("Learning",
+      h("div", { class: "options" }, h("button", { class: "opt", title: "Read this session now and propose what it taught", onclick: () => act("/api/learn", { session: t.session }, k) }, "Learn from it now")),
+      h("div", { class: "hint" }, "A finished session is read once by itself; what it taught waits under \"Learned, to check\".")),
+  ].filter(Boolean);
 }
 
 // ---------- right: a terminal ----------
@@ -781,16 +1080,62 @@ function clamped(text, lines, chars) {
 
 const markOf = (x) => x.running ? ["…", "running"] : x.ok ? ["✓", "done"] : ["✗", "failed"];
 const runClass = (x) => `m-run${x.running ? " running" : x.ok ? " ok" : " bad"}`;
-const turnEl = (x) => x.k === "you" ? h("div", { class: "m-you" }, "› ", clamped(x.text, 8, 900))
+// A prompt that is really the summary carried over a context reset, or an interruption,
+// reads as what it is; the summary is one click away.
+function youEl(text) {
+  if (/^\[Request interrupted/i.test(text)) return h("div", { class: "m-you m-quiet" }, "■ Stopped it");
+  if (!/^This session is being continued from a previous conversation/i.test(text)) return h("div", { class: "m-you" }, clamped(text, 6, 700));
+  const full = h("div", { class: "m-carried", hidden: true }, text.replace(/^This session is being continued[^\n]*\n*/i, ""));
+  const btn = h("button", { class: "m-more", "aria-expanded": "false", onclick: () => {
+    full.hidden = !full.hidden;
+    btn.setAttribute("aria-expanded", String(!full.hidden));
+    btn.textContent = full.hidden ? "the summary it carried" : "hide it";
+  } }, "the summary it carried");
+  return h("div", { class: "m-you m-quiet" }, "↻ Picked up after a context reset", btn, full);
+}
+const turnEl = (x) => x.k === "you" ? youEl(x.text)
   : x.k === "said" ? h("div", { class: "m-said md" }, md(x.text))
   : x.k === "now" ? h("div", { class: "m-now" }, x.text)
-  : h("div", { class: runClass(x) }, h("span", { class: "m-mark", "aria-label": markOf(x)[1] }, markOf(x)[0]), clamped(x.text, 1, 240));
+  : h("div", { class: runClass(x) }, h("span", { class: "m-mark", "aria-label": markOf(x)[1] }, markOf(x)[0]), clamped(x.text, 1, 150));
 function updateTurn(el, x) {
   if (x.k !== "run") return;
   el.className = runClass(x);
   const [mark, label] = markOf(x);
   el.firstChild.textContent = mark;
   el.firstChild.setAttribute("aria-label", label);
+}
+// Each prompt and the work it led to sit in one box. Its head (number, your prompt, its
+// numbers) stays at the top while you read inside it, so you always know which prompt
+// you're in; the arrow folds the work away.
+function promptBox(you) {
+  const fold = h("button", { class: "m-fold", "aria-expanded": "true", title: "Fold what it did", onclick: () => {
+    const sec = fold.closest(".m-prompt");
+    const folded = sec.classList.toggle("folded");
+    fold.setAttribute("aria-expanded", String(!folded));
+    fold.title = folded ? "Show what it did" : "Fold what it did";
+  } }, chevron());
+  return h("section", { class: "m-prompt" }, h("div", { class: "m-ph" }, h("span", { class: "m-pn" }, "›"), you, h("span", { class: "m-pm" }), fold), h("div", { class: "m-work" }));
+}
+const orphanBox = () => h("section", { class: "m-prompt m-orphan" }, h("div", { class: "m-work" }));
+const workOf = (sec) => sec.querySelector(":scope > .m-work");
+const boxOf = (el) => el.closest(".m-prompt") || el;
+// The numbers and colors come from the story's steps, which say where each prompt is.
+function promptLabels() {
+  const st = ui.mirror;
+  if (!st.els || ui.rail.mode !== "session") return;
+  for (const s of ui.rail.steps) {
+    if (!s) continue;
+    const el = st.els.get(s.turn);
+    const sec = el && el.closest(".m-prompt");
+    if (!sec) continue;
+    const key = `${s.i}|${s.tone}|${s.edits}|${s.commands}|${s.failed}|${s.ms}`;
+    if (sec.dataset.k === key) continue;
+    sec.dataset.k = key;
+    const folded = sec.classList.contains("folded");
+    sec.className = `m-prompt t-${s.tone} k-${s.kind}${folded ? " folded" : ""}`;
+    sec.querySelector(".m-pn").textContent = String(s.i + 1);
+    sec.querySelector(".m-pm").replaceChildren(...metaOf(s));
+  }
 }
 const mirrorEl = () => document.getElementById("mirror");
 const nearEnd = (m) => m.scrollHeight - m.scrollTop - m.clientHeight < 60;
@@ -840,10 +1185,17 @@ function applyTurns(st, r) {
     else if (x.i >= st.first) {
       const n = turnEl(x);
       st.els.set(x.i, n);
-      box.append(n);
+      if (x.k === "you") box.append(promptBox(n));
+      else {
+        let last = box.lastElementChild;
+        if (!last) { last = orphanBox(); box.append(last); }
+        workOf(last).append(n);
+      }
       added++;
     }
   }
+  promptLabels();
+  const firstLoad = !st.loaded;
   st.v = r.v;
   st.total = r.total;
   st.loaded = true;
@@ -851,6 +1203,25 @@ function applyTurns(st, r) {
   earlierLine(st);
   if (atEnd) { m.scrollTop = m.scrollHeight; st.unseen = 0; } else st.unseen += added;
   newPill(st);
+  railActive();
+  if (firstLoad && ui.reveal && ui.reveal.session === st.session) revealTurn(st, ui.reveal.turn);
+}
+// Opened from a step in the story: earlier turns load until that prompt is there.
+async function revealTurn(st, i) {
+  ui.reveal = null;
+  while (st === ui.mirror && st.first > i) {
+    const before = st.first;
+    await loadEarlier();
+    if (st.first === before) break;
+  }
+  const el = st.els.get(i);
+  if (!el || st !== ui.mirror) return;
+  const box = boxOf(el);
+  mirrorEl().scrollTop = box.offsetTop - 10;
+  box.classList.remove("m-flash");
+  void box.offsetWidth;
+  box.classList.add("m-flash");
+  setTimeout(() => box.classList.remove("m-flash"), 1600);
 }
 function earlierLine(st) {
   const el = document.getElementById("m-earlier");
@@ -877,9 +1248,29 @@ async function loadEarlier() {
   const m = mirrorEl();
   const height = m.scrollHeight;
   const top = m.scrollTop;
-  const frag = document.createDocumentFragment();
-  for (const x of r.turns) if (x.i < st.first && !st.els.has(x.i)) { const n = turnEl(x); st.els.set(x.i, n); frag.append(n); }
-  document.getElementById("m-turns").prepend(frag);
+  // Earlier turns go into boxes of their own prompts. Turns before the first prompt in this
+  // page belong to a prompt further up, not loaded yet: they wait in a box with no head,
+  // which the prompt joins when it comes.
+  const box = document.getElementById("m-turns");
+  const secs = [];
+  const lead = [];
+  let cur = null;
+  for (const x of r.turns) {
+    if (x.i >= st.first || st.els.has(x.i)) continue;
+    const n = turnEl(x);
+    st.els.set(x.i, n);
+    if (x.k === "you") { cur = promptBox(n); secs.push(cur); }
+    else if (cur) workOf(cur).append(n);
+    else lead.push(n);
+  }
+  const waiting = box.firstElementChild;
+  if (waiting && waiting.classList.contains("m-orphan")) {
+    if (secs.length) { workOf(secs[secs.length - 1]).append(...workOf(waiting).childNodes); waiting.remove(); }
+    else { workOf(waiting).prepend(...lead); lead.length = 0; }
+  }
+  if (lead.length) { const o = orphanBox(); workOf(o).append(...lead); secs.unshift(o); }
+  box.prepend(...secs);
+  promptLabels();
   st.first = r.turns.length ? Math.min(st.first, r.turns[0].i) : 0;
   earlierLine(st);
   // Keep what you were looking at where it was, with the earlier turns above it (and the
@@ -898,6 +1289,438 @@ document.getElementById("m-new").addEventListener("click", () => {
   newPill(ui.mirror);
 });
 
+// ---------- right: a thread's story ----------
+// Each prompt you gave is a step, in a few words, on a line from the session's start. A
+// new topic branches off the start; a follow-up hangs off the step it follows. Click a
+// step for a few bullets on what Copilot did and said; its raw turns are one more click.
+const TOPIC = ["#6aa8e8", "#b892e0", "#5ec4c0", "#e0a46a", "#d983a8", "#9cc46a"];
+const sEl = (id) => document.getElementById(id);
+const dur = (ms) => !ms || ms < 1000 ? "" : ms < 60000 ? `${Math.round(ms / 1000)}s` : ms < 3600000 ? `${Math.round(ms / 60000)}m` : `${(ms / 3600000).toFixed(1)}h`;
+const openSteps = (session) => { if (!ui.storyOpen.has(session)) ui.storyOpen.set(session, new Set()); return ui.storyOpen.get(session); };
+const skelLines = (n, widths = [70, 92, 54, 80]) => Array.from({ length: n }, (_, k) => h("div", { class: "skel skel-line", style: `width:${widths[k % widths.length]}%` }));
+
+function stopStory() {
+  if (ui.story.ctrl) ui.story.ctrl.abort();
+  ui.story = { session: null };
+}
+function followStory(t) {
+  if (ui.story.session === t.session && ui.story.ctrl && !ui.story.ctrl.signal.aborted) { ui.story.t = t; rootFill(ui.story); return; }
+  stopStory();
+  const st = ui.story = { session: t.session, t, epoch: "", v: 0, steps: [], els: new Map(), details: new Map(), fetching: new Set(), later: new Set(), ctrl: new AbortController(), loaded: false, z: 1, root: h("div", { class: "s-root" }) };
+  rootFill(st);
+  sEl("s-rows").replaceChildren(st.root, ...Array.from({ length: 6 }, (_, k) => h("div", { class: "s-skel" }, skelLines(k % 2 ? 1 : 2, [46 + k * 7, 30]))));
+  sEl("s-edges").replaceChildren();
+  zoomTo(1);
+  sEl("s-vp").scrollTop = 0;
+  busy(1);
+  pullStory(st);
+}
+function rootFill(st) {
+  const t = st.t;
+  const topics = st.steps.filter((s) => s.parent === -1).length;
+  st.root.replaceChildren(
+    h("div", { class: "s-title" }, t.title),
+    h("div", { class: "s-sub" },
+      h("span", null, [t.repo !== t.name ? t.repo : null, t.branch].filter(Boolean).join(" · ") || t.name),
+      st.steps.length ? h("span", null, `${plural(st.steps.length, "step")}, ${plural(topics, "topic")}`) : null,
+      t.files.length ? h("span", null, `${plural(t.files.length, "file")} edited`) : null,
+      t.commands ? h("span", null, plural(t.commands, "command")) : null,
+      t.failed ? h("span", null, `${t.failed} failed`) : null,
+      t.started ? h("span", null, `started ${ago(t.started, Date.now())} ago`) : null));
+}
+async function pullStory(st) {
+  let first = true;
+  while (!st.ctrl.signal.aborted) {
+    try {
+      const r = await api(`/api/story?id=${encodeURIComponent(st.session)}&since=${st.v}&epoch=${encodeURIComponent(st.epoch)}&wait=${st.loaded ? 25000 : 0}`, undefined, st.ctrl.signal);
+      if (st !== ui.story) return;
+      applyStory(st, r);
+    } catch {
+      if (st.ctrl.signal.aborted) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    } finally {
+      if (first) { first = false; busy(-1); }
+    }
+  }
+}
+
+function metaOf(s) {
+  const meta = [];
+  if (s.edits) meta.push(h("span", { title: "files it edited" }, `✎ ${s.edits}`));
+  if (s.commands) meta.push(h("span", { title: "commands it ran" }, `› ${s.commands}`));
+  if (s.failed) meta.push(h("span", { class: "bad", title: "tool calls that failed" }, `✗ ${s.failed}`));
+  if (s.ms >= 1000) meta.push(h("span", { title: "how long it took" }, dur(s.ms)));
+  return meta;
+}
+function headParts(s) {
+  const meta = metaOf(s);
+  return [h("span", { class: "s-n" }, String(s.i + 1)), h("span", { class: "s-ask", title: `${s.ask}: ${TONE_SAYS[s.tone]}` }, s.kind === "resume" ? `↻ ${s.ask}` : s.kind === "stop" ? `■ ${s.ask}` : s.ask), h("span", { class: "s-meta" }, meta)];
+}
+function nodeEl(st, s) {
+  const open = openSteps(st.session).has(s.i);
+  const head = h("button", { class: "s-head", "aria-expanded": String(open), onclick: () => toggleStep(st, s.i) }, headParts(s));
+  return h("div", { class: `s-node k-${s.kind} t-${s.tone}${open ? " open" : ""}${st.loaded ? " fresh" : ""}`, "data-i": String(s.i) }, head);
+}
+function applyStory(st, r) {
+  const vp = sEl("s-vp");
+  const rows = sEl("s-rows");
+  const atEnd = !st.loaded || vp.scrollHeight - vp.scrollTop - vp.clientHeight < 90;
+  if (r.epoch !== st.epoch) {
+    st.epoch = r.epoch;
+    st.steps = [];
+    st.els.clear();
+    st.details.clear();
+    rows.replaceChildren(st.root);
+  }
+  if (!st.loaded) {
+    rows.replaceChildren(st.root);
+    // The latest step opens by itself, so there's something to read straight away.
+    const open = openSteps(st.session);
+    if (!open.size && r.steps.length) open.add(r.steps[r.steps.length - 1].i);
+  }
+  const frag = document.createDocumentFragment();
+  for (const s of r.steps) {
+    const was = st.steps[s.i];
+    st.steps[s.i] = s;
+    const el = st.els.get(s.i);
+    if (el) {
+      el.className = `s-node k-${s.kind} t-${s.tone}${openSteps(st.session).has(s.i) ? " open" : ""}`;
+      el.firstChild.replaceChildren(...headParts(s));
+      if (was && openSteps(st.session).has(s.i)) stepBody(st, s.i);
+    } else {
+      const n = nodeEl(st, s);
+      st.els.set(s.i, n);
+      frag.append(n);
+    }
+  }
+  rows.append(frag);
+  if (r.total === 0 && !rows.querySelector(".s-empty")) rows.append(h("div", { class: "s-empty" }, "No prompts yet. Give Copilot your first one in its terminal."));
+  else if (r.total > 0) rows.querySelector(".s-empty")?.remove();
+  const firstLoad = !st.loaded;
+  st.v = r.v;
+  st.loaded = true;
+  rootFill(st);
+  for (const i of openSteps(st.session)) if (st.els.has(i) && (firstLoad || !st.details.has(i))) stepBody(st, i);
+  layoutStory(st);
+  // Opening at the end stays at the end while the latest step's bullets come in, until you move.
+  if (firstLoad) st.pinEnd = true;
+  if (atEnd) requestAnimationFrame(() => { vp.scrollTop = vp.scrollHeight; });
+  railDraw();
+}
+
+// Lanes, as a git graph draws them. A run of follow-ups stays on one lane; a topic
+// branches off the start (the dotted line on the left); a step that goes back to an
+// earlier one branches off it onto a lane free for as long as that run lasts.
+function lanesOf(steps) {
+  const n = steps.length;
+  const firstChild = new Map();
+  for (let i = 0; i < n; i++) { const p = steps[i] ? steps[i].parent : -1; if (p >= 0 && !firstChild.has(p)) firstChild.set(p, i); }
+  const chainOf = [];
+  const chains = [];
+  let topics = 0;
+  for (let i = 0; i < n; i++) {
+    const p = steps[i] ? steps[i].parent : -1;
+    if (p >= 0 && firstChild.get(p) === i && chainOf[p] !== undefined) { chainOf[i] = chainOf[p]; chains[chainOf[i]].end = i; }
+    else { chainOf[i] = chains.length; chains.push({ from: p >= 0 ? p : i, end: i, topic: p >= 0 && chainOf[p] !== undefined ? chains[chainOf[p]].topic : topics++ }); }
+  }
+  const laneEnd = [];
+  for (const c of [...chains].sort((a, b) => a.from - b.from)) {
+    let l = 1;
+    while (laneEnd[l] !== undefined && laneEnd[l] >= c.from) l++;
+    c.lane = Math.min(l, 8);
+    laneEnd[l] = Math.max(laneEnd[l] ?? -1, c.end);
+  }
+  return { lane: chainOf.map((c) => chains[c].lane), topic: chainOf.map((c) => chains[c].topic), main: (i) => { const p = steps[i].parent; return p >= 0 && firstChild.get(p) === i; }, lanes: Math.max(1, ...chains.map((c) => c.lane)) };
+}
+const LANE = 16;
+function layoutStory(st) {
+  const lay = st.lay = lanesOf(st.steps);
+  sEl("s-rows").style.setProperty("--gutter", `${22 + lay.lanes * LANE}px`);
+  for (const [i, el] of st.els) el.style.setProperty("--topic", TOPIC[lay.topic[i] % TOPIC.length]);
+  drawEdges(st);
+  redraw(st);
+}
+function svgEl(tag, attrs) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  return e;
+}
+// Drawn on the next frame, once whatever changed has its size.
+function redraw(st) {
+  if (st.frame) return;
+  st.frame = requestAnimationFrame(() => { st.frame = 0; drawEdges(st); });
+}
+function drawEdges(st) {
+  const lay = st.lay;
+  if (!lay || st !== ui.story) return;
+  const svg = sEl("s-edges");
+  const world = sEl("s-world");
+  const X = (l) => 18 + l * LANE;
+  const Y = (el) => el.offsetTop + Math.min(16, el.offsetHeight / 2);
+  const rootY = st.root.offsetTop + 11;
+  const paths = [];
+  const dots = [];
+  let spineEnd = rootY;
+  for (let i = 0; i < st.steps.length; i++) {
+    const s = st.steps[i];
+    const el = st.els.get(i);
+    if (!s || !el) continue;
+    const x = X(lay.lane[i]);
+    const y = Y(el);
+    const color = TOPIC[lay.topic[i] % TOPIC.length];
+    if (s.parent < 0) {
+      spineEnd = y - 22;
+      paths.push(svgEl("path", { d: `M ${X(0)} ${y - 26} C ${X(0)} ${y - 8}, ${x} ${y - 18}, ${x} ${y}`, stroke: color }));
+    } else {
+      const pe = st.els.get(s.parent);
+      if (pe) {
+        const px = X(lay.lane[s.parent]);
+        const py = Y(pe);
+        paths.push(svgEl("path", { d: lay.main(i) ? `M ${px} ${py} L ${x} ${y}` : `M ${px} ${py} C ${px} ${py + 16}, ${x} ${py + 8}, ${x} ${py + 24} L ${x} ${y}`, stroke: color }));
+      }
+    }
+    dots.push(svgEl("circle", { cx: x, cy: y, r: s.kind === "ask" ? 5 : 3.5, class: `t-${s.tone}` }));
+  }
+  const spine = svgEl("path", { d: `M ${X(0)} ${rootY} L ${X(0)} ${Math.max(rootY, spineEnd)}`, class: "spine" });
+  svg.setAttribute("width", String(world.offsetWidth));
+  svg.setAttribute("height", String(world.offsetHeight));
+  svg.replaceChildren(spine, ...paths, svgEl("circle", { cx: X(0), cy: rootY, r: 6, class: "root" }), ...dots);
+  sizeWorld();
+}
+
+function toggleStep(st, i) {
+  const open = openSteps(st.session);
+  open.has(i) ? open.delete(i) : open.add(i);
+  const el = st.els.get(i);
+  el.classList.toggle("open", open.has(i));
+  el.firstChild.setAttribute("aria-expanded", String(open.has(i)));
+  stepBody(st, i);
+}
+// A step's bullets come when you open it; while they're on their way it shows grey lines.
+// The step still being worked on is fetched again as it changes, at most every 2 seconds.
+function stepBody(st, i) {
+  const el = st.els.get(i);
+  const s = st.steps[i];
+  if (!el || !s) return;
+  let body = el.querySelector(".s-body");
+  if (!openSteps(st.session).has(i)) { body?.remove(); return; }
+  if (!body) { body = h("div", { class: "s-body" }); el.append(body); }
+  const sig = `${s.tools}:${s.failed}:${s.edits}:${s.tone}:${s.ms}`;
+  const c = st.details.get(i);
+  if (c) body.replaceChildren(...bodyParts(st, c.d));
+  else body.replaceChildren(...skelLines(3));
+  redraw(st);
+  if (c && c.sig === sig) return;
+  if (c && Date.now() - c.at < 2000) {
+    if (!st.later.has(i)) { st.later.add(i); setTimeout(() => { st.later.delete(i); if (st === ui.story) stepBody(st, i); }, 2000); }
+    return;
+  }
+  if (st.fetching.has(i)) return;
+  st.fetching.add(i);
+  if (!c) busy(1);
+  api(`/api/story/step?id=${encodeURIComponent(st.session)}&i=${i}`, undefined, st.ctrl.signal)
+    .then((d) => { st.details.set(i, { sig, d, at: Date.now() }); })
+    .catch(() => { if (!c && !st.ctrl.signal.aborted) body.replaceChildren(h("div", { class: "s-empty" }, "Couldn't read this step. Close and open it to try again.")); })
+    .finally(() => {
+      st.fetching.delete(i);
+      if (!c) busy(-1);
+      if (st === ui.story && st.details.has(i)) stepBody(st, i);
+      if (st === ui.story && st.pinEnd) requestAnimationFrame(() => { const vp = sEl("s-vp"); vp.scrollTop = vp.scrollHeight; });
+    });
+}
+function bodyParts(st, d) {
+  const said = d.said || [];
+  return [
+    d.kind === "resume"
+      ? h("div", { class: "s-you" }, h("span", { class: "s-lbl" }, "Carried"), clamped(d.prompt.replace(/^This session is being continued[^\n]*\n*/i, ""), 2, 260))
+      : h("div", { class: "s-you" }, h("span", { class: "s-lbl" }, "You"), clamped(d.prompt, 3, 360)),
+    d.intents.length ? h("div", { class: "s-steps" }, d.intents.join(" → ")) : null,
+    d.did.length || d.errors.length ? h("ul", null, d.did.map((x) => h("li", null, x)), d.errors.map((x) => h("li", { class: "bad" }, x))) : null,
+    said.length ? h("div", { class: "s-said" }, h("div", { class: "s-saidhead" }, h("span", { class: "s-lbl" }, "Copilot"), mdInline(said[0])), said.length > 1 ? h("ul", null, said.slice(1).map((x) => h("li", null, mdInline(x)))) : null) : null,
+    d.files.length ? h("div", { class: "s-files" }, d.files.slice(0, 8).map((f) => h("code", { title: f }, base(f))), d.files.length > 8 ? h("span", null, `+${d.files.length - 8}`) : null) : null,
+    h("div", { class: "s-act" }, h("button", { onclick: () => openRaw(st, d.turn) }, "Its turns in the session ↗")),
+  ].filter(Boolean);
+}
+// The step's raw turns: the session view, scrolled to where this prompt starts.
+function openRaw(st, turn) {
+  ui.reveal = { session: st.session, turn };
+  ui.view = "live";
+  keepPicked();
+  render();
+}
+
+// Zoom keeps the point under the cursor (or the middle) where it is. The world is scaled
+// with a transform; the box around it is sized to match so the scrollbars stay true.
+function sizeWorld() {
+  const st = ui.story;
+  const vp = sEl("s-vp");
+  const world = sEl("s-world");
+  const size = sEl("s-size");
+  const z = st.z || 1;
+  const w = world.offsetWidth * z;
+  size.style.width = `${Math.max(w, vp.clientWidth)}px`;
+  size.style.height = `${world.offsetHeight * z}px`;
+  world.style.left = `${Math.max(0, (vp.clientWidth - w) / 2)}px`;
+}
+function zoomTo(z, cx, cy) {
+  const st = ui.story;
+  const vp = sEl("s-vp");
+  const world = sEl("s-world");
+  const old = st.z || 1;
+  z = Math.max(0.3, Math.min(1.6, z));
+  if (cx === undefined) { cx = vp.clientWidth / 2; cy = vp.clientHeight / 2; }
+  const wx = (vp.scrollLeft + cx) / old;
+  const wy = (vp.scrollTop + cy) / old;
+  st.z = z;
+  world.style.transform = `scale(${z})`;
+  world.classList.toggle("far", z < 0.7);
+  sEl("s-z").textContent = `${Math.round(z * 100)}%`;
+  sizeWorld();
+  vp.scrollLeft = wx * z - cx;
+  vp.scrollTop = wy * z - cy;
+}
+{
+  const vp = sEl("s-vp");
+  vp.addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !ui.story.session) return;
+    e.preventDefault();
+    const r = vp.getBoundingClientRect();
+    zoomTo((ui.story.z || 1) * Math.exp(-e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  let drag = null;
+  for (const ev of ["wheel", "pointerdown", "keydown"]) vp.addEventListener(ev, () => { ui.story.pinEnd = false; }, { passive: true });
+  vp.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest("button, a, .s-body, .s-root")) return;
+    drag = { x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop, id: e.pointerId };
+    vp.setPointerCapture(e.pointerId);
+    vp.classList.add("drag");
+  });
+  vp.addEventListener("pointermove", (e) => { if (drag) { vp.scrollLeft = drag.l - (e.clientX - drag.x); vp.scrollTop = drag.t - (e.clientY - drag.y); } });
+  const end = () => { drag = null; vp.classList.remove("drag"); };
+  vp.addEventListener("pointerup", end);
+  vp.addEventListener("pointercancel", end);
+  sEl("s-in").onclick = () => zoomTo((ui.story.z || 1) * 1.2);
+  sEl("s-out").onclick = () => zoomTo((ui.story.z || 1) / 1.2);
+  sEl("s-fit").onclick = () => {
+    const world = sEl("s-world");
+    // Twice: zoomed out, the words grow (see .far), which changes the height to fit.
+    for (let k = 0; k < 2; k++) zoomTo(Math.max(0.45, Math.min(1, (vp.clientHeight - 16) / world.offsetHeight, (vp.clientWidth - 16) / world.offsetWidth)));
+    vp.scrollTop = 0;
+  };
+  sEl("s-end").onclick = () => vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+  // A step opening or closing moves everything under it: draw the lines again.
+  new ResizeObserver(() => { if (ui.story.session) drawEdges(ui.story); }).observe(sEl("s-rows"));
+  new ResizeObserver(() => { if (ui.story.session) sizeWorld(); }).observe(vp);
+}
+
+// ---------- the rail: one mark per prompt, on the right edge of the story or the session ----------
+// The story has its steps already; the session view asks for them (they say where each
+// prompt is among its turns), and follows them as the session grows.
+function railMode(mode, session) {
+  const r = ui.rail;
+  if (r && r.mode === mode && r.session === session) return;
+  if (r && r.ctrl) r.ctrl.abort();
+  ui.rail = { mode, session, steps: [], v: 0, epoch: "", sig: "", active: -1, ctrl: mode === "session" ? new AbortController() : null };
+  if (mode === "session") pullRail(ui.rail);
+  railDraw();
+}
+async function pullRail(r) {
+  while (!r.ctrl.signal.aborted) {
+    try {
+      const x = await api(`/api/story?id=${encodeURIComponent(r.session)}&since=${r.v}&epoch=${encodeURIComponent(r.epoch)}&wait=${r.v ? 25000 : 0}`, undefined, r.ctrl.signal);
+      if (r !== ui.rail) return;
+      if (x.epoch !== r.epoch) { r.steps = []; r.epoch = x.epoch; }
+      for (const s of x.steps) r.steps[s.i] = s;
+      r.v = x.v;
+      railDraw();
+      promptLabels();
+    } catch {
+      if (r.ctrl.signal.aborted) return;
+      await new Promise((ok) => setTimeout(ok, 2000));
+    }
+  }
+}
+const railSteps = () => (ui.rail.mode === "story" ? ui.story.steps || [] : ui.rail.steps).filter(Boolean);
+function railDraw() {
+  const el = sEl("rail");
+  const steps = ui.rail.mode ? railSteps() : [];
+  el.hidden = steps.length < 2;
+  if (el.hidden) { sEl("rail-tip").hidden = true; ui.rail.sig = ""; return; }
+  // Drawn again only when a mark would look different.
+  const sig = `${el.clientHeight}|${steps.map((s) => s.kind[0] + s.tone[0]).join("")}`;
+  if (sig !== ui.rail.sig) {
+    ui.rail.sig = sig;
+    const per = Math.max(2, Math.min(14, (el.clientHeight || 300) / steps.length));
+    el.replaceChildren(...steps.map((s) => h("button", {
+      class: `rk t-${s.tone}${s.kind === "ask" ? "" : " r"}`, style: `height:${per}px`, "data-i": String(s.i),
+      "aria-label": `${s.i + 1}. ${s.ask}`,
+      onclick: () => railGo(s.i), onpointerenter: (e) => railTip(e.currentTarget, s), onpointerleave: () => { sEl("rail-tip").hidden = true; },
+      onfocus: (e) => railTip(e.currentTarget, s), onblur: () => { sEl("rail-tip").hidden = true; },
+    })));
+    ui.rail.active = -1;
+  }
+  railActive();
+}
+function railTip(b, s) {
+  const tip = sEl("rail-tip");
+  const body = sEl("term-body").getBoundingClientRect();
+  const r = b.getBoundingClientRect();
+  const meta = [s.edits ? `${s.edits} files` : "", s.commands ? `${s.commands} commands` : "", s.failed ? `${s.failed} failed` : "", dur(s.ms)].filter(Boolean).join(" · ");
+  tip.replaceChildren(h("span", { class: "n" }, String(s.i + 1)), s.ask, meta ? h("span", { class: "w" }, meta) : "");
+  tip.style.top = `${r.top + r.height / 2 - body.top}px`;
+  tip.hidden = false;
+}
+// Which prompt you're reading: the last one that starts near the top of the view.
+function railActive() {
+  const r = ui.rail;
+  if (!r.mode || sEl("rail").hidden) return;
+  const steps = railSteps();
+  let active = -1;
+  if (r.mode === "story") {
+    const st = ui.story;
+    const vp = sEl("s-vp");
+    const probe = vp.scrollTop + 72;
+    const atEnd = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 4;
+    for (const s of steps) { const el = st.els && st.els.get(s.i); if (!el) continue; if (atEnd || el.offsetTop * (st.z || 1) <= probe) active = s.i; else break; }
+  } else {
+    const st = ui.mirror;
+    const m = mirrorEl();
+    if (!st.els) return;
+    const probe = m.scrollTop + 72;
+    const atEnd = m.scrollHeight - m.scrollTop - m.clientHeight < 4;
+    for (const s of steps) {
+      const el = st.els.get(s.turn);
+      if (!el) { if (s.turn < st.first) active = s.i; continue; }
+      if (atEnd || boxOf(el).offsetTop <= probe) active = s.i; else break;
+    }
+  }
+  if (active === r.active) return;
+  r.active = active;
+  for (const b of sEl("rail").children) b.classList.toggle("on", Number(b.dataset.i) === active);
+}
+function railGo(i) {
+  if (ui.rail.mode === "story") {
+    const st = ui.story;
+    st.pinEnd = false;
+    const el = st.els && st.els.get(i);
+    if (!el) return;
+    sEl("s-vp").scrollTo({ top: Math.max(0, el.offsetTop * (st.z || 1) - 56), behavior: "smooth" });
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+  } else {
+    const s = ui.rail.steps[i];
+    if (s && ui.mirror.session) revealTurn(ui.mirror, s.turn);
+  }
+}
+{
+  let queued = false;
+  const onScroll = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; railActive(); }); } };
+  sEl("s-vp").addEventListener("scroll", onScroll, { passive: true });
+  mirrorEl().addEventListener("scroll", onScroll, { passive: true });
+  new ResizeObserver(() => { ui.rail.sig = ""; railDraw(); }).observe(sEl("term-body"));
+}
+
 function rightEl(d) {
   const name = focusName();
   const t = d.threads.find((x) => x.name === name);
@@ -905,14 +1728,63 @@ function rightEl(d) {
   const head = document.getElementById("term-head");
   const mirror = document.getElementById("mirror");
   const empty = document.getElementById("term-empty");
+  const story = document.getElementById("story");
+  const xt = document.getElementById("xterm");
+  // Story or terminal: a thread whose session has started has both; a terminal whose
+  // Copilot hasn't started yet has only its terminal.
+  const view = !t ? "live" : ui.view === "live" || ui.view === "info" ? ui.view : "story";
+  const info = document.getElementById("info");
+  const seg = t ? h("span", { class: "vseg" },
+    h("button", { "aria-pressed": String(view === "story"), title: "Your prompts as steps, and what each led to", onclick: () => { ui.view = "story"; keepPicked(); render(); } }, "Story"),
+    h("button", { "aria-pressed": String(view === "live"), title: x ? "The terminal, typed into here" : "The session turn by turn, as Copilot writes it", onclick: () => { ui.view = "live"; keepPicked(); render(); setTimeout(() => { if (XT.name === name) XT.term.focus(); }, 0); } }, x ? "Terminal" : "Session"),
+    h("button", { "aria-pressed": String(view === "info"), title: "Notes, where its asks are answered, what it may run, its files", onclick: () => { ui.view = "info"; keepPicked(); render(); } }, "Details", t.notes.some((n) => !n.delivered && n.to === "you") ? h("i", { class: "vdot" }) : null)) : null;
+  info.hidden = view !== "info";
+  if (view === "info") {
+    stopMirror();
+    stopStory();
+    railMode(null, null);
+    if (XT.name && XT.name !== name) detachTerm();
+    xt.hidden = true;
+    mirror.hidden = true;
+    empty.hidden = true;
+    story.hidden = true;
+    head.replaceChildren(...[
+      h("span", { class: "call" }, name), seg,
+      h("span", { class: "tt", title: t.title }, t.title),
+      x ? null : t.state !== "closed" ? h("button", { onclick: () => jump(t.name, "term") }, "Type in its tab ↗") : h("span", { class: "on-desk" }, "closed")].filter(Boolean));
+    info.replaceChildren(...infoEl(t, d));
+    return;
+  }
+  if (view === "story") {
+    stopMirror();
+    if (XT.name && XT.name !== name) detachTerm();
+    xt.hidden = true;
+    mirror.hidden = true;
+    empty.hidden = true;
+    story.hidden = false;
+    head.replaceChildren(...[
+      h("span", { class: "call" }, name), seg,
+      h("span", { class: "tt", title: t.title }, t.title),
+      x && !x.exited && x.progress ? h("span", { class: `t-progress p-${x.progress}` }, h("i"), PROGRESS_SAYS[x.progress]) : null,
+      x ? null : t.state !== "closed" ? h("button", { onclick: () => jump(t.name, "term") }, "Type in its tab ↗") : h("span", { class: "on-desk" }, "closed")].filter(Boolean));
+    followStory(t);
+    railMode("story", t.session);
+    return;
+  }
+  story.hidden = true;
+  stopStory();
+  // The session view of a terminal of your own has the rail; a terminal on the desk is
+  // its own screen, with nothing to jump to.
+  railMode(x || !t ? null : "session", t ? t.session : null);
   if (x) {
     stopMirror();
     attachTerm(name);
+    if (xt.hidden) { xt.hidden = false; setTimeout(fitTerm, 0); }
     mirror.hidden = true;
     empty.hidden = true;
     const closing = ui.closing === name;
     head.replaceChildren(...[
-      h("span", { class: "call" }, name),
+      h("span", { class: "call" }, name), seg,
       h("span", { class: "tt", title: x.cwd }, t ? t.title : x.cwd),
       x.exited
         ? [h("button", { onclick: () => act("/api/start", { folder: x.cwd, name }, "term") }, "Open again"), h("button", { onclick: () => { act("/api/term/close", { name }, "term"); if (ui.focus === name) ui.focus = null; } }, "Remove")]
@@ -927,7 +1799,7 @@ function rightEl(d) {
     mirror.hidden = false;
     empty.hidden = true;
     head.replaceChildren(
-      h("span", { class: "call" }, name),
+      h("span", { class: "call" }, name), seg,
       h("span", { class: "tt", title: t.title }, t.title),
       t.state !== "closed" ? h("button", { onclick: () => jump(t.name, "term") }, "Type in its tab ↗") : h("span", { class: "on-desk" }, "closed"));
     followMirror(t);
@@ -1090,7 +1962,6 @@ function render() {
   document.getElementById("start-slot").replaceChildren(...(ui.starting ? [startEl(d)] : []));
   document.getElementById("tabs").replaceChildren(...tabsEl(d));
   document.getElementById("list").replaceChildren(...[ui.tab === "notes" ? talkEl(d) : ui.tab === "learned" ? learnedEl(d) : threadsList(d)].flat(Infinity).filter(Boolean));
-  document.getElementById("detail").replaceChildren(...detailEl(d).filter(Boolean));
   rightEl(d);
 
   for (const el of document.querySelectorAll("[data-k]")) {
@@ -1144,6 +2015,7 @@ async function loop() {
       ui.data = v;
       off.hidden = true;
       render();
+      busy(0);
     } catch (e) {
       off.textContent = /out of date/.test(e.message) ? "This page is out of date. Reload it." : "Can't reach the desk. Is npm run desk still running?";
       off.hidden = false;

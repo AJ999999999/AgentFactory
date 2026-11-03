@@ -223,6 +223,34 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         req.on("close", () => stop());
         return;
       }
+      if (req.method === "GET" && (url.pathname === "/api/story" || url.pathname === "/api/story/step")) {
+        // A session as steps, one per prompt you gave (see StoryFold). `since` and `epoch`
+        // as for /api/session; `step`: one step's bullets, fetched when you open it.
+        const id = str(url.searchParams.get("id"), "id", 200);
+        if (!/^[\w.-]+$/.test(id)) return json(res, 400, { error: "bad session id" });
+        const num = (k: string, d: number) => {
+          const raw = url.searchParams.get(k);
+          const v = raw === null || raw === "" ? NaN : Number(raw);
+          return Number.isFinite(v) && v >= 0 ? Math.floor(v) : d;
+        };
+        const transcript = readLog(home).find((e) => e.session === id && e.transcript)?.transcript;
+        if (url.pathname === "/api/story/step") {
+          const f = sessionFile(id, transcript);
+          const s = f ? follow(f).step(num("i", 0)) : undefined;
+          return s ? json(res, 200, s) : json(res, 404, { error: "no such step" });
+        }
+        const since = num("since", 0);
+        const epoch = url.searchParams.get("epoch") ?? "";
+        const until = Date.now() + Math.min(num("wait", 0), 25_000);
+        for (;;) {
+          const f = sessionFile(id, transcript);
+          const fl = f ? follow(f) : undefined;
+          const fresh = fl && epoch && fl.epoch !== epoch;
+          if (fl && (fresh || fl.storyV > since || Date.now() >= until || req.destroyed)) return json(res, 200, fl.story(fresh ? 0 : since));
+          if (!fl && (Date.now() >= until || req.destroyed)) return json(res, 200, { epoch: "", v: 0, total: 0, steps: [] });
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
       if (req.method === "GET" && url.pathname === "/api/session") {
         // A session in a terminal of your own, as Copilot writes it, to follow it from the
         // desk. `since`: the version the page has; the answer waits until there's more.

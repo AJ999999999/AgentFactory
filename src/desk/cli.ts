@@ -2,23 +2,27 @@
 //
 //   npm run desk -- install [--mcp]  hook every Copilot CLI session on this PC (one file in ~/.copilot/hooks);
 //                                    --mcp also registers the af-desk MCP tools, where your company allows it
-//   npm run desk                     the page: every terminal's Copilot session as a thread
-//                                    [--port 4710] [--no-open] [--demo: five simulated threads, nothing real touched]
+//   npm run desk                     the page: every terminal's Copilot session as a thread, in a window of its own
+//                                    [--port 4710] [--no-open] [--tab: a browser tab instead] [--demo: five simulated threads, nothing real touched]
+//   npm run desk -- app              the desk in the background (no console window) and its window; what the shortcut runs
+//   npm run desk -- stop             stop a desk running in the background; its terminals stay with the keeper
+//   npm run desk -- shortcut [--key Ctrl+Alt+D]   a Start menu entry for the desk, with a key that brings it up
 //   npm run desk -- learn [--session <id>] [--force]   learn from ended sessions now (or one session)
 //   npm run desk -- knows [<folder>]  what a new session in that folder is told
 //   node src/desk/cli.ts note <terminal|all|you> <text> [--from <terminal>]
 //                                    what a session runs to send a note (sessions are told this at their start)
 //   node src/desk/cli.ts threads [--from <terminal>]   the open terminals, as a session sees them
+//   npm run desk -- terminals [stop] the terminals the keeper holds (they outlive the desk); stop ends them all
 //   npm run desk -- uninstall        stop recording
 //   npm run desk -- report [--days 7]  how often each repo's session stopped for you, and for what
 //   npm run desk -- tail [--n 20]    the last events, to check the hook is firing
 //   npm run desk -- away [on|off]    while you're away, asks go to Teams as cards (needs teams in config.json)
 //   npm run desk -- teams test       send one test card to Teams and wait for your tap
 //   npm run desk -- slack test       post one test message to your Slack workflow, and wait for your answer by mail if set up
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { openApp, runningDesk, shortcutScript, startInBackground, startMenuFolder } from "./app.ts";
 import { copilotHooksDir, install, installMcp, mcpConfigFile, uninstall, uninstallMcp } from "./install.ts";
 import { deskHome, logFile, readLog } from "./log.ts";
 import { renderReport, report } from "./report.ts";
@@ -36,6 +40,14 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     const all = process.argv.slice(2);
     const i = all.indexOf("--port");
     const demo = all.includes("--demo");
+    const tab = all.includes("--tab");
+    // One desk at a time: a second start opens the window of the one already running.
+    const already = demo ? undefined : runningDesk(deskHome());
+    if (already) {
+      console.log(`the desk is already running at ${already.url} (pid ${already.pid}); opening its window`);
+      if (!all.includes("--no-open")) openApp(already.url, { tab });
+      break;
+    }
     let home: string | undefined;
     let analyst;
     if (demo) {
@@ -48,7 +60,10 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     }
     const desk = await startDesk({ ...(home ? { home } : {}), ...(analyst ? { analyst } : {}), port: i >= 0 ? Number(all[i + 1]) : 4710, log: (l) => console.log(`${new Date().toLocaleTimeString()} ${l}`) });
     console.log(`desk: ${desk.url}  (Ctrl+C to stop)`);
-    if (!all.includes("--no-open")) openBrowser(desk.url);
+    if (!all.includes("--no-open")) {
+      const how = openApp(desk.url, { tab });
+      if (how === "tab") console.log("no Edge or Chrome found for a window of its own: opened a browser tab");
+    }
     const stop = async () => {
       await desk.close();
       if (home) fs.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
@@ -56,6 +71,43 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
+    break;
+  }
+  case "app": {
+    const d = runningDesk(deskHome()) ?? (await startInBackground(deskHome()));
+    openApp(d.url, { tab: args.includes("--tab") });
+    console.log(`the desk: ${d.url} (pid ${d.pid}); npm run desk -- stop to stop it`);
+    break;
+  }
+  case "stop": {
+    const d = runningDesk(deskHome());
+    if (!d) {
+      console.log("no desk is running");
+      break;
+    }
+    process.kill(d.pid, "SIGTERM");
+    console.log(`stopped the desk (pid ${d.pid}); its terminals keep running (npm run desk -- terminals)`);
+    break;
+  }
+  case "shortcut": {
+    if (process.platform !== "win32") {
+      console.log("the Start menu shortcut is for Windows; elsewhere run npm run desk -- app");
+      break;
+    }
+    const key = flag("key") ?? "Ctrl+Alt+D";
+    const { findAppBrowser } = await import("./app.ts");
+    const browser = findAppBrowser();
+    const script = shortcutScript({ node: process.execPath, cli: path.join(import.meta.dirname, "cli.ts"), key, folder: startMenuFolder(), ...(browser ? { icon: `${browser},0` } : {}) });
+    const { runCommand } = await import("../proc.ts");
+    try {
+      await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+    } catch (e) {
+      // Constrained language mode refuses the shell object; the desk itself still works.
+      console.error(`couldn't write the shortcut: ${String((e as { stderr?: string }).stderr || (e as Error).message).trim().split("\n")[0]}`);
+      process.exitCode = 1;
+      break;
+    }
+    console.log(`added "AgentFactory desk" to the Start menu; ${key} brings it up from anywhere`);
     break;
   }
   case "install": {
@@ -156,24 +208,29 @@ switch (cmd === undefined || cmd.startsWith("--") ? "open" : cmd) {
     if (!r.ok) process.exitCode = 1;
     break;
   }
+  case "terminals": {
+    // The keeper holds the desk's terminals across restarts of the desk (keeper.ts).
+    const { KeptTerminals } = await import("./keeper.ts");
+    const k = await KeptTerminals.connect(deskHome(), { start: false }).catch(() => undefined);
+    if (!k) {
+      console.log("no terminals are being kept: none was opened on the desk, or the keeper ended");
+      break;
+    }
+    const list = k.list();
+    for (const t of list) console.log(`${t.name.padEnd(20)} ${t.exited ? "ended" : (t.progress ?? "open").padEnd(8)}  ${t.cwd}  since ${new Date(t.started).toLocaleString()}`);
+    if (!list.length) console.log("the keeper holds no terminal");
+    if (args[0] === "stop") {
+      await k.stop();
+      console.log(`ended ${list.filter((t) => !t.exited).length} terminal(s) and the keeper (pid ${k.pid})`);
+    } else k.detach();
+    break;
+  }
   case "tail": {
     const n = Number(flag("n") ?? 20);
     for (const e of readLog().slice(-n)) console.log(`${new Date(e.at).toLocaleTimeString()}  ${path.basename(e.cwd).padEnd(20).slice(0, 20)}  ${e.event}${e.kind ? `:${e.kind}` : ""}${e.tool ? `  ${e.tool}` : ""}${e.detail ? `  ${e.detail}` : e.message ? `  ${e.message}` : ""}`);
     break;
   }
   default:
-    console.log(`usage: npm run desk [-- --port 4710 --no-open --demo] | -- install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | tail [--n 20] | away [on|off] | teams test | slack test\nstate: ${deskHome()}`);
+    console.log(`usage: npm run desk [-- --port 4710 --no-open --tab --demo] | -- app | stop | shortcut [--key Ctrl+Alt+D] | install | uninstall | learn [--session id] | knows [folder] | note <terminal|all|you> <text> --from <terminal> | threads | report [--days 7] | terminals [stop] | tail [--n 20] | away [on|off] | teams test | slack test\nstate: ${deskHome()}`);
     process.exit(1);
-}
-
-function openBrowser(url: string): void {
-  // Fixed URL, no shell: explorer.exe opens it in the default browser on Windows.
-  const [c, a] = process.platform === "win32" ? ["explorer.exe", [url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
-  try {
-    const p = spawn(c, a, { stdio: "ignore", detached: true, windowsHide: true });
-    p.on("error", () => console.log(`open ${url} in your browser`));
-    p.unref();
-  } catch {
-    console.log(`open ${url} in your browser`);
-  }
 }

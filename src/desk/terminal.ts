@@ -15,6 +15,20 @@ import { killTree, resolveCommand } from "../proc.ts";
 export type Progress = "working" | "error" | "paused";
 export type HostedView = { name: string; cwd: string; started: number; exited?: { at: number; code: number | null }; progress?: Progress };
 
+// What the desk needs of its terminals, whether it holds them itself (HostedTerminals, in
+// tests) or the keeper does (KeptTerminals in keeper.ts, so they outlive the desk).
+export interface Terms {
+  list(): HostedView[];
+  running(name: string): boolean;
+  open(name: string, cwd: string, cols?: number, rows?: number): HostedView | Promise<HostedView>;
+  write(name: string, data: string): void;
+  resize(name: string, cols: number, rows: number): void;
+  watch(name: string, fn: (b: Buffer) => void): () => void;
+  close(name: string): void | Promise<void>;
+  // The desk is stopping. Terminals it holds itself end; the keeper's stay.
+  detach(): void;
+}
+
 // OSC 9;4;<state>[;<percent>], ended by BEL or ST. States: 0 cleared, 1 a percentage,
 // 2 error, 3 busy with no percentage, 4 paused.
 const PROGRESS = /\x1b\]9;4;(\d)(?:;\d*)?(?:\x07|\x1b\\)/g;
@@ -66,7 +80,7 @@ const frame = (type: number, body: Buffer) => {
 
 type Hosted = HostedView & { proc: ChildProcess; chunks: Buffer[]; kept: number; watchers: Set<(b: Buffer) => void>; carry: string };
 
-export class HostedTerminals {
+export class HostedTerminals implements Terms {
   private all = new Map<string, Hosted>();
   private bridge: Bridge;
   private now: () => number;
@@ -169,6 +183,10 @@ export class HostedTerminals {
     }
     this.all.delete(name);
     this.onChange();
+  }
+
+  detach(): void {
+    this.closeAll();
   }
 
   closeAll(): void {

@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AgentFactory desk</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#13242c">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap">
@@ -603,6 +606,21 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
 @media (prefers-reduced-motion: reduce) {
   .strip.fresh { animation: none; }
 }
+/* Quick open (Ctrl+K): every thread by name, Enter goes to its terminal. */
+#qo { position: fixed; inset: 0; z-index: 50; background: rgba(8, 12, 14, .45); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+#qo[hidden] { display: none; }
+header kbd { font: 11px "Cascadia Mono", Consolas, ui-monospace, monospace; border: 1px solid var(--rule); border-radius: 4px; padding: 0 4px; margin-left: 4px; color: var(--ink-3); }
+#qo .qo-box { width: min(620px, calc(100vw - 32px)); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, .45); overflow: hidden; }
+#qo input { width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid var(--rule); background: transparent; color: var(--ink); font: inherit; font-size: 16px; padding: 14px 16px; outline: none; }
+#qo ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow: auto; }
+#qo li { display: grid; grid-template-columns: 9px minmax(90px, auto) 1fr auto; gap: 10px; align-items: baseline; padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--ink-2); }
+#qo li b { color: var(--ink); font-weight: 600; }
+#qo li .qo-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#qo li .qo-w { font-size: 12px; color: var(--ink-3); }
+#qo li i { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink-3)); align-self: center; }
+#qo li[aria-selected="true"] { background: var(--paper-hi); }
+#qo .qo-hint { margin: 0; padding: 8px 16px 10px; font-size: 12px; color: var(--ink-3); border-top: 1px solid var(--rule); }
+#qo .qo-none { padding: 12px 10px; color: var(--ink-3); }
 </style>
 </head>
 <body>
@@ -614,6 +632,7 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
   <span class="spacer"></span>
   <button class="toggle" id="notify" hidden>Notify me when a thread needs me</button>
   <button class="toggle" id="away" hidden aria-pressed="false"></button>
+  <button class="toggle" id="qo-btn" title="Go to a thread's terminal (Ctrl+K)">Go to… <kbd>Ctrl K</kbd></button>
   <button class="start-btn" id="start" aria-pressed="false">New thread</button>
 </header>
 <main class="desk">
@@ -651,6 +670,13 @@ main.desk { grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr); gap:
     <div id="menu" class="dark" role="menu" hidden></div>
   </section>
 </main>
+<div id="qo" class="dark" hidden>
+  <div class="qo-box" role="dialog" aria-label="Go to a thread">
+    <input id="qo-in" type="text" placeholder="Go to a thread: its name, what you asked it, its folder" aria-label="Go to a thread" autocomplete="off" spellcheck="false">
+    <ul id="qo-list" role="listbox" aria-label="Threads"></ul>
+    <p class="qo-hint">Enter: its terminal. Shift+Enter: its story. Esc: back. In a terminal it is Ctrl+Shift+K.</p>
+  </div>
+</div>
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/addon-fit.js"></script>
 <script>
@@ -756,6 +782,16 @@ const select = (name) => {
 const focusName = () => ui.focus || ui.sel;
 // Put a thread's terminal on the right, and the keyboard in it when it's one on the desk.
 const show = (name) => { ui.focus = name; ui.sel = name; ui.view = "live"; ui.page = null; ui.menu = false; keepPicked(); render(); setTimeout(() => { if (XT.name === name) XT.term.focus(); }, 0); };
+// Go to a thread's terminal: the one on the desk with the keyboard in it, or its own
+// Windows Terminal tab brought forward (its session shown here meanwhile).
+const goTo = (name) => {
+  const d = ui.data;
+  const t = d && d.threads.find((x) => x.name === name);
+  const onDesk = !!d && d.hosted.some((x) => x.name === name && !x.exited);
+  if (onDesk || !t) { show(name); return; }
+  select(name);
+  if (t.state !== "closed") jump(name);
+};
 // One of the desk's lists on the right; `repo` narrows what was learned to one repo.
 const openPage = (page, repo) => { ui.page = page; ui.pageRepo = repo || null; ui.menu = false; keepPicked(); render(); document.getElementById("info").scrollTop = 0; };
 const closePage = () => { ui.page = null; ui.pageRepo = null; keepPicked(); render(); };
@@ -1085,6 +1121,11 @@ function attachTerm(name) {
   term.open(el);
   XT = { name, term, fit, ctrl: new AbortController(), size: "", queue: "", flushing: false };
   term.onData((data) => typeIn(XT, data));
+  // Ctrl+K belongs to the shell in a terminal; Ctrl+Shift+K leaves it for quick open.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type === "keydown" && e.ctrlKey && e.shiftKey && (e.key === "K" || e.key === "k")) { quickOpen(); return false; }
+    return true;
+  });
   fitTerm();
   stream(XT);
 }
@@ -1099,6 +1140,9 @@ async function stream(x) {
       x.term.write(value);
     }
   } catch { /* switched to another terminal, or the desk stopped */ }
+  // The desk stopped mid-stream. The terminal lives on in the keeper, so when the desk is
+  // back the page reloads (its token is new) and draws it again from what was kept.
+  if (!x.ctrl.signal.aborted && XT === x) x.term.write("\r\n\x1b[2m[the desk stopped; this terminal keeps running and comes back with it]\x1b[0m\r\n");
 }
 function detachTerm() {
   if (!XT.name) return;
@@ -2224,6 +2268,71 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("compositionstart", () => { ui.composing = true; });
 document.addEventListener("compositionend", () => { ui.composing = false; setTimeout(() => { if (ui.pending) render(); }, 0); });
 
+// Quick open: every thread, the ones waiting on you first, narrowed as you type. Enter goes
+// to its terminal, Shift+Enter to its story.
+const QO = { items: [], at: 0, back: null };
+const GROUP_ORDER = { "needs you": 0, "your turn": 1, working: 2 };
+const GROUP_COLOR = { "needs you": "var(--approval, #e0a84a)", "your turn": "var(--good)", working: "var(--action)" };
+function qoItems(q) {
+  const d = ui.data;
+  if (!d) return [];
+  const all = [
+    ...d.threads.map((t) => ({ name: t.name, title: t.title || "", where: t.cwd || "", group: t.thread, since: t.since || 0 })),
+    ...onlyHosted(d).map((x) => ({ name: x.name, title: "a terminal on the desk", where: x.cwd, group: "working", since: x.started })),
+  ];
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  return all
+    .filter((i) => words.every((w) => `${i.name} ${i.title} ${i.where}`.toLowerCase().includes(w)))
+    .sort((a, b) => (GROUP_ORDER[a.group] ?? 3) - (GROUP_ORDER[b.group] ?? 3) || (a.name.toLowerCase().startsWith(words[0] || "") ? 0 : 1) - (b.name.toLowerCase().startsWith(words[0] || "") ? 0 : 1) || a.since - b.since);
+}
+function qoDraw() {
+  const list = document.getElementById("qo-list");
+  QO.items = qoItems(document.getElementById("qo-in").value);
+  QO.at = Math.max(0, Math.min(QO.at, QO.items.length - 1));
+  if (!QO.items.length) { list.replaceChildren(h("li", { class: "qo-none" }, "No thread matches")); return; }
+  list.replaceChildren(...QO.items.map((i, k) => h("li", { role: "option", "aria-selected": String(k === QO.at), onmousemove: () => { if (QO.at !== k) { QO.at = k; qoDraw(); } }, onclick: (e) => qoGo(k, e.shiftKey) },
+    h("i", { style: `--c:${GROUP_COLOR[i.group] || "var(--ink-3)"}` }), h("b", null, i.name), h("span", { class: "qo-t" }, i.title), h("span", { class: "qo-w" }, i.group))));
+  list.children[QO.at]?.scrollIntoView({ block: "nearest" });
+}
+function quickOpen() {
+  const box = document.getElementById("qo");
+  if (!box.hidden) return;
+  QO.back = document.activeElement;
+  QO.at = 0;
+  box.hidden = false;
+  const input = document.getElementById("qo-in");
+  input.value = "";
+  qoDraw();
+  input.focus();
+}
+function qoClose(restore = true) {
+  document.getElementById("qo").hidden = true;
+  if (restore && QO.back && QO.back.focus) QO.back.focus();
+}
+function qoGo(k, story) {
+  const i = QO.items[k];
+  if (!i) return;
+  qoClose(false);
+  if (story) { select(i.name); switchView("story", ui.data.threads.find((t) => t.name === i.name)); } else goTo(i.name);
+}
+document.getElementById("qo-in").addEventListener("input", () => { QO.at = 0; qoDraw(); });
+document.getElementById("qo-in").addEventListener("keydown", (e) => {
+  if (e.isComposing) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { QO.at += e.key === "ArrowDown" ? 1 : -1; if (QO.at < 0) QO.at = QO.items.length - 1; if (QO.at >= QO.items.length) QO.at = 0; qoDraw(); e.preventDefault(); }
+  else if (e.key === "Enter") { qoGo(QO.at, e.shiftKey); e.preventDefault(); }
+  else if (e.key === "Escape") { qoClose(); e.preventDefault(); }
+});
+document.getElementById("qo").addEventListener("mousedown", (e) => { if (e.target.id === "qo") qoClose(); });
+document.getElementById("qo-btn").addEventListener("click", () => quickOpen());
+// Ctrl+K from anywhere but a terminal (where it's the shell's), Ctrl+Shift+K from anywhere.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || (e.key !== "k" && e.key !== "K")) return;
+  const inTerm = e.target.closest && e.target.closest("#xterm");
+  if (inTerm && !e.shiftKey) return;
+  quickOpen();
+  e.preventDefault();
+}, true);
+
 // A thread that starts needing you while you're elsewhere: a system notification, if
 // you allowed them.
 const told = new Set();
@@ -2234,8 +2343,12 @@ function announce(d) {
     const id = `${t.session}:${t.since}`;
     if (told.has(id)) continue;
     told.add(id);
-    if (!first && document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted")
-      new Notification(`${t.name} ${t.thread === "needs you" ? "needs you" : "finished: your turn"}`, { body: `${t.title}\n${t.why || ""}`, tag: id });
+    // hasFocus rather than visibility: the desk's window can sit visible behind another one.
+    if (!first && !document.hasFocus() && "Notification" in window && Notification.permission === "granted") {
+      const n = new Notification(`${t.name} ${t.thread === "needs you" ? "needs you" : "finished: your turn"}`, { body: `${t.title}\n${t.why || ""}`, tag: id, icon: "/icon.svg" });
+      // Clicking it goes straight to that thread's terminal.
+      n.onclick = () => { window.focus(); goTo(t.name); n.close(); };
+    }
   }
   first = false;
 }
@@ -2254,11 +2367,15 @@ async function loop() {
       const v = await api(`/api/state?since=${encodeURIComponent(ui.version)}&wait=${ui.version ? 25000 : 0}`);
       ui.version = v.version;
       ui.data = v;
+      ui.wasOnline = true;
       off.hidden = true;
       render();
       busy(0);
     } catch (e) {
-      off.textContent = /out of date/.test(e.message) ? "This page is out of date. Reload it." : "Can't reach the desk. Is npm run desk still running?";
+      // A desk that started again has a new token: reload to pick it up. Its terminals
+      // stayed with the keeper, so they're drawn again as they are.
+      if (/out of date/.test(e.message) && ui.wasOnline) { off.textContent = "The desk started again: reloading"; off.hidden = false; setTimeout(() => location.reload(), 300); return; }
+      off.textContent = /out of date/.test(e.message) ? "This page is out of date. Reload it." : "Can't reach the desk. It comes back by itself when the desk runs again (npm run desk -- app).";
       off.hidden = false;
       await new Promise((r) => setTimeout(r, 3000));
     }

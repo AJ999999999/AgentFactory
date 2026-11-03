@@ -26,7 +26,9 @@ import { claim, recent as recentNotes, send as sendNote, YOU } from "./notes.ts"
 import { follow, sessionFile, sessionTail, type Summary } from "./session.ts";
 import { slackReplies, slackSentIds, slackTick } from "./slack.ts";
 import { type About, sentIds, teamsTick } from "./teams.ts";
-import { type Bridge, HostedTerminals, type HostedView } from "./terminal.ts";
+import { ICON_SVG, MANIFEST } from "./app.ts";
+import { KeptTerminals } from "./keeper.ts";
+import { type Bridge, HostedTerminals, type HostedView, type Terms } from "./terminal.ts";
 import { threads } from "./threads.ts";
 
 const PAGE = path.join(import.meta.dirname, "page.html");
@@ -57,8 +59,12 @@ export type DeskOptions = {
   jump?: (title: string) => Promise<boolean>;
   // Open a new terminal window with Copilot in a folder; tests replace it.
   launch?: (folder: string, name: string) => Promise<boolean>;
-  // How a terminal on the desk starts; tests replace it.
+  // How a terminal on the desk starts; tests replace it. With a bridge the desk holds its
+  // terminals itself and they end with it.
   bridge?: Bridge;
+  // Where the terminals live. By default the keeper (keeper.ts), started when it isn't
+  // running, so terminals outlive the desk; tests pass their own.
+  terms?: Terms;
   analyst?: Analyst;
   learnEveryMs?: number;
   // How often asks go to Teams and taps come back; tests make it quick.
@@ -173,7 +179,26 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
   const jump = opts.jump ?? jumpWindows;
   const launch = opts.launch ?? launchWindows;
   const log = opts.log ?? (() => {});
-  const terms = new HostedTerminals({ ...(opts.bridge ? { bridge: opts.bridge } : {}) });
+  // Until a terminal is wanted, the desk only joins a keeper that's already running (the
+  // terminals left from the last desk); the first terminal you open starts one.
+  const none: Terms = { list: () => [], running: () => false, open: () => { throw new Error("no keeper"); }, write: (n) => { throw new Error(`${n} isn't open on the desk`); }, resize: (n) => { throw new Error(`${n} isn't open on the desk`); }, watch: (n) => { throw new Error(`no terminal named ${n} on the desk`); }, close: () => {}, detach: () => {} };
+  let terms: Terms = opts.bridge ? new HostedTerminals({ bridge: opts.bridge }) : opts.terms ?? (await KeptTerminals.connect(home, { start: false }).catch(() => none));
+  const ready = async (): Promise<Terms> => {
+    if (terms === none || (terms instanceof KeptTerminals && !terms.connected)) terms = await KeptTerminals.connect(home);
+    return terms;
+  };
+  // A keeper that went away (killed, or crashed) while it held terminals is started again.
+  // Its terminals went with it; the page shows them gone.
+  let reconnecting = false;
+  const keeperBeat = setInterval(() => {
+    if (!(terms instanceof KeptTerminals) || terms.connected || reconnecting || terms === opts.terms) return;
+    reconnecting = true;
+    KeptTerminals.connect(home, { start: false })
+      .then((k) => { terms = k; log("joined the terminal keeper again"); })
+      .catch(() => { terms = none; })
+      .finally(() => { reconnecting = false; });
+  }, 2000);
+  keeperBeat.unref();
   const token = randomBytes(24).toString("hex");
   let port = 0;
   const hosts = () => new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -184,7 +209,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; manifest-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     });
     res.end(body);
   };
@@ -195,6 +220,9 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
       if (!hosts().has(req.headers.host ?? "")) return send(res, 403, "wrong host", "text/plain");
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
       if (req.method === "GET" && url.pathname === "/") return send(res, 200, page().replace("__TOKEN__", token), "text/html; charset=utf-8");
+      // The window's manifest and icon, so Edge can install the desk as an app.
+      if (req.method === "GET" && url.pathname === "/manifest.webmanifest") return send(res, 200, MANIFEST, "application/manifest+json");
+      if (req.method === "GET" && url.pathname === "/icon.svg") return send(res, 200, ICON_SVG, "image/svg+xml");
       const v = req.method === "GET" ? VENDOR[url.pathname] : undefined;
       if (v) return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, "vendor", v[0]), "utf8"), v[1]);
       if (!url.pathname.startsWith("/api/")) return send(res, 404, "not found", "text/plain");
@@ -371,8 +399,9 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
             if (!(await launch(folder, name))) throw new BadRequest(`couldn't open a window: in a terminal, cd to ${folder} and run scripts\\windows\\copilot-here.ps1 -Name ${name}`);
           } else {
             const n = (v: unknown, d: number) => (typeof v === "number" && v > 0 ? v : d);
-            terms.close(name); // one that ended under this name
-            terms.open(name, folder, n(body.cols, 120), n(body.rows, 32));
+            const t = await ready();
+            await t.close(name); // one that ended under this name
+            await t.open(name, folder, n(body.cols, 120), n(body.rows, 32));
           }
           log(`opened ${name} in ${folder}${body.where === "window" ? " (its own window)" : ""}`);
           break;
@@ -396,7 +425,7 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         }
         case "/api/term/close": {
           const name = str(body.name, "name", 40);
-          terms.close(name);
+          await terms.close(name);
           log(`closed ${name}'s terminal on the desk`);
           break;
         }
@@ -551,7 +580,9 @@ export async function startDesk(opts: DeskOptions = {}): Promise<Desk> {
         clearInterval(mailTimer);
         clearTimeout(first);
         closed = true;
-        terms.closeAll();
+        clearInterval(keeperBeat);
+        // Terminals the keeper holds stay running for the next desk.
+        terms.detach();
         fs.rmSync(pageFile(home), { force: true });
         server.closeAllConnections?.();
         server.close(() => r());

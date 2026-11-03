@@ -1,0 +1,80 @@
+# project.en.yaml 的中文版：同一段故事、同样的时间线。哪些是真的、哪些是示意，见英文版顶部的说明。
+template: pipeline
+template_version: 1
+name: agentfactory-zh
+fields:
+  title: AGENT FACTORY
+  legend: {main: "harness：调度", workers: "席位：CLI 回合", router: "路由：按模型", advisor: "合伙人：一个人"}
+  participants:
+    - {name: harness, role: main}
+    - {name: router, role: router}
+    - {name: 合伙人, role: advisor}
+    - {name: builder, role: workers}
+    - {name: reviewer, role: workers}
+    - {name: 商标律师, role: workers}
+  advisor:
+    name: 合伙人
+    state_idle: "合伙人：不在"
+    state_active: "合伙人：拍板中"
+    moments: [定目标范围, 连续失败三次, 关闭目标]
+    about: [只读一页, 状态简报，, 只答该自己, 做的决定]
+    advice_label: "最近的回答："
+    calls_label: 回答次数
+    tokens_label: 已读简报
+    tokens_start: 0
+    quiet: [不当闹钟, 工作照常推进]
+    rule: [关目标、转向, 和花钱，, harness 从不, 自己做主]
+  main: {title: AgentFactory harness, subtitle: 先做风险最大的, effort_label: 预算, effort: "12/250", note: "状态：git 事件日志"}
+  router:
+    title: TurnRouter
+    counter_label: 回合
+    counter_start: 0
+    questions: [哪个席位, 哪个 CLI, 该谁决定]
+    start_values: [1.0, 1.0, 1.0]
+    sharp_word: 按规则
+    split_word: 问人
+    sharp_footer: 规则 → 直接跑回合
+    split_footer: 问人 → 合伙人
+    sharp_route: 规则 → 回合
+    split_route: 问人 → 合伙人
+  delegate: {label: 每席位一回合, effort: 各自 git 工作树, effort_label: 租约, effort_short: 开}
+  workers:
+    - {name: builder, model: Copilot CLI, task: 改工作树}
+    - {name: reviewer, model: Claude Code opus, task: 评审产出}
+    - {name: 商标律师, model: 真人, task: 人工作答}
+  worker_states: {idle: 空闲, running: 运行中, waiting: 等待中, passed: 已实测, done: 完成}
+  review: {title: 检查+合并, effort: 校验, subtitle: "先检查，再 git 提交"}
+  log_title: 项目日志
+  clock_start: "09:00:00"
+  prompt: {path: ~/engine $, command: npm run harness -- tick}
+  status:
+    effort_key: 回合
+    effort_value: 12/250
+    workers_key: 席位
+    workers_value: 3/3
+    advisor_key: 合伙人
+    advisor_idle: 不在
+    advisor_active: 拍板中
+    router_key: 路由
+    counter_unit: 回合
+
+events:
+  - {t: 0.0, type: advise, until: 2.8, moment: 0, who: 合伙人, lines: [收窄范围：, 只做风格化渲染], tokens: 1,
+     log: "范围提问：合伙人读简报", log_end: "回答：收窄，来自合伙人"}
+  - {t: 2.9, type: log, who: harness, text: "最大风险：渲染能否 60 fps", route: plan}
+  - {t: 3.3, type: decision, who: router, text: 哪个席位 → builder, row: 0, p: 1.0, route: dispatch, card: 0, forks: 1}
+  - {t: 3.7, type: decision, who: router, text: 哪个 CLI → claude:opus, row: 1, p: 1.0, route: dispatch, card: 1, forks: 2}
+  - {t: 4.1, type: decision, who: router, text: 哪个席位 → 真人, row: 0, p: 1.0, route: dispatch, card: 2, forks: 2}
+  - {t: 5.0, type: log, who: 商标律师, text: "名称核查：没问题", route: handback, card: 2, result: done}
+  - {t: 5.4, type: log, who: reviewer, text: "评审：接受这个原型", route: handback, card: 1, result: done}
+  - {t: 5.6, type: log, who: builder, text: "第 3 次检查失败：踩了商标红线"}
+  - {t: 5.7, type: decision, who: router, text: "该谁决定 → 合伙人", row: 2, p: 0.0, route: escalate, forks: 3}
+  - {t: 6.0, type: advise, until: 8.6, moment: 1, who: 合伙人, lines: [去掉品牌名，, 然后重试], tokens: 3, hold_card: 0,
+     log: "连续失败 3 次：问合伙人", log_end: "回答：重试，来自合伙人"}
+  - {t: 8.8, type: log, who: harness, text: "去掉品牌名，重试 builder", route: plan}
+  - {t: 9.2, type: decision, who: router, text: 哪个 CLI → copilot, row: 1, p: 1.0, route: dispatch, card: 0, forks: 4}
+  - {t: 10.4, type: log, who: builder, text: "meshlet：百万实例 60 fps", route: handback, card: 0, result: passed}
+  - {t: 11.0, type: advise, until: 13.6, moment: 2, who: 合伙人, lines: [60 fps 成立，, 关闭这个目标], tokens: 4,
+     log: "关目标？只有合伙人能定", log_end: "回答：关闭，来自合伙人"}
+  - {t: 13.6, type: review, until: 15.0}
+  - {t: 14.0, type: log, who: harness, text: "事件已提交到 git"}

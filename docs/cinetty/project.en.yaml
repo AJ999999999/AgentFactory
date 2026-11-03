@@ -1,0 +1,90 @@
+# AgentFactory as a cinetty "pipeline" animation: one stretch of an engagement, from the
+# partner's scope answer to the partner closing the goal. Play it with cinetty (docs/demo-animation.md).
+#
+# What is real: the parts and the rules. The harness picks the riskiest open work, TurnRouter sends
+# each seat to its CLI by the model's <cli>: prefix (judges run on Claude, a different model from
+# the workers), people take the work only a person can do, a red line fails the check, three failed
+# turns ask the partner, and only the partner closes a goal. The story follows the simulated
+# "Unreal 6 engine" case in `npm run demo:harness`.
+# What is illustrative: the clock, the turn counter and the "packet read" counter. The router bars
+# are 1.00 when a rule decides and 0.00 when the call is not the harness's to make; there are no
+# probabilities in the harness.
+template: pipeline
+template_version: 1
+name: agentfactory-en
+fields:
+  title: AGENT FACTORY
+  legend: {main: "harness: tick", workers: "seats: cli turns", router: "router: by model", advisor: "partner: one human"}
+  participants:
+    - {name: harness, role: main}
+    - {name: router, role: router}
+    - {name: partner, role: advisor}
+    - {name: builder, role: workers}
+    - {name: reviewer, role: workers}
+    - {name: ip-lawyer, role: workers}
+  advisor:
+    name: THE PARTNER
+    state_idle: "partner: away"
+    state_active: "partner: deciding"
+    moments: [scope a goal, fails three times, close the goal]
+    about: [reads a short, status packet, answers only, its own calls]
+    advice_label: "last answer:"
+    calls_label: answers
+    tokens_label: packet read
+    tokens_start: 0
+    quiet: [never the clock, work keeps moving]
+    rule: [never closes, "pivots, or pays", "by itself: the", harness asks.]
+  main: {title: AgentFactory harness, subtitle: riskiest work first, effort_label: budget, effort: "12/250", note: "state: event log in git"}
+  router:
+    title: TurnRouter
+    counter_label: turns
+    counter_start: 0
+    questions: [which seat, which CLI, partner call]
+    start_values: [1.0, 1.0, 1.0]
+    sharp_word: by rule
+    split_word: ask
+    sharp_footer: rule → runs the turn
+    split_footer: ask → partner
+    sharp_route: rule → turn
+    split_route: ask → partner
+  delegate: {label: one turn a seat, effort: own git worktree, effort_label: lease, effort_short: "on"}
+  workers:
+    - {name: builder, model: Copilot CLI, task: edits worktree}
+    - {name: reviewer, model: Claude Code opus, task: judges the work}
+    - {name: ip-lawyer, model: a person, task: answers by hand}
+  worker_states: {idle: idle, running: running, waiting: waiting, passed: measured, done: done}
+  review: {title: check+merge, effort: validate, subtitle: "checked, then a git commit"}
+  log_title: engagement log
+  clock_start: "09:00:00"
+  prompt: {path: ~/engine $, command: npm run harness -- tick}
+  status:
+    effort_key: turns
+    effort_value: 12 of 250
+    workers_key: seats
+    workers_value: 3/3
+    advisor_key: partner
+    advisor_idle: away
+    advisor_active: deciding
+    router_key: router
+    counter_unit: turns
+
+events:
+  - {t: 0.0, type: advise, until: 2.8, moment: 0, who: partner, lines: ["narrow scope to", a stylized look], tokens: 1,
+     log: "scope ask: partner reads the packet", log_end: "answer: narrow, by partner"}
+  - {t: 2.9, type: log, who: harness, text: "riskiest: renderer at 60 fps", route: plan}
+  - {t: 3.3, type: decision, who: router, text: which seat    → builder, row: 0, p: 1.0, route: dispatch, card: 0, forks: 1}
+  - {t: 3.7, type: decision, who: router, text: which CLI     → claude:opus, row: 1, p: 1.0, route: dispatch, card: 1, forks: 2}
+  - {t: 4.1, type: decision, who: router, text: which seat    → a person, row: 0, p: 1.0, route: dispatch, card: 2, forks: 2}
+  - {t: 5.0, type: log, who: ip-lawyer, text: "name check: clear", route: handback, card: 2, result: done}
+  - {t: 5.4, type: log, who: reviewer, text: "review: accepts the spike", route: handback, card: 1, result: done}
+  - {t: 5.6, type: log, who: builder, text: "3rd failed check: red line"}
+  - {t: 5.7, type: decision, who: router, text: "partner call  → yes, ask", row: 2, p: 0.0, route: escalate, forks: 3}
+  - {t: 6.0, type: advise, until: 8.6, moment: 1, who: partner, lines: ["drop the brand,", then retry], tokens: 3, hold_card: 0,
+     log: "3 failed turns: partner asked", log_end: "answer: retry, by partner"}
+  - {t: 8.8, type: log, who: harness, text: "retry builder, no brand", route: plan}
+  - {t: 9.2, type: decision, who: router, text: which CLI     → copilot, row: 1, p: 1.0, route: dispatch, card: 0, forks: 4}
+  - {t: 10.4, type: log, who: builder, text: "meshlets: 60 fps, 1M instances", route: handback, card: 0, result: passed}
+  - {t: 11.0, type: advise, until: 13.6, moment: 2, who: partner, lines: ["60 fps holds,", close the goal], tokens: 4,
+     log: "close the goal? partner's call", log_end: "answer: close, by partner"}
+  - {t: 13.6, type: review, until: 15.0}
+  - {t: 14.0, type: log, who: harness, text: "events committed to git"}

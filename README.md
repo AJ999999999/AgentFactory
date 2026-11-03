@@ -135,6 +135,7 @@ Each guide is its own file, so a change to one feature touches only its own page
 - [The panel](docs/panel.md): the partner's page over every engagement
 - [From your own Copilot or Claude Code session](docs/partner-tools.md): the partner's MCP tools
 - [Memory about the people you serve](docs/memory.md): typed memory, what it may be used for, and how it expires
+- [A terminal animation of one engagement](docs/demo-animation.md): a 15-second cinetty clip of the harness, the router, the seats and the partner
 - [What testing found](docs/testing-findings.md)
 - [Not real yet](docs/not-real-yet.md)
 - [Harness design](docs/harness.md), against the six cases

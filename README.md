@@ -2,9 +2,40 @@
 
 A git-native system for running a firm of AI agents with one human partner. It has a shared context layer; a challenge process that takes a hard problem to a tested MVP; a long-running harness that keeps engagements moving for months without a human acting as the clock; an Observator → Solver → Evaluator self-evolution loop; decision rights that route each decision to its owner (client, partner or lead); a role factory that staffs teams from a tested library; and an escalation policy that only brings key decisions to a human. The delivery loop is modeled on the RulTriX RSCL/Raee concept and built on plain git. The full design is in the "Agent firm design" doc.
 
-![How one turn moves through the harness: the loop wakes, rules ask you, you answer, the router sends the seat to its CLI, the turn runs in its worktree, the harness checks and merges it, usage limits wait, and Stop discards a turn](docs/architecture.gif)
+<p align="center"><img src="docs/architecture.svg" alt="How AgentFactory fits together: the foundation takes a problem to a tested MVP and opens an engagement; the harness loops wake, rules, pick the work, claim and lease, a router that sends the seat to its CLI (Copilot, Claude Code, Codex, pi or omp), a turn in its own worktree, validate and merge, event log in git; questions go to the partner, who answers from the panel, their own session or the CLI and can watch and stop turns; memory about the partner feeds each turn." width="100%"></p>
 
-The same diagram plays in a browser from `docs/architecture.html`.
+<details>
+<summary>The same picture as text (Mermaid)</summary>
+
+```mermaid
+flowchart LR
+  subgraph F[Foundation]
+    direction LR
+    fr[Frame] --> dv[Diverge, sealed] --> cr[Critique] --> sc[Score] --> cv[Converge] --> mvp[MVP plan]
+  end
+  subgraph H[Harness: one wake]
+    direction LR
+    wake[Wake from git] --> rules[Rules] --> pick[Pick the riskiest work] --> claim[Claim + lease]
+    claim --> router{Router: the seat's model}
+    router --> turn[Turn in its own worktree<br/>Copilot, Claude Code, Codex, pi or omp]
+    turn --> val[Validate + merge] --> log[(Event log in git)]
+    log -- "project()" --> wake
+    turn -. usage limit: that vendor waits .-> wake
+  end
+  world[Jobs, metric sources, experts] -- graded evidence --> log
+  mvp -- opens the engagement --> wake
+  rules -- a question only you can decide --> you
+  subgraph P[The partner]
+    you((Partner)) --- panel[Local panel]
+    you --- mcp[Own session: MCP tools, or the CLI]
+  end
+  turn -. live log, Stop .-> panel
+  panel -- your answer --> log
+  mcp -- your answer --> log
+  mem[Memory about you] -- defaults, never permission --> turn
+```
+
+</details>
 
 This repo is the MVP. Zero dependencies. Node ≥ 22.18 (built-in TypeScript stripping, `node:sqlite`, `node:test`) and git ≥ 2.32.
 
@@ -65,6 +96,10 @@ State lives in git under `.af/<challenge>/`, so each command picks up where the 
 ## Long-running harness: from MVP to months of work
 
 After the challenge decides, the harness keeps the engagement moving (`src/harness/`, design and findings in [docs/harness.md](docs/harness.md)). Each wake starts from git, does at most a few bounded turns, checks them independently, commits, and says when to wake next. A person is asked only for decisions that are theirs, for money, and for work only a person can do.
+
+![How one turn moves through the harness: the loop wakes, rules ask you, you answer, the router sends the seat to its CLI, the turn runs in its worktree, the harness checks and merges it, usage limits wait, and Stop discards a turn](docs/architecture.gif)
+
+That walk-through of one turn also plays in a browser from `docs/architecture.html`.
 
 What it rests on:
 - **Belief is computed from evidence, never claimed.** Agents can record opinions and sourced reports; measurements come from jobs, behavior from metric sources, expert judgment from people listed as experts. Each kind of risk accepts its own grades (behavior for demand, experts for safety).

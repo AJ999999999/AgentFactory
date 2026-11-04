@@ -29,7 +29,10 @@ export default (h) => {
     }],
     ["total", async () => covered((a) => a[0] === "total")],
     ["report", async () => covered((a) => a[0] === "report")],
-    ["list with --page and --size", async () => covered((a) => a[0] === "list" && a.includes("--page") && a.includes("--size"))],
+    // The todo asks to cover both options, not to show them on one line (docs/next/010: every
+    // arm missed the one-line version in most runs).
+    ["list with --page", async () => covered((a) => a[0] === "list" && a.includes("--page"))],
+    ["list with --size", async () => covered((a) => a[0] === "list" && a.includes("--size"))],
     ["shows real output", async () => h.ok(h.exists("docs/USAGE.md") && h.read("docs/USAGE.md").includes("1657.42"), "the total's output isn't shown")],
   ];
 };

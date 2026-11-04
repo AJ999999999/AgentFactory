@@ -12,11 +12,12 @@
 //      model turns: claim, run in a worktree, validate, write back, release
 //   7. says when to wake next. Quiet ticks cost nothing and commit nothing.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import { standingKey } from "./standing.ts";
-import { GitHubShip } from "./ship.ts";
+import { GitHubShip, upstream } from "./ship.ts";
 import { configProblems, type EventsDef, eventSources, everyMinutes, receiveEvent } from "./events.ts";
 import * as path from "node:path";
-import type { Git } from "../git.ts";
+import { Git } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
 import { basisRef, currentBasis, readLockfile, writeBasis, writeLockfile, writeTask } from "../context.ts";
 import type { LogFn } from "../util.ts";
@@ -346,9 +347,14 @@ export class Harness {
     // source that fails (Jira down, a token expired) is tried again next time and doesn't
     // hold up the rest of the wake.
     for (const { def, source: src } of eventSources(s.engagement?.events?.sources ?? [], this.world.events)) {
+      // Two times: the last good fetch, where the next one's window starts, so nothing is
+      // missed; and the last try, which sets the cadence, so a source that's down is tried
+      // again on its next turn instead of waking the loop every second.
       const key = `events/${def.id}`;
       const last = pulse.monitors[key]?.checkedAt;
-      if (last !== undefined && last + everyMinutes(def) * MIN > now) continue;
+      const tried = pulse.monitors[`events-try/${def.id}`]?.checkedAt ?? last;
+      if (tried !== undefined && tried + everyMinutes(def) * MIN > now) continue;
+      pulseOut.monitors[`events-try/${def.id}`] = { checkedAt: now };
       try {
         const got = await src.fetch(last ?? now - (def.lookbackMinutes ?? 1440) * MIN, now);
         pulseOut.monitors[key] = { checkedAt: now };
@@ -356,6 +362,36 @@ export class Harness {
       } catch (e) {
         this.log("source_error", { source: def.id, error: (e as Error).message });
       }
+    }
+
+    // 2c. shipping goals' copies of their repositories take in what changed on the base,
+    // when it applies cleanly; a change that doesn't is noted and tried again with the next.
+    for (const g of s.goals.values()) {
+      const d = g.def.ship;
+      if (g.status !== "active" || !d || d.syncMinutes === 0) continue;
+      const key = `ship/${g.id}`;
+      const last = pulse.monitors[key]?.checkedAt;
+      if (last !== undefined && last + (d.syncMinutes ?? 60) * MIN > now) continue;
+      // Noted as looked at whatever comes of it, so the wake-up timer moves on to the next time.
+      pulseOut.monitors[key] = { checkedAt: now };
+      if (!(this.ship instanceof GitHubShip)) continue;
+      const up = await upstream(this.ship, d, s.shipSynced.get(g.id));
+      if ("error" in up) {
+        this.log("ship_sync_error", { goal: g.id, error: up.error });
+        continue;
+      }
+      const synced = s.shipSynced.get(g.id);
+      if (synced === up.sha) continue;
+      if (!synced) { add({ id: eid("synced", g.id, up.sha), at: now, by: "harness", type: "ship_synced", goal: g.id, sha: up.sha, applied: true, note: `baseline: ${d.dir} taken to match ${d.repo}@${up.sha.slice(0, 7)}` }); continue; }
+      const dir = d.dir.replace(/\/+$/, "");
+      const file = this.writePatch(up.patch);
+      const fits = await this.control.tryAsync(["apply", "--check", `--directory=${dir}`, file]);
+      if (!fits.ok) {
+        add({ id: eid("synced", g.id, up.sha), at: now, by: "harness", type: "ship_synced", goal: g.id, sha: up.sha, applied: false, note: `${d.repo}@${up.sha.slice(0, 7)} doesn't apply to ${dir}: ${fits.err.split("\n")[0].slice(0, 200)}` });
+        continue;
+      }
+      add({ id: eid("synced", g.id, up.sha), at: now, by: "harness", type: "ship_synced", goal: g.id, sha: up.sha, applied: true });
+      basisWrites.push((repo) => new Git(repo).run(["apply", `--directory=${dir}`, file]));
     }
 
     // 3. polls
@@ -489,9 +525,17 @@ export class Harness {
     return out;
   }
 
+  // A patch from upstream, as a file git can apply (it's small text; the temp folder is fine).
+  private writePatch(patch: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-sync-"));
+    const file = path.join(dir, "upstream.patch");
+    fs.writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    return file;
+  }
+
   // Shipping jobs go to GitHub (ship.ts); every other job to the world's provider.
   private jobsFor(t: TodoState): JobProvider | undefined {
-    return t.job?.spec?.ship ? this.ship : this.world.jobs;
+    return t.job?.spec?.ship || t.job?.spec?.watch ? this.ship : this.world.jobs;
   }
 
   private async pollJob(s: State, t: TodoState, now: number, add: (e: HEvent) => void): Promise<number | undefined> {
@@ -500,6 +544,27 @@ export class Harness {
     const r = await jobs.poll(t.handle!, now);
     if (r.status === "running") return r.eta;
     add({ id: eid("fin", t.id, t.failures, t.handle ?? ""), at: now, by: "harness", type: "job_finished", todo: t.id, status: r.status, metrics: r.metrics, gpuHours: r.gpuHours });
+    const watched = t.job?.spec?.watch as string | undefined;
+    if (watched) {
+      // Merged: noted, and the goal's production check run once. Closed without merging is a
+      // person's decision: noted, and the work stays as it is.
+      if (r.note) add({ id: eid("merge-note", t.id, r.status), at: now, by: "harness", type: "note", goal: t.goal, text: r.note.slice(0, this.policy.proposals.noteChars) });
+      if (r.status === "failed") {
+        add({ id: eid("merge-end", t.id), at: now, by: "harness", type: "todo_superseded", todo: t.id, reason: r.note ?? "closed without merging" });
+        return;
+      }
+      const target = t.job?.spec?.check as string | undefined;
+      if (target && this.world.probe) {
+        try {
+          const p = await this.world.probe.check(target, now);
+          add({ id: eid("prod-check", t.id), at: now, by: "harness", type: "note", goal: t.goal, text: `after the merge, ${target}: ${p.summary}`.slice(0, this.policy.proposals.noteChars) });
+        } catch (e) {
+          add({ id: eid("prod-check", t.id), at: now, by: "harness", type: "note", goal: t.goal, text: `after the merge, ${target} couldn't be checked: ${(e as Error).message}`.slice(0, this.policy.proposals.noteChars) });
+        }
+      }
+      add({ id: eid("done", t.id), at: now, by: "harness", type: "todo_done", todo: t.id });
+      return;
+    }
     const shipped = t.job?.spec?.ship as string | undefined;
     if (shipped) {
       // What GitHub said, where you can see it; a failure goes back to the work it shipped,

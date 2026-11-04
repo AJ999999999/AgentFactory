@@ -225,6 +225,12 @@ export async function startPanel(opts: PanelOptions): Promise<Panel> {
       if (!sameToken(req.headers["x-panel-token"] as string | undefined, token)) return json(res, 403, { error: "this page is out of date: reload it" });
 
       if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, await ws.snapshot());
+      if (req.method === "GET" && url.pathname === "/api/trace") {
+        // How a question (or anything else in the log) came about: harness trace, for the card.
+        const { buildGraph, traceTree } = await import("../harness/trace.ts");
+        const t = traceTree(buildGraph(await ws.harness(str(url.searchParams.get("engagement") ?? "", "engagement", 100)).events()), str(url.searchParams.get("id") ?? "", "id", 300), 3);
+        return t ? json(res, 200, t) : json(res, 404, { error: "nothing in the log by that id" });
+      }
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
       if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "send JSON" });
       const body = await readBody(req);

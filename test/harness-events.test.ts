@@ -136,3 +136,73 @@ test("through the real harness: each tick fetches on the source's cadence and th
   assert.deepEqual(agent.calls.map((c) => c.lane), ["fix"]);
   assert.ok(fetched.length >= 5 && fetched.length <= 8, `about once an hour over six hours, not every wake (${fetched.length})`);
 });
+
+test("Atlassian Cloud is read through its v3 search with your email and API token, page by page through its tokens", async () => {
+  const calls: Array<{ url: URL; auth: string }> = [];
+  const fake = async (u: string, init: { headers: Record<string, string> }) => {
+    const url = new URL(u);
+    calls.push({ url, auth: init.headers.Authorization });
+    const first = !url.searchParams.get("nextPageToken");
+    const body = first
+      ? { issues: [{ key: "PAY-1", fields: { summary: "One", updated: "2026-11-04T08:00:00.000+0000", issuetype: { name: "Bug" }, description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Off by" }, { type: "text", text: "a cent" }] }] } } }], nextPageToken: "p2", isLast: false }
+      : { issues: [{ key: "PAY-2", fields: { summary: "Two", updated: "2026-11-04T08:01:00.000+0000", issuetype: { name: "Story" } } }], isLast: true };
+    return { ok: true, status: 200, json: async () => body, text: async () => "" };
+  };
+  const def = { id: "jira-cloud", kind: "jira" as const, url: "https://acme.atlassian.net", jql: "project = PAY", tokenEnv: "AF_JIRA_TOKEN", cloud: { email: "me@acme.com" } };
+  const got = await jiraSource(def, { env: { AF_JIRA_TOKEN: "tok" }, fetch: fake }).fetch(T0 - 3_600_000, T0);
+  assert.equal(calls[0].url.pathname, "/rest/api/3/search/jql");
+  assert.equal(calls[0].auth, `Basic ${Buffer.from("me@acme.com:tok").toString("base64")}`);
+  assert.equal(calls[1].url.searchParams.get("nextPageToken"), "p2");
+  assert.deepEqual(got.map((e) => [e.id, e.type]), [["PAY-1", "bug"], ["PAY-2", "story"]]);
+  assert.equal(got[0].text, "Off by a cent", "a Cloud description is a document; only its words are kept");
+  const s = project([engagement, goal()], policy);
+  assert.ok(configProblems(s, { sources: [{ ...def, cloud: { email: "" } }] }).some((p) => /cloud\.email/.test(p)));
+});
+
+test("a feedback rule records each event as evidence on an assumption, at the grade its source has, never higher than stated", () => {
+  const ev: EventsDef = {
+    sources: [{ ...events.sources![0], grade: "stated" }],
+    rules: [{ id: "wants-export", match: { source: "jira-pay", labels: ["wants-export"] }, goal: "G", evidence: { assumption: "W", direction: "supports" } }],
+  };
+  const g: GoalDef = { id: "G", title: "G", objective: "o", owner: "partner", scope: ["work"], assumptions: [{ id: "W", text: "Customers want CSV export", category: "desirability", risk: 3, uncertainty: 3 }], budget: { turns: 100 }, perpetual: true };
+  const s = project([{ ...engagement, engagement: { ...(engagement as { engagement: object }).engagement, events: ev } } as HEvent, { id: "goal-G", at: T0, by: "partner", type: "goal_opened", goal: g, criteriaHash: criteriaHash(g) }], policy);
+  receive(s, [ticket("PAY-9", "Feedback", "2026-11-04T08:00:00.000+0000", { labels: ["wants-export"], url: "https://jira.example.com/browse/PAY-9" })]);
+  const f = [...s.findings.values()][0];
+  assert.deepEqual({ a: f.assumption, d: f.direction, g: f.grade, by: f.author, src: f.source }, { a: "W", d: "supports", g: "stated", by: "event:jira-pay", src: "https://jira.example.com/browse/PAY-9" });
+  assert.equal(todosOf(s).length, 0, "evidence, not work");
+  assert.equal(eventSummary(s)[0].routed, 1);
+  assert.equal(s.goals.get("G")!.status, "active");
+  assert.ok(configProblems(s, { sources: [{ ...events.sources![0], grade: "measured" as never }] }).some((p) => /never measured or behavioral/.test(p)), "a ticket is never a measurement");
+  assert.ok(configProblems(s, { ...ev, rules: [{ ...ev.rules![0], evidence: { assumption: "nope", direction: "supports" } }] }).some((p) => /no assumption nope/.test(p)));
+});
+
+test("a source that's down is tried again on its next turn, not every wake, and the next good fetch reaches back to the last good one", async () => {
+  const calls: Array<{ since: number; ok: boolean }> = [];
+  let down = false;
+  const flaky: EventSource = {
+    id: "jira-pay",
+    async fetch(since) {
+      calls.push({ since, ok: !down });
+      if (down) throw new Error("Jira answered 503");
+      return [];
+    },
+  };
+  const def: EngagementDef = {
+    id: "ops2", title: "Ops", principals: { partner: "you" }, events: { ...events, sources: [{ ...events.sources![0], everyMinutes: 60 }] },
+    goals: [{ id: "G", title: "Keep payments working", objective: "o", owner: "partner", scope: ["work"], assumptions: [], budget: { turns: 20 }, perpetual: true }],
+  };
+  const sim = await Sim.create({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), "af-events-down-")), def, policy, start: "2026-11-04T09:00:00Z", agent: new ScriptedTurnAgent([]),
+    runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], people: [], world: { events: { "jira-pay": flaky } },
+  });
+  await sim.run({ until: "2026-11-04T09:30:00Z", maxIterations: 10 }); // one good fetch at nine
+  const goodAt = Date.parse("2026-11-04T09:00:00Z");
+  down = true;
+  await sim.run({ until: "2026-11-04T12:30:00Z", maxIterations: 40 });
+  const failed = calls.filter((c) => !c.ok).length;
+  assert.ok(failed >= 3 && failed <= 4, `about once an hour while it's down, not every wake (${failed})`);
+  down = false;
+  await sim.run({ until: "2026-11-04T13:30:00Z", maxIterations: 20 });
+  const firstBack = calls.find((c, i) => c.ok && i > 0)!;
+  assert.equal(firstBack.since, goodAt, "the first good fetch after the outage reaches back to the last good one: nothing missed");
+});

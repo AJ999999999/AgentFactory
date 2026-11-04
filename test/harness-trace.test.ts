@@ -64,3 +64,17 @@ test("an id is found whatever kind it is, and an unknown one says so", () => {
   assert.equal(resolve(g, "todo:nope"), undefined);
   assert.equal(traceText(g, "nope"), "nothing in the log is called nope");
 });
+
+test("a workstream traces back to the answer that approved its spawn, though its events come from the spawn", () => {
+  const child: GoalDef = { id: "renderer", title: "Renderer", objective: "o", owner: "partner", scope: ["r"], assumptions: [], budget: { turns: 10 }, parent: "G" };
+  const parent: GoalDef = { id: "G", title: "Engine", objective: "o", owner: "partner", scope: ["r"], assumptions: [], budget: { turns: 100 } };
+  const log: HEvent[] = [
+    { id: "goal-G", at: T0, by: "partner", type: "goal_opened", goal: parent, criteriaHash: criteriaHash(parent) },
+    { id: "ask-spawn", at: T0 + 1, by: "r1", type: "ask_opened", ask: { id: "ask-spawn", goal: "G", to: "partner", kind: "decision", origin: "todo:teams", question: "Spawn renderer?", options: [{ id: "approve", label: "Spawn them", effect: { type: "spawn", goals: [child] } }, { id: "reject", label: "Don't", effect: { type: "ack" } }] } },
+    { id: "ans-ask-spawn", at: T0 + 2, by: "partner", type: "ask_answered", ask: "ask-spawn", answeredBy: "partner", choice: "approve" },
+    { id: "goal-renderer", at: T0 + 2, by: "partner", type: "goal_opened", goal: child, criteriaHash: criteriaHash(child), carvedFrom: "G" },
+  ];
+  const text = traceText(buildGraph(log), "renderer");
+  assert.match(text, /← a workstream of: goal "Engine" opened/);
+  assert.match(text, /← approved in the answer to: question for partner: Spawn renderer\?/);
+});

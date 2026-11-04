@@ -133,6 +133,7 @@ An engagement that holds client-confidential material keeps its code in `src/<na
 
 Each guide is its own file, so a change to one feature touches only its own page. Add a new page for a new feature and a line here; don't grow this README.
 
+- [Setting it up in the office](docs/setup.md): every file, token and check for Jira, Slack, GitHub, the desk and the scheduled task, in one list
 - [Running the harness on Windows](docs/windows.md): Task Scheduler, `doctor`, and what's handled for Windows
 - [Which CLI and model run a seat](docs/models.md): Copilot, Claude Code, Codex, pi or omp, and how each is held to its grant
 - [Usage limits](docs/usage-limits.md): a limit is a wait, not a failure

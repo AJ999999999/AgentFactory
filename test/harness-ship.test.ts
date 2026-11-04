@@ -237,3 +237,81 @@ test("ship test says whether the identity can push without administering, and wh
   assert.ok(admin.lines.some((l) => /no rule requiring a pull request/.test(l)));
   assert.match((await shipTest(ship, { env: {} })).lines[0], /AF_GITHUB_TOKEN isn't set/);
 });
+
+test("watching for the merge: merged is noted and the goal's production check runs once; closed without merging is noted and the work stays", async () => {
+  const pulls: Record<string, { state: string; merged: boolean; merged_by?: { login: string } }> = { "41": { state: "open", merged: false } };
+  const api = async (url: string) => ({ ok: true, status: 200, json: async () => pulls[new URL(url).pathname.split("/").pop()!], text: async () => "" });
+  const shipper = new GitHubShip({ control: new Git(tmp("w")), root: tmp("wr"), env: { AF_GITHUB_TOKEN: "t" }, fetch: api as never });
+  const handle = await shipper.start({ job: { spec: { watch: "gh|https://api.github.com|acme/pay|41|abc|0|AF_GITHUB_TOKEN" } } } as never, T0);
+  assert.equal((await shipper.poll(handle, T0)).status, "running");
+  pulls["41"] = { state: "closed", merged: true, merged_by: { login: "jack" } };
+  const merged = (await shipper.poll(handle, T0)) as { status: string; note?: string };
+  assert.equal(merged.status, "succeeded");
+  assert.match(merged.note!, /acme\/pay\/pull\/41 was merged by jack/);
+  pulls["41"] = { state: "closed", merged: false };
+  assert.match(((await shipper.poll(handle, T0)) as { note?: string }).note!, /closed without merging/);
+
+  // Through the harness: checks pass, the merge is seen, the production check runs.
+  const fake = {
+    async start(t: { job?: { spec?: Record<string, unknown> } }) { return t.job?.spec?.watch ? `watch|${t.job.spec.watch}` : "gh|https://api.github.com|acme/pay|41|abc|0|AF_GITHUB_TOKEN"; },
+    async poll(h: string): Promise<JobOutcome> { return h.startsWith("watch|") ? { status: "succeeded", metrics: { merged: 1 }, note: "https://github.com/acme/pay/pull/41 was merged by jack" } : { status: "succeeded", metrics: { checks: 1, checks_failed: 0 }, note: "1 check passed on https://github.com/acme/pay/pull/41" }; },
+  };
+  const probed: string[] = [];
+  const agent = new ScriptedTurnAgent([{ name: "fix", when: (c) => c.todo.lane === "fix", run: (c) => { fs.mkdirSync(path.join(c.wtDir, "app"), { recursive: true }); fs.writeFileSync(path.join(c.wtDir, "app", "a.ts"), "x\n"); return { done: true }; } }]);
+  const def = { id: "pay2", title: "Pay", principals: { partner: "you" }, goals: [{ id: "G", title: "Payments", objective: "o", owner: "partner", scope: ["app"], assumptions: [], budget: { turns: 20 }, perpetual: true, ship: { repo: "acme/pay", dir: "app", syncMinutes: 0, check: "payments-health" }, todos: [{ id: "fix-1", lane: "fix", text: "Fix it", writeScope: ["app"] }] }] };
+  const sim = await Sim.create({
+    dir: tmp("sim2"), def, policy, start: "2026-11-04T09:00:00Z", agent, runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], ship: fake as never,
+    world: { probe: { async check(target: string) { probed.push(target); return { fingerprint: "ok", summary: "error rate 0.1%, p95 220 ms" }; } } },
+    people: [{ role: "partner", answer: (a) => (a.origin === "rule:ship" ? { by: "partner", choice: "approve" } : null) }],
+  });
+  await sim.run({ until: "2026-11-05T09:00:00Z", maxIterations: 60 });
+  const notes = (await sim.harness.events()).filter((e) => e.type === "note").map((e) => (e as { text: string }).text);
+  assert.ok(notes.some((n) => /was merged by jack/.test(n)));
+  assert.ok(notes.some((n) => n === "after the merge, payments-health: error rate 0.1%, p95 220 ms"));
+  assert.deepEqual(probed, ["payments-health"], "once");
+});
+
+test("the engagement's copy keeps in step: the first look notes the base, a later change applies, one that clashes is noted and left", async () => {
+  const gh = github();
+  const push = (file: string, text: string, msg: string) => {
+    const w = path.join(gh.root, `w-${msg}`);
+    execFileSync("git", ["clone", "-q", gh.bare, w]);
+    fs.writeFileSync(path.join(w, file), text);
+    for (const args of [["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], ["push", "-q", "origin", "HEAD:main"]]) execFileSync("git", args, { cwd: w });
+  };
+  const prev = process.env.AF_GITHUB_TOKEN;
+  process.env.AF_GITHUB_TOKEN = "t";
+  try {
+    const def = { id: "pay3", title: "Pay", principals: { partner: "you" }, goals: [{ id: "G", title: "Payments", objective: "o", owner: "partner", scope: ["app"], assumptions: [], budget: { turns: 20 }, perpetual: true, ship: { repo: "acme/pay", dir: "app", remote: gh.bare, syncMinutes: 60 } }] };
+    const sim = await Sim.create({
+      dir: tmp("sim3"), def, policy, start: "2026-11-04T09:00:00Z", agent: new ScriptedTurnAgent([]), runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], world: {}, people: [],
+      seed: async (repo) => {
+        fs.mkdirSync(path.join(repo.cwd, "app"), { recursive: true });
+        fs.writeFileSync(path.join(repo.cwd, "app", "total.ts"), BASE);
+        await repo.runAsync(["add", "-A"]);
+        await repo.commitAll("the repository, copied", {});
+        await repo.runAsync(["push", "-q", "origin", "HEAD:main"]);
+      },
+    });
+    await sim.run({ until: "2026-11-04T09:30:00Z", maxIterations: 10 });
+    let s = await sim.harness.state();
+    assert.ok(s.shipSynced.get("G"), "the first look notes where the base is");
+    push("other.ts", "export const other = 1;\n", "theirs");
+    await sim.run({ until: "2026-11-04T10:30:00Z", maxIterations: 10 });
+    s = await sim.harness.state();
+    const copy = path.join(sim.harness.control.cwd, "app", "other.ts");
+    await sim.harness.control.runAsync(["pull", "-q", "origin", "main"]).catch(() => {});
+    assert.equal(fs.readFileSync(copy, "utf8"), "export const other = 1;\n", "what changed on the base is in the copy");
+    // The copy changed total.ts's line one way, the base another: noted, left as it is.
+    fs.writeFileSync(path.join(sim.harness.control.cwd, "app", "total.ts"), "export const total = 0; // ours\n");
+    await sim.harness.control.runAsync(["commit", "-qam", "ours"]);
+    await sim.harness.control.runAsync(["push", "-q", "origin", "HEAD:main"]);
+    push("total.ts", "export const total = 9; // theirs\n", "clash");
+    await sim.run({ until: "2026-11-04T11:30:00Z", maxIterations: 10 });
+    const ev = (await sim.harness.events()).filter((e) => e.type === "ship_synced") as Array<{ applied: boolean; note?: string }>;
+    assert.deepEqual(ev.map((e) => e.applied), [true, true, false]);
+    assert.match(ev[2].note!, /doesn't apply to app/);
+  } finally {
+    if (prev === undefined) delete process.env.AF_GITHUB_TOKEN; else process.env.AF_GITHUB_TOKEN = prev;
+  }
+});

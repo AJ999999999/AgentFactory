@@ -250,6 +250,14 @@ main {
 }
 .eng-err { color: var(--bad); font-size: 14px; margin-top: 6px; }
 .eng-wait { color: var(--warn); font-size: 14px; margin-top: 6px; }
+.trace-q { margin: 10px 0; font-size: 14px; }
+.trace-q summary { cursor: pointer; color: var(--ink-2); }
+.trace-q ul.trace { list-style: none; margin: 4px 0 0; padding-left: 14px; border-left: 2px solid var(--rule); }
+.trace-q ul.trace.d0 { padding-left: 10px; }
+.trace-q li { margin: 4px 0; }
+.trace-q .how { color: var(--ink-3); font-size: 12px; }
+.trace-q .when { color: var(--ink-3); font-size: 12px; }
+.trace-q .trace-wait { color: var(--ink-3); margin-top: 4px; }
 .eng-standing { margin-top: 10px; font-size: 14px; border-left: 3px solid var(--rule); padding: 4px 0 4px 10px; }
 .eng-standing-head { color: var(--ink-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
 .eng-standing-row { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
@@ -525,6 +533,37 @@ function flowAtQuestion(a) {
       h("span", { class: `r-${t.result}`, title: `${day(t.at)}${t.reason ? `\n${t.reason}` : ""}` }, RESULT[t.result] || t.result))) : null);
 }
 
+// How we got here: the question's why-tree (harness trace), fetched when you open it, kept
+// while the page lives so a redraw doesn't fetch it again.
+ui.traces = ui.traces || {};
+function traceAtQuestion(a) {
+  const k = key(a);
+  const t = ui.traces[k];
+  const items = (list, depth) => h("ul", { class: `trace d${depth}` }, list.map((i) => h("li", null,
+    h("span", { class: "how" }, i.how), " ", i.node.what, h("span", { class: "when" }, ` ${day(i.node.at)}`),
+    i.node.where && /^https?:/.test(i.node.where) ? [" ", h("a", { href: i.node.where, target: "_blank", rel: "noopener noreferrer" }, "open")] : null,
+    i.children.length ? items(i.children, depth + 1) : null)));
+  const open = !!(t && t.open);
+  return h("details", { class: "trace-q", open, ontoggle: async (e) => {
+    const now = e.target.open;
+    ui.traces[k] = { ...(ui.traces[k] || {}), open: now };
+    if (!now || ui.traces[k].data || ui.traces[k].loading) return;
+    ui.traces[k].loading = true;
+    try {
+      const d = await api(`/api/trace?engagement=${encodeURIComponent(a.engagement)}&id=${encodeURIComponent(a.id)}`);
+      ui.traces[k] = { open: true, data: d };
+    } catch (err) {
+      ui.traces[k] = { open: true, error: err.message };
+    }
+    render();
+  } },
+    h("summary", null, "How this question came about"),
+    !t || t.loading ? h("div", { class: "trace-wait" }, "Reading the log…")
+      : t.error ? h("div", { class: "err" }, t.error)
+      : t.data && t.data.why.length ? items(t.data.why, 0)
+      : t.data ? h("div", { class: "trace-wait" }, "Nothing in the log leads to it.") : null);
+}
+
 function goalOf(a) {
   const e = ui.data && ui.data.engagements.find((x) => x.id === a.engagement);
   return e && e.goals.find((g) => g.id === a.goal);
@@ -554,6 +593,7 @@ function body(a) {
   return h("div", { class: "body" },
     a.about ? h("div", { class: "about" }, a.about) : null,
     flowAtQuestion(a),
+    traceAtQuestion(a),
     // The card says when it isn't enough to answer from.
     a.lookFirst.length ? h("div", { class: "look", role: "note" }, "Look before you answer: ", a.lookFirst.join("; "), ".") : null,
     a.recommend ? h("div", { class: "why" }, h("b", null, a.recommend.label), ": ", a.recommend.why, " ", h("span", { class: "by" }, `(${a.recommend.by}'s opinion)`)) : null,

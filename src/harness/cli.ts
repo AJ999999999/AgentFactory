@@ -13,6 +13,7 @@
 //   npm run harness -- events [config <file.json> | test <source>]  events from outside (Jira): what came in and where it went;
 //                                                                    set the sources and rules; fetch once from a source and print, writing nothing
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
+//   npm run harness -- correct <ask> --note "the new text" [--by partner]      fix what an answer's note says; its choice stands
 //   npm run harness -- pause [--reason ..] | resume                         stop anything new from starting, or let it start
 //   npm run harness -- budget <goal> turns=300[,usd=50]                     a new budget for a goal
 //   npm run harness -- drop <todo> --reason "why"                           drop work (and what waits on it), as the partner
@@ -375,6 +376,12 @@ async function main(): Promise<void> {
         ...(rest.includes("--from-now-on") ? { standing: true } : {}),
       });
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
+      return;
+    }
+    case "correct": {
+      if (!rest[0] || rest[0].startsWith("--") || flag("note") === undefined) throw new Error('usage: correct <ask> --note "the new text" [--by partner]');
+      const fixed = await (await harness(currentEngagement())).correctAnswer(rest[0], { by: flag("by") ?? "partner", note: flag("note")! });
+      console.log(fixed.length ? `corrected ${rest[0]}: agents get the new note from now on` : `${rest[0]} already says that`);
       return;
     }
     case "trace": {

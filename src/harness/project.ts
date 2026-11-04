@@ -116,6 +116,8 @@ export type AskState = Ask & {
   answeredBy?: string;
   choice?: string;
   note?: string;
+  correctedAt?: number; // the note was fixed after the answer (answer_corrected)
+  correctedBy?: string;
   revision?: GoalRevision;
 };
 
@@ -297,6 +299,11 @@ export function apply(s: State, e: HEvent): void {
         const g = s.goals.get(a.goal);
         if (shape && g) s.standing.set(standingKey(a.goal, shape), { goal: a.goal, shape, choice: e.choice, ask: a.id, by: e.answeredBy, at: e.at, goalVersion: g.version, ...(e.note ? { note: e.note } : {}) });
       }
+      break;
+    }
+    case "answer_corrected": {
+      const a = s.asks.get(e.ask);
+      if (a && a.status === "answered") Object.assign(a, { note: e.note, correctedAt: e.at, correctedBy: e.by });
       break;
     }
     case "standing_revoked":

@@ -248,3 +248,16 @@ Jobs, metric sources, monitor probes and checkers come from a module you pass as
 Two things keep that number honest:
 - **Blind questions.** A fifth of agents' questions (`escalation.blindShare`) hide the recommendation until you answer. If you follow the recommendation much more often when you can see it, the rate of questions that changed nothing is partly you going along.
 - **Daily spot check.** Once a day, one decision the harness made without asking (dropping or reopening work, discounting a finding, resetting an assumption) comes back to the goal's owner: same, would differ, or wanted to be asked. It holds no work and agents never see it. The answers estimate how often the harness should have asked.
+
+## Answered once, from now on
+
+Some questions come back in the same form: the same todo lane failing three times, the same monitor firing. When you answer one, you can say "from now on" (`answer <ask> --choice retry --from-now-on`, or the box under the option on the panel). The next question of that kind in that goal doesn't reach you: the harness settles it with your choice, records that it did (`ask_auto_closed`, reason `standing`, pointing at the answer it repeats), and applies the choice as its own act. That puts it among the decisions the daily spot check draws from, and keeps it out of the counts of questions you answered.
+
+A kind of question is its rule or monitor, and its lane when it's about a todo. A standing answer:
+
+- covers only its own goal and lane;
+- never applies to a question that's always yours: money, closing or killing a goal, the goal's direction and budget, a refuted assumption, a turn you stopped, the turn cap (the brake on a standing "retry"), a probation review, the spot check itself, an urgent question, and any origin listed in `policy/harness.json` under `standing.mustAsk`;
+- never repeats an option that can't be undone, or one that changes the goal itself (a new direction, a new budget); only acknowledging, approving, retrying and reopening can stand;
+- ends when the goal changes direction (a new version), after `standing.days` (30 by default), or when you take it back: `npm run harness -- standing` lists them with how many questions each settled, `standing revoke <goal> <shape>` takes one back, and the panel shows them under the engagement with × to be asked again.
+
+Agents' own questions keep the older rule: the same question with the same options, answered before with an approval or an acknowledgement, isn't asked again.

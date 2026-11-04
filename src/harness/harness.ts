@@ -12,6 +12,7 @@
 //      model turns: claim, run in a worktree, validate, write back, release
 //   7. says when to wake next. Quiet ticks cost nothing and commit nothing.
 import * as fs from "node:fs";
+import { standingKey } from "./standing.ts";
 import * as path from "node:path";
 import type { Git } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
@@ -165,6 +166,17 @@ export class Harness {
     apply(s, e);
     const follow = settle(s, now);
     await appendEvents(this.control, this.engagement, [e, ...follow], `${paused ? "pause" : "resume"} ${this.engagement}`, { "Changed-by": by });
+    return true;
+  }
+
+  // Take back a standing answer: questions of that shape reach the person again.
+  async revokeStanding(goal: string, shape: string, by = "partner", reason?: string): Promise<boolean> {
+    const s = await this.state();
+    if (!s.standing.has(standingKey(goal, shape))) return false;
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("unstand", goal, shape, now), at: now, by, type: "standing_revoked", goal, shape, ...(reason ? { reason } : {}) };
+    apply(s, e);
+    await appendEvents(this.control, this.engagement, [e, ...settle(s, now)], `take back the standing answer to ${shape} in ${goal}`, { "Changed-by": by });
     return true;
   }
 

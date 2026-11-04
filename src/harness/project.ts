@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Catalog, Library } from "../factory.ts";
 import { AGENT_GRADES } from "./types.ts";
+import { askShape, type Standing, standingKey } from "./standing.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
   SeatDef, TodoDraft, TodoKind, TurnRecord,
@@ -39,6 +40,9 @@ export type HarnessPolicy = {
   // missCostRatio (k): a question the harness should have asked costs as much as k it
   // needn't have. blindShare: share of agents' questions shown without the recommendation.
   escalation?: { missCostRatio: number; blindShare: number };
+  // Standing answers ("from now on"): how long one lasts, and origins that are always
+  // asked on top of the built-in must-ask list (standing.ts).
+  standing?: { days?: number; mustAsk?: string[] };
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
@@ -105,7 +109,7 @@ export const seatKey = (goal: string, lane: string) => `${goal}/${lane}`;
 export type AskState = Ask & {
   status: "open" | "answered" | "auto_closed";
   openedAt: number;
-  autoReason?: "criteria_met" | "precedent"; // auto_closed: why the harness settled it
+  autoReason?: "criteria_met" | "precedent" | "standing"; // auto_closed: why the harness settled it
   precedentAsk?: string; // auto_closed by precedent: the earlier ask whose answer was reused
   answeredAt?: number;
   answeredBy?: string;
@@ -128,6 +132,8 @@ export type State = {
   seats: Map<string, SeatState>; // "<goal>/<lane>"
   paused: { at: number; by: string; reason?: string } | null;
   capacity: Map<string, CapacityState>; // by vendor: who said "not now", until when, for which seats
+  // Standing answers by "<goal>::<shape>" (standing.ts).
+  standing: Map<string, Standing>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -149,6 +155,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     seats: new Map(),
     paused: null,
     capacity: new Map(),
+    standing: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -165,6 +172,9 @@ function noteAutonomous(s: State, e: HEvent): void {
   if (e.by !== "harness") return;
   const add = (goal: string | undefined, what: string) => goal && s.autonomous.push({ event: e.id, type: e.type, goal, at: e.at, what });
   switch (e.type) {
+    case "ask_auto_closed":
+      if (e.reason === "standing") add(s.asks.get(e.ask)?.goal, `answered "${s.asks.get(e.ask)?.question.slice(0, 120) ?? e.ask}" with "${e.choice}", your standing answer from ${e.precedentAsk}`);
+      break;
     case "todo_superseded":
       add(s.todos.get(e.todo)?.goal, `dropped "${s.todos.get(e.todo)?.text ?? e.todo}": ${e.reason}`);
       break;
@@ -267,9 +277,17 @@ export function apply(s: State, e: HEvent): void {
       break;
     case "ask_answered": {
       const a = s.asks.get(e.ask);
-      if (a && a.status === "open") Object.assign(a, { status: "answered", answeredAt: e.at, answeredBy: e.answeredBy, choice: e.choice, note: e.note, revision: e.revision });
+      if (a && a.status === "open") {
+        Object.assign(a, { status: "answered", answeredAt: e.at, answeredBy: e.answeredBy, choice: e.choice, note: e.note, revision: e.revision });
+        const shape = e.standing ? askShape(s, a) : undefined;
+        const g = s.goals.get(a.goal);
+        if (shape && g) s.standing.set(standingKey(a.goal, shape), { goal: a.goal, shape, choice: e.choice, ask: a.id, by: e.answeredBy, at: e.at, goalVersion: g.version, ...(e.note ? { note: e.note } : {}) });
+      }
       break;
     }
+    case "standing_revoked":
+      s.standing.delete(standingKey(e.goal, e.shape));
+      break;
     case "ask_auto_closed": {
       const a = s.asks.get(e.ask);
       if (a && a.status === "open") Object.assign(a, { status: "auto_closed", answeredAt: e.at, answeredBy: "harness", autoReason: e.reason, ...(e.precedentAsk ? { precedentAsk: e.precedentAsk } : {}), ...(e.choice ? { choice: e.choice } : {}), ...(e.note ? { note: e.note } : {}) });

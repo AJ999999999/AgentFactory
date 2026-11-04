@@ -250,6 +250,12 @@ main {
 }
 .eng-err { color: var(--bad); font-size: 14px; margin-top: 6px; }
 .eng-wait { color: var(--warn); font-size: 14px; margin-top: 6px; }
+.eng-standing { margin-top: 10px; font-size: 14px; border-left: 3px solid var(--rule); padding: 4px 0 4px 10px; }
+.eng-standing-head { color: var(--ink-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.eng-standing-row { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.eng-standing-row .muted { color: var(--ink-3); }
+.eng-standing-row .x { border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 16px; padding: 0 4px; }
+.eng-standing-row .x:hover { color: var(--bad, #c0392b); }
 
 .live { margin-top: 14px; border-left: 3px solid var(--action); padding-left: 12px; }
 .live-head { display: flex; align-items: baseline; gap: 10px; font-size: 14px; }
@@ -600,6 +606,13 @@ function form(a, o) {
       h("input", { type: "checkbox", checked: !!d.relayed, onchange: (e) => (d.relayed = e.target.checked) }),
       ` I'm passing on what ${a.to} told me`));
   }
+  // "From now on": the next question of this kind in this goal is settled with this choice,
+  // and the harness records that it did. Only where the choice may stand.
+  if (o.standable) {
+    parts.push(h("label", { class: "relay" },
+      h("input", { type: "checkbox", checked: !!d.standing, onchange: (e) => (d.standing = e.target.checked) }),
+      " From now on, answer this kind of question in this goal the same way"));
+  }
   if (o.needs === "revision") {
     if (d.revision === undefined) d.revision = JSON.stringify(a.revision || {}, null, 2);
     parts.push(h("textarea", { class: "json", spellcheck: "false", "aria-label": "The revised goal", oninput: (e) => (d.revision = e.target.value) }, d.revision));
@@ -643,7 +656,7 @@ async function send(a, o, button, err) {
   const k = key(a);
   const d = draft(k);
   err.textContent = "";
-  const body = { engagement: a.engagement, ask: a.id, choice: o.id, note: (d.note || "").trim() || undefined, ...(d.relayed ? { relayed: true } : {}) };
+  const body = { engagement: a.engagement, ask: a.id, choice: o.id, note: (d.note || "").trim() || undefined, ...(d.relayed ? { relayed: true } : {}), ...(d.standing && o.standable ? { standing: true } : {}) };
   try {
     if (o.needs === "budget") {
       const n = Math.round(Number(d.turns));
@@ -884,7 +897,21 @@ function engBlock(e, now) {
     e.error ? h("div", { class: "eng-err", role: "alert" }, e.error) : null,
     (e.capacity || []).map((c) => h("div", { class: "eng-wait", title: c.reason }, `${({ claude: "Claude", copilot: "Copilot", codex: "Codex", pi: "pi", omp: "omp" })[c.vendor] || "Model"} ${({ unreachable: "can't be reached", setup: "has a setup problem: " + c.reason })[c.kind] || "usage limit"}. Its turns ${c.kind === "setup" ? "try again" : "resume"} ${day(c.until)}.`)),
     (e.running || []).map((t) => liveBlock(e, t, now)),
+    standingBlock(e),
     h("div", { class: "goals" }, e.goals.map((g) => goalBlock(e, g))));
+}
+
+// Answers you gave "from now on": what each settles for you, with × to be asked again.
+function standingBlock(e) {
+  if (!e.standing || !e.standing.length) return null;
+  return h("div", { class: "eng-standing" },
+    h("div", { class: "eng-standing-head" }, "Answered for you from now on"),
+    e.standing.map((x) => h("div", { class: "eng-standing-row" },
+      h("span", null, h("b", null, x.choice), ` when ${x.what} (${x.goal})`, h("span", { class: "muted" }, ` since ${day(x.at)}${x.settled ? `, ${x.settled} settled` : ""}`)),
+      h("button", { class: "x", title: "Ask me again", "aria-label": `Ask me again about ${x.what}`, onclick: async (ev) => {
+        ev.target.disabled = true;
+        try { await api("/api/standing/revoke", { engagement: e.id, goal: x.goal, shape: x.shape }); await refresh(); } catch (err) { ev.target.disabled = false; alert(err.message); }
+      } }, "×"))));
 }
 
 // ---------- render ----------

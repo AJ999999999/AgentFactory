@@ -236,6 +236,27 @@ export class Harness {
     return id;
   }
 
+  // Drop work, as the partner: an agent's proposal that repeats planned work, or work
+  // that no longer makes sense, with the partner's reason in the log. Work that waits on
+  // it is dropped too, by the rules. Work already under way is left alone: stop its turn,
+  // or answer its person's question with "cannot", first.
+  async drop(todoId: string, reason: string, by = "partner"): Promise<string[]> {
+    const why = reason?.trim();
+    if (!why) throw new Error("say why it's dropped (--reason)");
+    const s = await this.state();
+    const t = s.todos.get(todoId);
+    if (!t) throw new Error(`no todo ${todoId}`);
+    if (t.status === "done" || t.status === "superseded") throw new Error(`${todoId} is already ${t.status}`);
+    if (t.status === "running") throw new Error(`${todoId} is under way: stop its turn, or answer its question with "cannot", first`);
+    const before = new Set([...s.todos.values()].filter((x) => x.status === "superseded").map((x) => x.id));
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("drop", by, todoId, now), at: now, by, type: "todo_superseded", todo: todoId, reason: `dropped by ${by}: ${why}` };
+    apply(s, e);
+    const follow = settle(s, now);
+    await appendEvents(this.control, this.engagement, [e, ...follow], `drop ${todoId}: ${why.slice(0, 60)}`, { "Changed-by": by });
+    return [...s.todos.values()].filter((x) => x.status === "superseded" && !before.has(x.id)).map((x) => x.id);
+  }
+
   async setBudget(goalId: string, budget: Budget, by = "partner"): Promise<void> {
     for (const [k, v] of Object.entries(budget)) if (!(typeof v === "number" && Number.isFinite(v) && v >= 0)) throw new Error(`budget ${k} must be a number of 0 or more`);
     const s = await this.state();

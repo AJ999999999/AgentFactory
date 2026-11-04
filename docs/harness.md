@@ -209,6 +209,7 @@ npm run harness -- answer ask-action-playtest --choice done --result supports --
 npm run harness -- pause --reason "away this week"  # nothing new starts; running jobs still finish
 npm run harness -- resume
 npm run harness -- budget kids turns=300             # answers the budget question if one is open
+npm run harness -- drop core-2 --reason "repeats core" # drop work, and what waits on it; not work under way
 npm run panel                                        # all of the above, in a page on this PC
 ```
 

@@ -5,6 +5,7 @@
 import type { Budget, Direction, Effect, Finding, GoalRevision, HEvent, TodoDraft } from "./types.ts";
 import type { State } from "./project.ts";
 import { eid, safeId } from "./store.ts";
+import { cannotStand, type Standing } from "./standing.ts";
 import { criteriaHash, spawnEvents } from "./validate.ts";
 
 export type Answer = {
@@ -14,6 +15,9 @@ export type Answer = {
   revision?: GoalRevision; // for pivot / narrow / fix
   budget?: Budget; // for raise
   finding?: { assumption?: string; direction: Direction; text: string; metrics?: Record<string, number>; runs?: number }; // for action and review asks
+  // "From now on": the next question of this shape in this goal is settled with the same
+  // choice (standing.ts). Refused where the choice must stay the person's.
+  standing?: boolean;
 };
 
 // A note has to say something. "..." or "-" is a template's placeholder sent as it was,
@@ -31,9 +35,13 @@ export function answerEvents(s: State, askId: string, ans: Answer, now: number):
   const opt = a.options.find((o) => o.id === ans.choice);
   if (!opt) throw new Error(`${askId} has no option "${ans.choice}" (options: ${a.options.map((o) => o.id).join(", ")})`);
   saysSomething(ans.note);
+  if (ans.standing) {
+    const why = cannotStand(s, a, ans.choice) ?? (ans.revision || ans.budget || ans.finding ? "an answer that carries a revision, a budget or evidence is for this question only" : undefined);
+    if (why) throw new Error(`"from now on" can't apply here: ${why}`);
+  }
   const by = ans.by;
   const base = eid("ans", askId);
-  const out: HEvent[] = [{ id: base, at: now, by, type: "ask_answered", ask: askId, answeredBy: by, choice: ans.choice, note: ans.note, revision: ans.revision }];
+  const out: HEvent[] = [{ id: base, at: now, by, type: "ask_answered", ask: askId, answeredBy: by, choice: ans.choice, note: ans.note, revision: ans.revision, ...(ans.standing ? { standing: true } : {}) }];
   const n = (k: string) => eid(base, k);
 
   // People's answers can carry evidence. Its grade comes from who they are and what
@@ -131,4 +139,18 @@ function effectEvents(s: State, goalId: string, e: Effect, ans: Answer, now: num
       return out;
     }
   }
+}
+
+// A question a standing answer covers: settled by the harness with that answer's choice,
+// and the choice's effect applied as the harness's own act, so the daily spot check can
+// draw from it. The ids come from the question, so settling it twice writes once.
+export function standingEvents(s: State, askId: string, d: Standing, now: number): HEvent[] {
+  const a = s.asks.get(askId)!;
+  const opt = a.options.find((o) => o.id === d.choice)!;
+  const base = eid("standing", askId);
+  const when = new Date(d.at).toISOString().slice(0, 10);
+  const note = `standing answer by ${d.by} on ${when}${d.note ? `: ${d.note}` : ""}`;
+  const out: HEvent[] = [{ id: base, at: now, by: "harness", type: "ask_auto_closed", ask: askId, reason: "standing", precedentAsk: d.ask, choice: d.choice, note }];
+  if (opt.effect) out.push(...effectEvents(s, a.goal, opt.effect, { by: "harness", choice: d.choice, note }, now, "harness", (k) => eid(base, k)));
+  return out;
 }

@@ -12,8 +12,13 @@
 //      model turns: claim, run in a worktree, validate, write back, release
 //   7. says when to wake next. Quiet ticks cost nothing and commit nothing.
 import * as fs from "node:fs";
+import * as os from "node:os";
+import { standingKey } from "./standing.ts";
+import { GitHubShip, upstream } from "./ship.ts";
+import { REVIEW_LANE } from "./team.ts";
+import { configProblems, type EventsDef, eventSources, everyMinutes, receiveEvent } from "./events.ts";
 import * as path from "node:path";
-import type { Git } from "../git.ts";
+import { Git, log } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
 import { basisRef, currentBasis, readLockfile, writeBasis, writeLockfile, writeTask } from "../context.ts";
 import type { LogFn } from "../util.ts";
@@ -36,7 +41,7 @@ import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } fr
 import type { Budget, EngagementDef, Finding, HEvent, TodoDraft, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 import { budgetProblem, criteriaHash, validateTurn } from "./validate.ts";
-import type { Clock, World } from "./world.ts";
+import type { Clock, JobProvider, World } from "./world.ts";
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -69,7 +74,9 @@ export class Harness {
   // What memory says about the people the engagement serves, as packet lines.
   about: (s: State) => string[];
 
-  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string }) {
+  // Where done work goes as pull requests (ship.ts); tests pass one that plays GitHub.
+  ship: JobProvider;
+  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string; ship?: JobProvider }) {
     if (opts.policy.claims.turnTimeoutMinutes >= opts.policy.claims.ttlMinutes) throw new Error("turn timeout must be shorter than the claim TTL, or a slow turn could outlive its claim");
     if (!safeId(opts.engagement)) throw new Error(`bad engagement id ${opts.engagement}`);
     this.control = opts.control;
@@ -77,6 +84,7 @@ export class Harness {
     this.policy = opts.policy;
     this.clock = opts.clock;
     this.world = opts.world;
+    this.ship = opts.ship ?? new GitHubShip({ control: opts.control, root: path.join(opts.worktreeRoot, "..", "ship") });
     this.agent = opts.agent;
     this.claims = new Claims(opts.control, opts.engagement);
     this.pulse = new Pulse(opts.control, opts.engagement);
@@ -130,6 +138,12 @@ export class Harness {
     return project(await readSynced(this.control, this.engagement, main), this.policy);
   }
 
+  // The log itself, as synced from main: what trace and other read-only views walk.
+  async events(): Promise<HEvent[]> {
+    const main = (await this.control.runAsync(["ls-remote", "origin", "refs/heads/main"])).split("\t")[0];
+    return readSynced(this.control, this.engagement, main);
+  }
+
   // Every ref the harness cares about, from one ls-remote.
   async remoteRefs(): Promise<Map<string, string>> {
     const out = await this.control.runAsync(["ls-remote", "origin", "refs/heads/main", `refs/claims/${this.engagement}/*`, `refs/pulse/${this.engagement}`]);
@@ -180,6 +194,28 @@ export class Harness {
     return true;
   }
 
+  // Set or change the engagement's event sources and rules (events.ts).
+  async configureEvents(d: EventsDef, by = "partner"): Promise<void> {
+    const s = await this.state();
+    const bad = configProblems(s, d);
+    if (bad.length) throw new Error(`events: ${bad.join("; ")}`);
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("events", sha256(JSON.stringify(d)).slice(0, 12), now), at: now, by, type: "events_configured", events: d };
+    apply(s, e);
+    await appendEvents(this.control, this.engagement, [e, ...settle(s, now)], `events: ${(d.sources ?? []).length} source(s), ${(d.rules ?? []).length} rule(s)`, { "Changed-by": by });
+  }
+
+  // Take back a standing answer: questions of that shape reach the person again.
+  async revokeStanding(goal: string, shape: string, by = "partner", reason?: string): Promise<boolean> {
+    const s = await this.state();
+    if (!s.standing.has(standingKey(goal, shape))) return false;
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("unstand", goal, shape, now), at: now, by, type: "standing_revoked", goal, shape, ...(reason ? { reason } : {}) };
+    apply(s, e);
+    await appendEvents(this.control, this.engagement, [e, ...settle(s, now)], `take back the standing answer to ${shape} in ${goal}`, { "Changed-by": by });
+    return true;
+  }
+
   // A new budget for a goal. When the harness has already asked about the budget, this
   // is the answer to that question (so it doesn't stay open); otherwise it's recorded
   // as a change made by the partner.
@@ -211,6 +247,27 @@ export class Harness {
     const follow = settle(s, now);
     await appendEvents(this.control, this.engagement, [e, ...follow], `work for ${goalId}: ${text.slice(0, 60)}`, { "Changed-by": by });
     return id;
+  }
+
+  // Drop work, as the partner: an agent's proposal that repeats planned work, or work
+  // that no longer makes sense, with the partner's reason in the log. Work that waits on
+  // it is dropped too, by the rules. Work already under way is left alone: stop its turn,
+  // or answer its person's question with "cannot", first.
+  async drop(todoId: string, reason: string, by = "partner"): Promise<string[]> {
+    const why = reason?.trim();
+    if (!why) throw new Error("say why it's dropped (--reason)");
+    const s = await this.state();
+    const t = s.todos.get(todoId);
+    if (!t) throw new Error(`no todo ${todoId}`);
+    if (t.status === "done" || t.status === "superseded") throw new Error(`${todoId} is already ${t.status}`);
+    if (t.status === "running") throw new Error(`${todoId} is under way: stop its turn, or answer its question with "cannot", first`);
+    const before = new Set([...s.todos.values()].filter((x) => x.status === "superseded").map((x) => x.id));
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("drop", by, todoId, now), at: now, by, type: "todo_superseded", todo: todoId, reason: `dropped by ${by}: ${why}` };
+    apply(s, e);
+    const follow = settle(s, now);
+    await appendEvents(this.control, this.engagement, [e, ...follow], `drop ${todoId}: ${why.slice(0, 60)}`, { "Changed-by": by });
+    return [...s.todos.values()].filter((x) => x.status === "superseded" && !before.has(x.id)).map((x) => x.id);
   }
 
   async setBudget(goalId: string, budget: Budget, by = "partner"): Promise<void> {
@@ -320,6 +377,68 @@ export class Harness {
       }
     }
 
+    // 2b. events from outside: each source on its own cadence, from the last fetch on. A
+    // source that fails (Jira down, a token expired) is tried again next time and doesn't
+    // hold up the rest of the wake.
+    for (const { def, source: src } of eventSources(s.engagement?.events?.sources ?? [], this.world.events)) {
+      // Two times: the last good fetch, where the next one's window starts, so nothing is
+      // missed; and the last try, which sets the cadence, so a source that's down is tried
+      // again on its next turn instead of waking the loop every second.
+      const key = `events/${def.id}`;
+      const last = pulse.monitors[key]?.checkedAt;
+      const tried = pulse.monitors[`events-try/${def.id}`]?.checkedAt ?? last;
+      if (tried !== undefined && tried + everyMinutes(def) * MIN > now) continue;
+      pulseOut.monitors[`events-try/${def.id}`] = { checkedAt: now };
+      try {
+        const got = await src.fetch(last ?? now - (def.lookbackMinutes ?? 1440) * MIN, now);
+        pulseOut.monitors[key] = { checkedAt: now };
+        for (const ev of got) for (const e of receiveEvent(s, ev, now)) add(e);
+      } catch (e) {
+        this.log("source_error", { source: def.id, error: (e as Error).message });
+      }
+    }
+
+    // 2b'. reviews of pull requests not yet on GitHub: posted as comments.
+    const poster = this.ship as JobProvider & { postReview?: (h: string, v: "accept" | "reject", b: string) => Promise<{ url?: string; error?: string }> };
+    for (const [rid, rv] of s.prReviews) {
+      if (rv.posted || !poster.postReview) continue;
+      const handle = s.todos.get(rv.ship)?.handle;
+      if (!handle) continue;
+      const out = await poster.postReview(handle, rv.verdict, rv.note ?? "");
+      if (out.error) this.log("pr_review_error", { review: rid, error: out.error });
+      else add({ id: eid("prr-posted", rid), at: now, by: "harness", type: "pr_review_posted", review: rid, ...(out.url ? { url: out.url } : {}) });
+    }
+
+    // 2c. shipping goals' copies of their repositories take in what changed on the base,
+    // when it applies cleanly; a change that doesn't is noted and tried again with the next.
+    for (const g of s.goals.values()) {
+      const d = g.def.ship;
+      if (g.status !== "active" || !d || d.syncMinutes === 0) continue;
+      const key = `ship/${g.id}`;
+      const last = pulse.monitors[key]?.checkedAt;
+      if (last !== undefined && last + (d.syncMinutes ?? 60) * MIN > now) continue;
+      // Noted as looked at whatever comes of it, so the wake-up timer moves on to the next time.
+      pulseOut.monitors[key] = { checkedAt: now };
+      if (!(this.ship instanceof GitHubShip)) continue;
+      const up = await upstream(this.ship, d, s.shipSynced.get(g.id));
+      if ("error" in up) {
+        this.log("ship_sync_error", { goal: g.id, error: up.error });
+        continue;
+      }
+      const synced = s.shipSynced.get(g.id);
+      if (synced === up.sha) continue;
+      if (!synced) { add({ id: eid("synced", g.id, up.sha), at: now, by: "harness", type: "ship_synced", goal: g.id, sha: up.sha, applied: true, note: `baseline: ${d.dir} taken to match ${d.repo}@${up.sha.slice(0, 7)}` }); continue; }
+      const dir = d.dir.replace(/\/+$/, "");
+      const file = this.writePatch(up.patch);
+      const fits = await this.control.tryAsync(["apply", "--check", `--directory=${dir}`, file]);
+      if (!fits.ok) {
+        add({ id: eid("synced", g.id, up.sha), at: now, by: "harness", type: "ship_synced", goal: g.id, sha: up.sha, applied: false, note: `${d.repo}@${up.sha.slice(0, 7)} doesn't apply to ${dir}: ${fits.err.split("\n")[0].slice(0, 200)}` });
+        continue;
+      }
+      add({ id: eid("synced", g.id, up.sha), at: now, by: "harness", type: "ship_synced", goal: g.id, sha: up.sha, applied: true });
+      basisWrites.push((repo) => new Git(repo).run(["apply", `--directory=${dir}`, file]));
+    }
+
     // 3. polls
     for (const t of [...s.todos.values()]) {
       if (t.status !== "running" || (t.kind !== "job" && t.kind !== "wait")) continue;
@@ -349,14 +468,14 @@ export class Harness {
     // time, so it happens under a claim: two runners never launch the same job.
     const started: string[] = [];
     for (const t of readyTodos(s, now, runner, new Set(), ["job", "wait"])) {
-      if (t.kind === "job" && !this.world.jobs) continue;
+      if (t.kind === "job" && !this.jobsFor(t)) continue;
       if (t.kind === "wait" && !this.world.metrics?.[t.wait!.source]) continue;
       const claim = await this.claims.tryClaim(t.id, runner.id, eid("launch", t.id, sha256(`${runner.id}-${now}-${Math.random()}`).slice(0, 6)), now + this.policy.claims.ttlMinutes * MIN);
       if (!claim) continue;
       try {
         const fresh = (await this.state()).todos.get(t.id);
         if (!fresh || fresh.status !== "open") continue;
-        const handle = t.kind === "job" ? await this.world.jobs!.start(fresh, now) : `wait:${t.wait!.source}`;
+        const handle = t.kind === "job" ? await this.jobsFor(t)!.start(fresh, now) : `wait:${t.wait!.source}`;
         const ev: HEvent[] = [{ id: eid("start", t.id, fresh.failures, fresh.turns, handle), at: now, by: runner.id, type: "todo_started", todo: t.id, handle }];
         if (t.cost?.usd) ev.push({ id: eid("spend", t.id, handle), at: now, by: runner.id, type: "spend", goal: t.goal, todo: t.id, usd: t.cost.usd });
         await appendEvents(this.control, this.engagement, ev, `harness: start ${t.id}`);
@@ -451,10 +570,70 @@ export class Harness {
     return out;
   }
 
+  // A patch from upstream, as a file git can apply (it's small text; the temp folder is fine).
+  private writePatch(patch: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-sync-"));
+    const file = path.join(dir, "upstream.patch");
+    fs.writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    return file;
+  }
+
+  // Shipping jobs go to GitHub (ship.ts); every other job to the world's provider.
+  private jobsFor(t: TodoState): JobProvider | undefined {
+    return t.job?.spec?.ship || t.job?.spec?.watch ? this.ship : this.world.jobs;
+  }
+
   private async pollJob(s: State, t: TodoState, now: number, add: (e: HEvent) => void): Promise<number | undefined> {
-    const r = await this.world.jobs!.poll(t.handle!, now);
+    const jobs = this.jobsFor(t);
+    if (!jobs) return;
+    const r = await jobs.poll(t.handle!, now);
     if (r.status === "running") return r.eta;
     add({ id: eid("fin", t.id, t.failures, t.handle ?? ""), at: now, by: "harness", type: "job_finished", todo: t.id, status: r.status, metrics: r.metrics, gpuHours: r.gpuHours });
+    const watched = t.job?.spec?.watch as string | undefined;
+    if (watched) {
+      // Merged: noted, and the goal's production check run once. Closed without merging is a
+      // person's decision: noted, and the work stays as it is.
+      if (r.note) add({ id: eid("merge-note", t.id, r.status), at: now, by: "harness", type: "note", goal: t.goal, text: r.note.slice(0, this.policy.proposals.noteChars) });
+      if (r.status === "failed") {
+        add({ id: eid("merge-end", t.id), at: now, by: "harness", type: "todo_superseded", todo: t.id, reason: r.note ?? "closed without merging" });
+        return;
+      }
+      const target = t.job?.spec?.check as string | undefined;
+      if (target && this.world.probe) {
+        try {
+          const p = await this.world.probe.check(target, now);
+          add({ id: eid("prod-check", t.id), at: now, by: "harness", type: "note", goal: t.goal, text: `after the merge, ${target}: ${p.summary}`.slice(0, this.policy.proposals.noteChars) });
+        } catch (e) {
+          add({ id: eid("prod-check", t.id), at: now, by: "harness", type: "note", goal: t.goal, text: `after the merge, ${target} couldn't be checked: ${(e as Error).message}`.slice(0, this.policy.proposals.noteChars) });
+        }
+      }
+      add({ id: eid("done", t.id), at: now, by: "harness", type: "todo_done", todo: t.id });
+      return;
+    }
+    const shipped = t.job?.spec?.ship as string | undefined;
+    if (shipped) {
+      // What GitHub said, where you can see it; a failure goes back to the work it shipped,
+      // and this job is done with (the next try is a new job after the work is done again).
+      if (r.note) add({ id: eid("ship-note", t.id, r.status), at: now, by: "harness", type: "note", goal: t.goal, text: r.note.slice(0, this.policy.proposals.noteChars) });
+      if (r.status === "failed") {
+        add({ id: eid("ship-back", t.id), at: now, by: "harness", type: "todo_reopened", todo: shipped, reason: r.note ?? "the pull request failed", resetFailures: false });
+        add({ id: eid("ship-end", t.id), at: now, by: "harness", type: "todo_superseded", todo: t.id, reason: "its work went back to be fixed" });
+        return;
+      }
+      // Checks passed: the judge lane's seat (another model) reviews the change, reading the
+      // work's own commits; its verdict is posted on the pull request.
+      const g = s.goals.get(t.goal);
+      if (g?.def.ship && g.def.ship.review !== false) {
+        const dir = g.def.ship.dir.replace(/\/+$/, "");
+        const shas = log(this.control, "HEAD").filter((c) => (c.trailers.Todo ?? []).includes(shipped)).reverse().map((c) => c.sha.slice(0, 12));
+        const what = s.todos.get(shipped)?.text.split("\n")[0].slice(0, 160) ?? shipped;
+        const rid = eid("prr", t.id);
+        add({ id: `add-${rid}`, at: now, by: "harness", type: "todo_added", provenance: "rule:ship", todo: {
+          id: rid, goal: t.goal, lane: REVIEW_LANE, kind: "task", priority: 1, prReview: t.id, because: t.id, maxTurns: 2, writeScope: [],
+          text: `Review the pull request ${r.note?.match(/https?:\/\/\S+/)?.[0] ?? ""} for "${what}". Read the change with ${shas.map((x) => `git show ${x} -- ${dir}`).join(", ") || `git log -- ${dir}`}. Does it do what the work asked, without breaking anything nearby, and is it tested? Reply with a verdict, "accept" or "reject", and say why in "note": your note is posted on the pull request.`,
+        } });
+      }
+    }
     if (r.status === "failed") return;
     for (const e of this.informFindings(s, t, r.metrics, "measured", t.job?.runs ?? 1, now)) add(e);
     add({ id: eid("done", t.id), at: now, by: "harness", type: "todo_done", todo: t.id });

@@ -2,6 +2,10 @@
 // events with ids derived from their cause, so running the rules twice, or on two
 // runners at once, writes each consequence exactly once. settle() applies rules until
 // nothing new comes out (a superseded todo can orphan the todos after it).
+import { standingEvents } from "./answers.ts";
+import { standingFor } from "./standing.ts";
+import { routeEvents } from "./events.ts";
+import { shipRules } from "./ship.ts";
 import { sha256 } from "../util.ts";
 import type { Ask, AskOption, HEvent, TodoDraft } from "./types.ts";
 import type { GoalState, State, TodoState } from "./project.ts";
@@ -93,6 +97,16 @@ function rules(s: State, now: number, emitOut: Emit): void {
     for (const a of openAsks(s, g.id)) {
       if (a.goalVersion !== undefined && a.goalVersion < g.version) emit({ id: eid("moot", a.id), at: now, by: H, type: "ask_answered", ask: a.id, answeredBy: H, choice: "moot", note: `goal moved to v${g.version}` });
     }
+
+    // Questions a standing answer covers ("from now on") are settled with it.
+    // (Events from outside are routed once per pass, after the goals: see below.)
+    for (const a of openAsks(s, g.id)) {
+      const d = standingFor(s, a, now);
+      if (d) for (const e of standingEvents(s, a.id, d, now)) emit(e);
+    }
+
+    // Done work in a goal that ships: ask, then open its pull request (ship.ts).
+    shipRules(s, g, now, emit);
 
     // Staffing: the first open task in a lane gets that lane a seat.
     for (const lane of new Set(live.filter((x) => x.status === "open" && x.kind === "task").map((x) => x.lane))) {
@@ -326,6 +340,9 @@ function rules(s: State, now: number, emitOut: Emit): void {
     }
   }
   auditRule(s, now, emitOut);
+
+  // Events from outside that a rule routed: each becomes a todo in its goal, as room allows.
+  routeEvents(s, now, emit);
 }
 
 function budgetRules(s: State, g: GoalState, now: number, emit: Emit): void {

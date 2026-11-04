@@ -225,6 +225,18 @@ export function validateTurn(input: {
   }
   if (result === "blocked") {
     // held above
+  } else if (done && t.prReview) {
+    // A pull request's review: its verdict goes to GitHub as a comment (the loop posts it);
+    // "reject" sends the work back with why, as a failed check does.
+    if (o.verdict !== "accept" && o.verdict !== "reject") reasons.push(`a pull request review needs a verdict: "accept" or "reject"`);
+    else {
+      const why = String(o.note ?? "").slice(0, 1000);
+      events.push({ id: eid("prv-verdict", t.id), at, by, type: "pr_review", review: t.id, ship: t.prReview, verdict: o.verdict, ...(why ? { note: why } : {}) });
+      const shipped = s.todos.get(t.prReview)?.job?.spec?.ship as string | undefined;
+      if (o.verdict === "reject" && shipped && s.todos.has(shipped)) events.push({ id: eid("reopen", shipped, "pr-review", t.id), at, by, type: "todo_reopened", todo: shipped, reason: `the review of its pull request asked for changes: ${why || "rejected"}` });
+      events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
+      result = "completed";
+    }
   } else if (done && t.reviews) {
     // A probation review is finished only with a verdict on the work it reviews.
     if (o.verdict !== "accept" && o.verdict !== "reject") reasons.push(`a probation review needs a verdict: "accept" or "reject"`);
@@ -272,7 +284,7 @@ export function validateTurn(input: {
     }
     result = "completed";
   }
-  if (o.verdict && !t.reviews) reasons.push("verdict ignored: only a probation review gives one");
+  if (o.verdict && !t.reviews && !t.prReview) reasons.push("verdict ignored: only a review gives one");
 
   // ---- granularity ----
   const flips = beliefFlips(s, accepted.findings);

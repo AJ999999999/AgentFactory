@@ -6,9 +6,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Catalog, Library } from "../factory.ts";
 import { AGENT_GRADES } from "./types.ts";
+import { askShape, type Standing, standingKey } from "./standing.ts";
+import type { Received } from "./events.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
-  SeatDef, TodoDraft, TodoKind, TurnRecord,
+  SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
 } from "./types.ts";
 
 export type HarnessPolicy = {
@@ -39,6 +41,9 @@ export type HarnessPolicy = {
   // missCostRatio (k): a question the harness should have asked costs as much as k it
   // needn't have. blindShare: share of agents' questions shown without the recommendation.
   escalation?: { missCostRatio: number; blindShare: number };
+  // Standing answers ("from now on"): how long one lasts, and origins that are always
+  // asked on top of the built-in must-ask list (standing.ts).
+  standing?: { days?: number; mustAsk?: string[] };
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
@@ -105,7 +110,7 @@ export const seatKey = (goal: string, lane: string) => `${goal}/${lane}`;
 export type AskState = Ask & {
   status: "open" | "answered" | "auto_closed";
   openedAt: number;
-  autoReason?: "criteria_met" | "precedent"; // auto_closed: why the harness settled it
+  autoReason?: "criteria_met" | "precedent" | "standing"; // auto_closed: why the harness settled it
   precedentAsk?: string; // auto_closed by precedent: the earlier ask whose answer was reused
   answeredAt?: number;
   answeredBy?: string;
@@ -130,6 +135,14 @@ export type State = {
   seats: Map<string, SeatState>; // "<goal>/<lane>"
   paused: { at: number; by: string; reason?: string } | null;
   capacity: Map<string, CapacityState>; // by vendor: who said "not now", until when, for which seats
+  // Standing answers by "<goal>::<shape>" (standing.ts).
+  standing: Map<string, Standing>;
+  // Events from outside by their event id, with the todo each became (events.ts).
+  outside: Map<string, Received>;
+  // The base commit each shipping goal's copy is in step with (ship.ts).
+  shipSynced: Map<string, string>;
+  // Pull request reviews by review todo: the verdict, and whether it's on GitHub yet.
+  prReviews: Map<string, { ship: string; verdict: Verdict; note?: string; at: number; posted?: boolean }>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -151,6 +164,10 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     seats: new Map(),
     paused: null,
     capacity: new Map(),
+    standing: new Map(),
+    outside: new Map(),
+    shipSynced: new Map(),
+    prReviews: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -167,6 +184,9 @@ function noteAutonomous(s: State, e: HEvent): void {
   if (e.by !== "harness") return;
   const add = (goal: string | undefined, what: string) => goal && s.autonomous.push({ event: e.id, type: e.type, goal, at: e.at, what });
   switch (e.type) {
+    case "ask_auto_closed":
+      if (e.reason === "standing") add(s.asks.get(e.ask)?.goal, `answered "${s.asks.get(e.ask)?.question.slice(0, 120) ?? e.ask}" with "${e.choice}", your standing answer from ${e.precedentAsk}`);
+      break;
     case "todo_superseded":
       add(s.todos.get(e.todo)?.goal, `dropped "${s.todos.get(e.todo)?.text ?? e.todo}": ${e.reason}`);
       break;
@@ -227,6 +247,10 @@ export function apply(s: State, e: HEvent): void {
     }
     case "todo_added": {
       if (s.todos.has(e.todo.id)) break;
+      if (e.provenance.startsWith("event:")) {
+        const r = s.outside.get(e.provenance.slice("event:".length));
+        if (r) r.todo = e.todo.id;
+      }
       const g = s.goals.get(e.todo.goal);
       s.todos.set(e.todo.id, {
         ...e.todo, kind: e.todo.kind ?? "task", priority: e.todo.priority ?? 2, status: "open", goalVersion: g?.version ?? 1,
@@ -269,7 +293,12 @@ export function apply(s: State, e: HEvent): void {
       break;
     case "ask_answered": {
       const a = s.asks.get(e.ask);
-      if (a && a.status === "open") Object.assign(a, { status: "answered", answeredAt: e.at, answeredBy: e.answeredBy, choice: e.choice, note: e.note, revision: e.revision });
+      if (a && a.status === "open") {
+        Object.assign(a, { status: "answered", answeredAt: e.at, answeredBy: e.answeredBy, choice: e.choice, note: e.note, revision: e.revision });
+        const shape = e.standing ? askShape(s, a) : undefined;
+        const g = s.goals.get(a.goal);
+        if (shape && g) s.standing.set(standingKey(a.goal, shape), { goal: a.goal, shape, choice: e.choice, ask: a.id, by: e.answeredBy, at: e.at, goalVersion: g.version, ...(e.note ? { note: e.note } : {}) });
+      }
       break;
     }
     case "answer_corrected": {
@@ -277,6 +306,26 @@ export function apply(s: State, e: HEvent): void {
       if (a && a.status === "answered") Object.assign(a, { note: e.note, correctedAt: e.at, correctedBy: e.by });
       break;
     }
+    case "standing_revoked":
+      s.standing.delete(standingKey(e.goal, e.shape));
+      break;
+    case "pr_review":
+      if (!s.prReviews.has(e.review)) s.prReviews.set(e.review, { ship: e.ship, verdict: e.verdict, ...(e.note ? { note: e.note } : {}), at: e.at });
+      break;
+    case "pr_review_posted": {
+      const r = s.prReviews.get(e.review);
+      if (r && !e.error) r.posted = true;
+      break;
+    }
+    case "ship_synced":
+      if (e.applied) s.shipSynced.set(e.goal, e.sha);
+      break;
+    case "events_configured":
+      if (s.engagement) s.engagement = { ...s.engagement, events: e.events };
+      break;
+    case "event_received":
+      if (!s.outside.has(e.id)) s.outside.set(e.id, { event: e.event, rule: e.rule, at: e.at });
+      break;
     case "ask_auto_closed": {
       const a = s.asks.get(e.ask);
       if (a && a.status === "open") Object.assign(a, { status: "auto_closed", answeredAt: e.at, answeredBy: "harness", autoReason: e.reason, ...(e.precedentAsk ? { precedentAsk: e.precedentAsk } : {}), ...(e.choice ? { choice: e.choice } : {}), ...(e.note ? { note: e.note } : {}) });
@@ -284,6 +333,10 @@ export function apply(s: State, e: HEvent): void {
     }
     case "finding":
       if (!s.findings.has(e.finding.id)) s.findings.set(e.finding.id, { ...e.finding, at: e.at });
+      if (e.finding.event) {
+        const r = s.outside.get(e.finding.event);
+        if (r) r.finding = e.finding.id;
+      }
       break;
     case "finding_discounted":
       s.discounted.set(e.finding, e.reason);

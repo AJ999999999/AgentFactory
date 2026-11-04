@@ -179,7 +179,7 @@ The user's brief says what to achieve; it doesn't say who should work on it. The
 - **State lives only in git.** Every event is a file on main, never edited. Claims and the "last checked" times live in refs; losing the latter costs one extra check. A fresh clone projects exactly the same state, which a test checks.
 - **Rules can run anywhere.** Rule-generated events have ids derived from their cause, so two machines noticing the same thing write it once.
 - **The handoff packet.** It's generated from state, never written by a model, and stays under 16 lines and 1,800 characters however long the engagement has run. The full record is one command away.
-- **What the people it serves have told us arrives as defaults, never as permission.** An engagement that declares a principal and subjects gets that principal's current memory in its packets: the defaults that apply, and what to check first. Lapsed plans, other subjects and guesses we made ourselves never pass as preferences. See the README's memory section.
+- **What the people it serves have told us arrives as defaults, never as permission.** An engagement that declares a principal and subjects gets that principal's current memory in its packets: the defaults that apply, and what to check first. Lapsed plans, other subjects and guesses we made ourselves never pass as preferences. See [memory about the people you serve](memory.md).
 - **Time follows cause and effect.** The log is ordered by time, and machines' clocks disagree. A writer never stamps an event earlier than the latest event it has read: the stamp is the wall clock, nudged forward by a millisecond only when the clock would contradict what the writer saw.
 
 ## What the simulations caught
@@ -210,13 +210,14 @@ npm run harness -- correct ask-action-playtest --note "finished on attempt 9, wi
 npm run harness -- pause --reason "away this week"  # nothing new starts; running jobs still finish
 npm run harness -- resume
 npm run harness -- budget kids turns=300             # answers the budget question if one is open
+npm run harness -- drop core-2 --reason "repeats core" # drop work, and what waits on it; not work under way
 npm run panel                                        # all of the above, in a page on this PC
 ```
 
 `open` also takes `--world <module>` (checkers and providers, saved with the engagement) and `--seed <dir>` (files committed into the engagement repo first, such as a brief). An answer is recorded as the role the question was addressed to unless you pass `--by`, because the grade of what you report depends on who you are. Agents see the answers their work depends on, directly or through earlier work, in their handoff packet: the first 320 characters of each note. A note with no words in it, such as `...` left over from an example, is refused. `correct` replaces what an answer's note says, and the agents get the new text from then on. The choice stands, and so does what it already did.
 
 You can run it in two ways:
-- **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. The README's Windows section has the steps.
+- **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. [Running the harness on Windows](windows.md) has the steps.
 - **One wake per process.** `tick` for cron or a CI schedule. It keeps its quiet-wake memory on disk, so an unchanged engagement still costs one `git ls-remote`.
 
 `doctor` checks a machine end to end: node, git, Copilot CLI, the control repo and remote, the heartbeat and the scheduled task.
@@ -249,3 +250,32 @@ Jobs, metric sources, monitor probes and checkers come from a module you pass as
 Two things keep that number honest:
 - **Blind questions.** A fifth of agents' questions (`escalation.blindShare`) hide the recommendation until you answer. If you follow the recommendation much more often when you can see it, the rate of questions that changed nothing is partly you going along.
 - **Daily spot check.** Once a day, one decision the harness made without asking (dropping or reopening work, discounting a finding, resetting an assumption) comes back to the goal's owner: same, would differ, or wanted to be asked. It holds no work and agents never see it. The answers estimate how often the harness should have asked.
+
+## Answered once, from now on
+
+Some questions come back in the same form: the same todo lane failing three times, the same monitor firing. When you answer one, you can say "from now on" (`answer <ask> --choice retry --from-now-on`, or the box under the option on the panel). The next question of that kind in that goal doesn't reach you: the harness settles it with your choice, records that it did (`ask_auto_closed`, reason `standing`, pointing at the answer it repeats), and applies the choice as its own act. That puts it among the decisions the daily spot check draws from, and keeps it out of the counts of questions you answered.
+
+A kind of question is its rule or monitor, and its lane when it's about a todo. A standing answer:
+
+- covers only its own goal and lane;
+- never applies to a question that's always yours: money, closing or killing a goal, the goal's direction and budget, a refuted assumption, a turn you stopped, the turn cap (the brake on a standing "retry"), a probation review, the spot check itself, an urgent question, and any origin listed in `policy/harness.json` under `standing.mustAsk`;
+- never repeats an option that can't be undone, or one that changes the goal itself (a new direction, a new budget); only acknowledging, approving, retrying and reopening can stand;
+- ends when the goal changes direction (a new version), after `standing.days` (30 by default), or when you take it back: `npm run harness -- standing` lists them with how many questions each settled, `standing revoke <goal> <shape>` takes one back, and the panel shows them under the engagement with × to be asked again.
+
+Agents' own questions keep the older rule: the same question with the same options, answered before with an approval or an acknowledgement, isn't asked again.
+
+## Looking back: why did this happen?
+
+`npm run harness -- trace <id>` starts from anything in the log (a goal, a todo, a question, a finding, a turn or an event) and shows two trees. Under **why**, it goes back to what this came from. Under **then**, it goes forward to what it led to. Each record is shown once. A bare id is tried as each kind; `--depth` (4) limits how far it walks.
+
+Each record carries the same envelope: what it is in one line, who wrote it, when, its grade if it's evidence, and where its full record lives when that's a file, such as a turn's log under `turns/` or a Jira ticket's address. The links come from the log itself:
+
+- a todo's source: an event, your answer, a monitor, or the finding, question or todo it names as its cause;
+- a question's origin: a turn, a todo, a monitor, or a rule, plus the evidence it cites;
+- an answer's effects, since their ids come from the answer;
+- a finding's turn and todo;
+- a workstream's parent goal.
+
+Nothing is stored for this: it's computed from the log on demand, like the rest of the state.
+
+So "why did we close this goal?" reads as follows. The goal was closed by your answer to a question. That question came from a rule. The rule fired on evidence, the evidence came from a job's measurement, and the job ran because of a todo that a Jira ticket created.

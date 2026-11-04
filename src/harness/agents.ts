@@ -99,6 +99,10 @@ export function turnPrompt(ctx: TurnContext): string {
     ` "supersede": [{"todo": "id", "reason": "..."}], "discount": [{"finding": "id", "reason": "..."}]}`,
     "An ask should be answerable from what it says: say what follows from each option, mark the ones that can't be undone, and recommend one with your reason.",
     "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a job, wait or action that produces it.",
+    // What the first judge turn got wrong (docs/next/030): it cited a part of this prompt as a
+    // source, and proposed a job with nothing to run.
+    "A finding's source is a URL you read or repo:<path> of a file that exists in this worktree; never a part of this prompt or the handoff packet. Without one, put what you think in the note.",
+    'A job needs "job": {"spec": {...what to run...}, "informs": [{"assumption": "id", "metric": "name"}]}. If you can\'t say what to run, propose a task (more work for an agent) or an action (work for a person) instead.',
     "A blocker stops the work and asks a person. Set it only when you can't go on without them. If the todo is done, say done: true and put any doubts in the note.",
   ].join("\n");
 }

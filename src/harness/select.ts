@@ -206,6 +206,11 @@ export function nextWake(s: State, now: number, opts: { readyNow: boolean; pulse
   const active = [...s.goals.values()].filter((g) => g.status === "active");
   if (!active.length) return { action: "stop", at: now, why: "every goal is closed" };
   const timers: Array<{ at: number; why: string }> = [];
+  // Event sources (Jira) are fetched on their own cadence.
+  for (const d of s.engagement?.events?.sources ?? []) {
+    const last = opts.pulse.monitors[`events/${d.id}`]?.checkedAt;
+    timers.push({ at: last === undefined ? now : last + Math.max(1, d.everyMinutes ?? 15) * MIN, why: `events from ${d.id}` });
+  }
   for (const g of active) {
     for (const m of g.def.monitors ?? []) {
       const exp = ts(m.expiresAt);

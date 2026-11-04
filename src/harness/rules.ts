@@ -4,6 +4,7 @@
 // nothing new comes out (a superseded todo can orphan the todos after it).
 import { standingEvents } from "./answers.ts";
 import { standingFor } from "./standing.ts";
+import { routeEvents } from "./events.ts";
 import { sha256 } from "../util.ts";
 import type { Ask, AskOption, HEvent, TodoDraft } from "./types.ts";
 import type { GoalState, State, TodoState } from "./project.ts";
@@ -97,6 +98,7 @@ function rules(s: State, now: number, emitOut: Emit): void {
     }
 
     // Questions a standing answer covers ("from now on") are settled with it.
+    // (Events from outside are routed once per pass, after the goals: see below.)
     for (const a of openAsks(s, g.id)) {
       const d = standingFor(s, a, now);
       if (d) for (const e of standingEvents(s, a.id, d, now)) emit(e);
@@ -334,6 +336,9 @@ function rules(s: State, now: number, emitOut: Emit): void {
     }
   }
   auditRule(s, now, emitOut);
+
+  // Events from outside that a rule routed: each becomes a todo in its goal, as room allows.
+  routeEvents(s, now, emit);
 }
 
 function budgetRules(s: State, g: GoalState, now: number, emit: Emit): void {

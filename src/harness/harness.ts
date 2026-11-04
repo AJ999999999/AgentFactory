@@ -13,6 +13,7 @@
 //   7. says when to wake next. Quiet ticks cost nothing and commit nothing.
 import * as fs from "node:fs";
 import { standingKey } from "./standing.ts";
+import { configProblems, type EventsDef, eventSources, everyMinutes, receiveEvent } from "./events.ts";
 import * as path from "node:path";
 import type { Git } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
@@ -169,6 +170,17 @@ export class Harness {
     return true;
   }
 
+  // Set or change the engagement's event sources and rules (events.ts).
+  async configureEvents(d: EventsDef, by = "partner"): Promise<void> {
+    const s = await this.state();
+    const bad = configProblems(s, d);
+    if (bad.length) throw new Error(`events: ${bad.join("; ")}`);
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("events", sha256(JSON.stringify(d)).slice(0, 12), now), at: now, by, type: "events_configured", events: d };
+    apply(s, e);
+    await appendEvents(this.control, this.engagement, [e, ...settle(s, now)], `events: ${(d.sources ?? []).length} source(s), ${(d.rules ?? []).length} rule(s)`, { "Changed-by": by });
+  }
+
   // Take back a standing answer: questions of that shape reach the person again.
   async revokeStanding(goal: string, shape: string, by = "partner", reason?: string): Promise<boolean> {
     const s = await this.state();
@@ -317,6 +329,22 @@ export class Harness {
           const id = eid("ask-mon", g.id, m.id, res.fingerprint);
           add({ id, at: now, by: "harness", type: "ask_opened", ask: { id, goal: g.id, to: m.onChange.ask.to, kind: "decision", urgent: m.urgent, origin: `monitor:${m.id}`, question: `${m.onChange.ask.question} (${res.summary})`, options: [{ id: "noted", label: "Noted", effect: { type: "ack" } }, { id: "stop", label: "Stop this goal", effect: { type: "close", status: "killed" } }] } });
         }
+      }
+    }
+
+    // 2b. events from outside: each source on its own cadence, from the last fetch on. A
+    // source that fails (Jira down, a token expired) is tried again next time and doesn't
+    // hold up the rest of the wake.
+    for (const { def, source: src } of eventSources(s.engagement?.events?.sources ?? [], this.world.events)) {
+      const key = `events/${def.id}`;
+      const last = pulse.monitors[key]?.checkedAt;
+      if (last !== undefined && last + everyMinutes(def) * MIN > now) continue;
+      try {
+        const got = await src.fetch(last ?? now - (def.lookbackMinutes ?? 1440) * MIN, now);
+        pulseOut.monitors[key] = { checkedAt: now };
+        for (const ev of got) for (const e of receiveEvent(s, ev, now)) add(e);
+      } catch (e) {
+        this.log("source_error", { source: def.id, error: (e as Error).message });
       }
     }
 

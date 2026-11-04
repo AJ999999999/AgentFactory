@@ -7,6 +7,8 @@
 //   npm run harness -- status [--goal G] [--for partner]                      handoff packets and open questions
 //   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300] [--from-now-on]
 //   npm run harness -- standing [revoke <goal> <shape>]              standing answers ("from now on"), or take one back
+//   npm run harness -- events [config <file.json> | test <source>]  events from outside (Jira): what came in and where it went;
+//                                                                    set the sources and rules; fetch once from a source and print, writing nothing
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
 //   npm run harness -- pause [--reason ..] | resume                         stop anything new from starting, or let it start
 //   npm run harness -- budget <goal> turns=300[,usd=50]                     a new budget for a goal
@@ -346,6 +348,32 @@ async function main(): Promise<void> {
         ...(rest.includes("--from-now-on") ? { standing: true } : {}),
       });
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
+      return;
+    }
+    case "events": {
+      const h = await harness(currentEngagement());
+      const { eventSources, eventSummary } = await import("./events.ts");
+      if (rest[0] === "config") {
+        if (!rest[1]) throw new Error("usage: events config <file.json>  (sources and rules; see docs/events.md)");
+        await h.configureEvents(JSON.parse(fs.readFileSync(rest[1], "utf8")));
+        console.log(`events configured from ${rest[1]}; the next tick fetches`);
+        return;
+      }
+      const s = await h.state();
+      const defs = s.engagement?.events?.sources ?? [];
+      if (rest[0] === "test") {
+        // For setting up a source: what it returns now, and which rule each would meet.
+        const { matchRule } = await import("./events.ts");
+        const src = eventSources(defs.filter((d) => d.id === rest[1]), h.world.events)[0]?.source;
+        if (!src) throw new Error(`no source ${rest[1] ?? ""} (sources: ${defs.map((d) => d.id).join(", ") || "none"})`);
+        const hours = Number(flag("hours", "24"));
+        const got = await src.fetch(Date.now() - hours * 3_600_000, Date.now());
+        for (const e of got) console.log(`${e.id.padEnd(12)} ${e.type.padEnd(12)} ${(e.status ?? "").padEnd(12)} ${matchRule(s.engagement?.events?.rules ?? [], e)?.id ?? "(no rule)"}  ${e.title}`);
+        console.log(`${got.length} changed in the last ${hours}h; nothing was written`);
+        return;
+      }
+      if (!defs.length) console.log("no event sources: npm run harness -- events config <file.json>");
+      for (const r of eventSummary(s)) console.log(`${r.source.padEnd(16)} ${r.type.padEnd(14)} ${r.received} in, ${r.routed} became work, ${r.waiting} waiting for room, ${r.unmatched} matched no rule`);
       return;
     }
     case "standing": {

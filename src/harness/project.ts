@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { Catalog, Library } from "../factory.ts";
 import { AGENT_GRADES } from "./types.ts";
 import { askShape, type Standing, standingKey } from "./standing.ts";
+import type { Received } from "./events.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
   SeatDef, TodoDraft, TodoKind, TurnRecord,
@@ -134,6 +135,8 @@ export type State = {
   capacity: Map<string, CapacityState>; // by vendor: who said "not now", until when, for which seats
   // Standing answers by "<goal>::<shape>" (standing.ts).
   standing: Map<string, Standing>;
+  // Events from outside by their event id, with the todo each became (events.ts).
+  outside: Map<string, Received>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -156,6 +159,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     paused: null,
     capacity: new Map(),
     standing: new Map(),
+    outside: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -235,6 +239,10 @@ export function apply(s: State, e: HEvent): void {
     }
     case "todo_added": {
       if (s.todos.has(e.todo.id)) break;
+      if (e.provenance.startsWith("event:")) {
+        const r = s.outside.get(e.provenance.slice("event:".length));
+        if (r) r.todo = e.todo.id;
+      }
       const g = s.goals.get(e.todo.goal);
       s.todos.set(e.todo.id, {
         ...e.todo, kind: e.todo.kind ?? "task", priority: e.todo.priority ?? 2, status: "open", goalVersion: g?.version ?? 1,
@@ -287,6 +295,12 @@ export function apply(s: State, e: HEvent): void {
     }
     case "standing_revoked":
       s.standing.delete(standingKey(e.goal, e.shape));
+      break;
+    case "events_configured":
+      if (s.engagement) s.engagement = { ...s.engagement, events: e.events };
+      break;
+    case "event_received":
+      if (!s.outside.has(e.id)) s.outside.set(e.id, { event: e.event, rule: e.rule, at: e.at });
       break;
     case "ask_auto_closed": {
       const a = s.asks.get(e.ask);

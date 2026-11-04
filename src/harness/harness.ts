@@ -40,6 +40,9 @@ import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.t
 import { HARNESS_DIR, appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
 import { FileLogs } from "./logs.ts";
 import { JiraWriter } from "./jira.ts";
+import { BUILTIN_CHECKS, builtinCheck } from "./checks.ts";
+import type { RunTests } from "./checks.ts";
+import { runCommand } from "../proc.ts";
 import type { Budget, EngagementDef, Finding, HEvent, TodoDraft, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 import { budgetProblem, criteriaHash, validateTurn } from "./validate.ts";
@@ -81,7 +84,9 @@ export class Harness {
   // A playbook's jobs: a service's logs around a ticket, and replies sent to Jira.
   logs: JobProvider;
   jira: JobProvider;
-  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string; ship?: JobProvider; logs?: JobProvider; jira?: JobProvider }) {
+  // How the built-in checks run a service's tests; tests play it.
+  runTests?: RunTests;
+  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string; ship?: JobProvider; logs?: JobProvider; jira?: JobProvider; runTests?: RunTests }) {
     if (opts.policy.claims.turnTimeoutMinutes >= opts.policy.claims.ttlMinutes) throw new Error("turn timeout must be shorter than the claim TTL, or a slow turn could outlive its claim");
     if (!safeId(opts.engagement)) throw new Error(`bad engagement id ${opts.engagement}`);
     this.control = opts.control;
@@ -92,6 +97,7 @@ export class Harness {
     this.ship = opts.ship ?? new GitHubShip({ control: opts.control, root: path.join(opts.worktreeRoot, "..", "ship") });
     this.logs = opts.logs ?? new FileLogs();
     this.jira = opts.jira ?? new JiraWriter();
+    this.runTests = opts.runTests;
     this.agent = opts.agent;
     this.claims = new Claims(opts.control, opts.engagement);
     this.pulse = new Pulse(opts.control, opts.engagement);
@@ -818,7 +824,7 @@ export class Harness {
             await discard(wt);
             events = [turnEvent(turnId, t, runner.id, now, why, "host_failure", [hostError || "no output"], files, seat?.key)];
           } else {
-            const { failures, checked } = await this.runCheckers(wtDir, t, files);
+            const { failures, checked } = await this.runCheckers(wtDir, t, files, s);
             const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}), seat: seatState });
             if (v.result !== "validation_failed") kept = files;
             if (v.result === "validation_failed") await discard(wt);
@@ -853,7 +859,7 @@ export class Harness {
           };
         },
         recheck: {
-          run: async (wtDir) => (kept.length ? (await this.runCheckers(wtDir, t, kept)).failures : []),
+          run: async (wtDir) => (kept.length ? (await this.runCheckers(wtDir, t, kept, s)).failures : []),
           onFail: async (wtDir, _wt, failures) => {
             const reasons = failures.map((f) => `after rebasing onto newer work: ${f}`);
             writeEventFiles(wtDir, this.engagement, [turnEvent(turnId, t, runner.id, now, why, "validation_failed", reasons, kept, seat?.key)]);
@@ -870,7 +876,7 @@ export class Harness {
     return summary;
   }
 
-  private async runCheckers(wtDir: string, t: TodoState, files: string[]): Promise<{ failures: string[]; checked: boolean }> {
+  private async runCheckers(wtDir: string, t: TodoState, files: string[], s?: State): Promise<{ failures: string[]; checked: boolean }> {
     const failures: string[] = [];
     const checkers = this.world.checkers ?? {};
     for (const name of this.redLines()) {
@@ -879,7 +885,13 @@ export class Harness {
       else failures.push(...(await fn(wtDir, { todo: t, files })).map((f) => `red line ${name}: ${f}`));
     }
     let checked = false;
-    if (t.check) {
+    if (t.check && BUILTIN_CHECKS.includes(t.check) && !checkers[t.check]) {
+      // The harness's own: the service's test command (checks.ts).
+      const svc = (s?.engagement?.services ?? []).find((x) => x.id === t.play?.service);
+      const f = await builtinCheck(t.check, wtDir, svc, { timeoutMs: this.policy.claims.turnTimeoutMinutes * MIN, run: this.runTests, git: async (args, cwd) => (await runCommand("git", args, { cwd, timeout: 300_000 })).stdout });
+      failures.push(...f.map((x) => `${t.check}: ${x}`));
+      checked = f.length === 0 && files.length > 0;
+    } else if (t.check) {
       const fn = checkers[t.check];
       if (!fn) failures.push(`checker ${t.check} is not registered`);
       else {

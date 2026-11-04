@@ -35,6 +35,14 @@ export type PlayStep = {
   reply?: boolean; // drafts the reply to the ticket's reporter
   conduct?: boolean; // the conductor reads it before its outcome is taken
   priority?: number;
+  writes?: boolean; // may change the service's code (its `dir`)
+  check?: string; // the check its output must pass: a world checker, or tests-fail / tests-pass (checks.ts)
+  // Shipping: a step that only ships with a later one (ship false), and the earlier steps
+  // whose commits go in the same pull request (shipWith).
+  ship?: boolean;
+  shipWith?: string[];
+  needsShip?: boolean; // only added when the service's goal ships to a repository
+  merged?: string[]; // steps added once its pull request is merged
 };
 
 export type Playbook = {
@@ -69,6 +77,7 @@ export function playbookProblems(pb: Playbook): string[] {
     for (const a of st.after ?? []) if (!pb.steps[a]) out.push(`${id}: after ${a}, which doesn't exist`);
     for (const [o, b] of Object.entries(st.outcomes ?? {})) for (const n of b.next) if (!pb.steps[n]) out.push(`${id}: outcome ${o} leads to ${n}, which doesn't exist`);
     if (st.logs && st.kind !== "job") out.push(`${id}: fetching logs is a job`);
+    for (const x of [...(st.shipWith ?? []), ...(st.merged ?? [])]) if (!pb.steps[x]) out.push(`${id}: names step ${x}, which doesn't exist`);
   }
   return out;
 }
@@ -122,6 +131,8 @@ export function stepTodo(s: State, ref: PlayRef, step: string, outcome?: string)
     play: { ...ref, step }, because: ref.run === id ? undefined : ref.run,
     ...(st.after?.length ? { after: st.after.map((a) => stepId(pb, ref.run, a)) } : {}),
     ...(st.conduct ? { conduct: true } : {}),
+    ...(st.writes && svc?.dir ? { writeScope: [svc.dir] } : {}),
+    ...(st.check ? { check: st.check } : {}),
   };
   if (st.logs) {
     const terms = (ref.slots?.terms ?? "").split(/[,;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 8);
@@ -205,12 +216,32 @@ export function playRules(s: State, now: number, emit: (e: HEvent) => void): voi
       if (!goal) continue;
     }
     const ref: PlayRef = { ...t.play, service, slots: { ...slots, outcome: o.outcome } };
-    for (const step of branch.next) add(goal?.id ?? t.goal, stepTodo(s, ref, step, o.outcome), `play:${t.id}`);
+    const pb = playbookOf(s, t.play)!;
+    for (const step of branch.next) {
+      // A fix only makes sense where it can ship; without a repository it stops at the reply.
+      if (pb.steps[step]?.needsShip && !goal?.def.ship) {
+        emit({ id: eid("play-noship", t.play.run, step), at: now, by: H, type: "note", goal: goal?.id ?? t.goal, text: `${t.play.ticket?.id ?? t.play.run}: ${step} isn't started, since ${service ?? "this service"} has no repository to ship to (ship in its goal).` });
+        continue;
+      }
+      add(goal?.id ?? t.goal, stepTodo(s, ref, step, o.outcome), `play:${t.id}`);
+    }
     // The ticket moves on in Jira when it's routed to a service, if the source says how.
     const src = sourceOf(s, t.play.ticket?.source);
     if (goal && src?.statuses?.routed && t.play.ticket && t.play.step === playbookOf(s, t.play)!.start) {
       add(goal.id, jiraJob(`${t.play.run}-jira-routed`, src, t.play.ticket.id, { transition: src.statuses.routed }, `Move ${t.play.ticket.id} to "${src.statuses.routed}"`, t.play), "play:jira");
     }
+  }
+
+  // A step's pull request merged (ship.ts watched it): the steps that follow a merge, such as
+  // telling the reporter it's fixed.
+  for (const w of s.todos.values()) {
+    if (w.status !== "done" || !w.job?.spec?.watch) continue;
+    const shipJob = w.because ? s.todos.get(w.because) : undefined;
+    const t = shipJob?.job?.spec?.ship ? s.todos.get(shipJob.job.spec.ship as string) : undefined;
+    const st = t ? stepOf(s, t) : undefined;
+    if (!t?.play || !st?.merged?.length) continue;
+    const ref: PlayRef = { ...t.play, slots: { ...(t.play.slots ?? {}), outcome: "fixed" } };
+    for (const step of st.merged) add(t.goal, stepTodo(s, ref, step, "fixed"), `play:${w.id}`);
   }
 
   // A drafted reply: ask the partner, then send it once they say so.
@@ -221,6 +252,8 @@ export function playRules(s: State, now: number, emit: (e: HEvent) => void): voi
     const a = s.asks.get(askId);
     if (!a) {
       const userError = r.outcome === "user_error";
+      const st = sourceOf(s, r.ticket.source)?.statuses;
+      const moveTo = r.outcome === "fixed" ? st?.resolved ?? st?.replied : st?.replied;
       emit({ id: askId, at: now, by: H, type: "ask_opened", ask: {
         id: askId, goal: t.goal, to: s.goals.get(t.goal)?.def.owner ?? "partner", kind: "approval", todo: r.todo, lane: t.lane,
         // Telling a user it was their own doing, when it was our bug, is the costliest
@@ -230,7 +263,7 @@ export function playRules(s: State, now: number, emit: (e: HEvent) => void): voi
         options: [
           // Only a user_error reply is marked as final: that keeps it out of "from now on"
           // twice over. Other kinds (a duplicate's link) may go out by a standing answer.
-          { id: "send", label: "Send it", effect: { type: "approve" }, consequence: `posts it as a comment on ${r.ticket.id}${sourceOf(s, r.ticket.source)?.statuses?.replied ? ` and moves it to "${sourceOf(s, r.ticket.source)!.statuses!.replied}"` : ""}; it can't be unsent`, ...(userError ? { irreversible: true } : {}) },
+          { id: "send", label: "Send it", effect: { type: "approve" }, consequence: `posts it as a comment on ${r.ticket.id}${moveTo ? ` and moves it to "${moveTo}"` : ""}; it can't be unsent`, ...(userError ? { irreversible: true } : {}) },
           { id: "edit", label: "Send my text instead (answer with it in the note)", effect: { type: "approve" }, ...(userError ? { irreversible: true } : {}) },
           { id: "hold", label: "Don't send", effect: { type: "ack" } },
         ],
@@ -242,7 +275,9 @@ export function playRules(s: State, now: number, emit: (e: HEvent) => void): voi
     if (!text) continue;
     const src = sourceOf(s, r.ticket.source);
     if (!src) continue;
-    add(t.goal, jiraJob(`${r.todo}-send`, src, r.ticket.id, { comment: text, ...(src.statuses?.replied ? { transition: src.statuses.replied } : {}) }, `Send the reply on ${r.ticket.id}`, t.play), "play:jira");
+    // A reply saying it's fixed closes the ticket's loop; any other waits on the reporter.
+    const status = r.outcome === "fixed" ? src.statuses?.resolved ?? src.statuses?.replied : src.statuses?.replied;
+    add(t.goal, jiraJob(`${r.todo}-send`, src, r.ticket.id, { comment: text, ...(status ? { transition: status } : {}) }, `Send the reply on ${r.ticket.id}`, t.play), "play:jira");
   }
 
   // Each service goal gets one first look, so its first ticket starts from what's known.

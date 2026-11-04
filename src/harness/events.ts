@@ -58,7 +58,8 @@ export type SourceDef = {
   lookbackMinutes?: number; // how far back the first fetch reaches: 1440 (a day)
   // The Jira status a playbook moves a ticket to when it's routed to a service, and after a
   // reply is sent (playbook.ts). Left out, the status isn't changed.
-  statuses?: { routed?: string; replied?: string };
+  // resolved: after the reply saying a fix was merged.
+  statuses?: { routed?: string; replied?: string; resolved?: string };
 };
 
 // In engagement.json under events.rules. The first rule that matches an event routes it.

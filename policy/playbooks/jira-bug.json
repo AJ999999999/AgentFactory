@@ -1,6 +1,6 @@
 {
   "id": "jira-bug",
-  "version": 1,
+  "version": 2,
   "title": "Jira bug",
   "start": "triage",
   "steps": {
@@ -15,9 +15,39 @@
         "For \"from\" and \"to\", the time window the ticket points at, as ISO dates, if it says or implies one."
       ],
       "outcomes": {
-        "route": { "next": ["logs", "code", "diagnose"], "needs": ["service", "terms", "summary"], "means": "it's about one of our services and there's enough to look into. \"service\" is its id from the list above (or your best guess at a new one), \"summary\" one sentence on what the user says went wrong." },
-        "duplicate": { "next": ["reply"], "needs": ["duplicate_of", "summary"], "means": "it's the same problem as another ticket you can name in \"duplicate_of\"." },
-        "needs_info": { "next": ["reply"], "needs": ["missing", "summary"], "means": "nobody could tell what went wrong from what it says. \"missing\" is exactly what to ask the reporter for." }
+        "route": {
+          "next": [
+            "logs",
+            "code",
+            "diagnose"
+          ],
+          "needs": [
+            "service",
+            "terms",
+            "summary"
+          ],
+          "means": "it's about one of our services and there's enough to look into. \"service\" is its id from the list above (or your best guess at a new one), \"summary\" one sentence on what the user says went wrong."
+        },
+        "duplicate": {
+          "next": [
+            "reply"
+          ],
+          "needs": [
+            "duplicate_of",
+            "summary"
+          ],
+          "means": "it's the same problem as another ticket you can name in \"duplicate_of\"."
+        },
+        "needs_info": {
+          "next": [
+            "reply"
+          ],
+          "needs": [
+            "missing",
+            "summary"
+          ],
+          "means": "nobody could tell what went wrong from what it says. \"missing\" is exactly what to ask the reporter for."
+        }
       }
     },
     "logs": {
@@ -40,7 +70,10 @@
     },
     "diagnose": {
       "lane": "diagnose",
-      "after": ["logs", "code"],
+      "after": [
+        "logs",
+        "code"
+      ],
       "conduct": true,
       "priority": 1,
       "text": "Diagnose {ticket.id}: {slots.summary}",
@@ -52,9 +85,38 @@
         "A wrong call here is costly: telling a user it was their mistake when it was our bug is the worst one. If the evidence doesn't settle it, say so and choose needs_info."
       ],
       "outcomes": {
-        "user_error": { "next": ["reply"], "needs": ["summary", "how"], "means": "the service did what it should; the user needs to do something differently. \"how\" is what they should do." },
-        "bug": { "next": ["reply"], "needs": ["summary", "where"], "means": "it's a fault on our side. \"where\" is the file and function, and the log lines that show it." },
-        "needs_info": { "next": ["reply"], "needs": ["missing", "summary"], "means": "the logs and code don't settle it. \"missing\" is what to ask the reporter for." }
+        "user_error": {
+          "next": [
+            "reply"
+          ],
+          "needs": [
+            "summary",
+            "how"
+          ],
+          "means": "the service did what it should; the user needs to do something differently. \"how\" is what they should do."
+        },
+        "bug": {
+          "next": [
+            "reply",
+            "repro",
+            "fix"
+          ],
+          "needs": [
+            "summary",
+            "where"
+          ],
+          "means": "it's a fault on our side. \"where\" is the file and function, and the log lines that show it."
+        },
+        "needs_info": {
+          "next": [
+            "reply"
+          ],
+          "needs": [
+            "missing",
+            "summary"
+          ],
+          "means": "the logs and code don't settle it. \"missing\" is what to ask the reporter for."
+        }
       }
     },
     "reply": {
@@ -68,13 +130,64 @@
         "Plain, friendly words, under 120 words. No internal file names, no blame, no promised dates. Sign off as the support team.",
         "Follow the team's procedure if it says more about replies: {sop}"
       ]
+    },
+    "repro": {
+      "lane": "test-design",
+      "writes": true,
+      "check": "tests-fail",
+      "conduct": true,
+      "ship": false,
+      "needsShip": true,
+      "priority": 1,
+      "text": "Write a test that fails because of {ticket.id}: {slots.summary}",
+      "brief": [
+        "The diagnosis found a bug in {service}: {slots.summary} ({slots.where}). Before anything is fixed, write one test, in {service}'s own test suite under {dir}, that fails because of exactly this bug.",
+        "Change only test files. Don't fix the bug: the next step does.",
+        "The harness runs {test}: it must fail with your test, and pass on the commit you started from. If it already fails there, say so in \"blocker\".",
+        "If no test can show the bug (it needs production data, or timing you can't reproduce), set \"blocker\" with why, so the partner decides."
+      ]
+    },
+    "fix": {
+      "lane": "build",
+      "writes": true,
+      "check": "tests-pass",
+      "after": [
+        "repro"
+      ],
+      "shipWith": [
+        "repro"
+      ],
+      "needsShip": true,
+      "merged": [
+        "fixed-reply"
+      ],
+      "priority": 1,
+      "text": "Fix {ticket.id}: {slots.summary}",
+      "brief": [
+        "Make the smallest change in {dir} that makes the new failing test pass, without changing what the test checks. The diagnosis says: {slots.summary} ({slots.where}).",
+        "The harness runs {test}: everything must pass.",
+        "Once it's done, the partner is asked to open a pull request with your fix and its test; merging stays theirs."
+      ]
+    },
+    "fixed-reply": {
+      "lane": "support",
+      "priority": 1,
+      "reply": true,
+      "text": "Draft the reply on {ticket.id}: it's fixed",
+      "brief": [
+        "Write the reply to the person who filed {ticket.id}. {replyGuide}",
+        "What was found: {slots.summary} {slots.how} {slots.where} {slots.missing} {slots.duplicate_of}",
+        "Plain, friendly words, under 120 words. No internal file names, no blame, no promised dates. Sign off as the support team.",
+        "Follow the team's procedure if it says more about replies: {sop}"
+      ]
     }
   },
   "replies": {
     "user_error": "Explain, step by step, how to do what they were trying to do. Make clear nothing is wrong with them for asking.",
     "bug": "Say it's confirmed as a problem on our side, what it affects, and that a fix is being worked on.",
     "needs_info": "Ask for exactly this, and say why it helps: {slots.missing}",
-    "duplicate": "Say it's the same problem as {slots.duplicate_of}, where updates will be posted."
+    "duplicate": "Say it's the same problem as {slots.duplicate_of}, where updates will be posted.",
+    "fixed": "Say the problem is fixed and the fix is merged, in a sentence on what changed for them, and thank them for reporting it."
   },
   "onboard": {
     "lane": "research",

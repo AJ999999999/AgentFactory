@@ -1,8 +1,8 @@
 # Design: the Jira bug playbook
 
-Step 1 below is built: [docs/jira-bugs.md](../jira-bugs.md) says how to set it up and what it doesn't do yet. Steps 2 and 3 are still to do. Two things changed from this design while it was being built:
+Steps 1 and 2 below are built: [docs/jira-bugs.md](../jira-bugs.md) says how to set them up and what they don't do yet. Step 3 and the reporter's reply coming back in are still to do. Two things changed from this design while it was being built:
 - **Reading logs is the runner's access, not a catalog permission.** The log job runs on the runner with the runner account's read access. No turn has that access.
-- **The reporter's reply doesn't come back in yet.** A ticket that already has a run ignores its later changes, so the harness's own comment can't start a new run. Bringing a reply into its `needs_info` step is part of step 2.
+- **The reporter's reply doesn't come back in yet.** A ticket that already has a run ignores its later changes, so the harness's own comment can't start a new run. Bringing a reply back into its run is still to do.
 
 A user files "it doesn't work" in Jira. Today a rule turns that ticket into one todo in one lane ([events.md](../events.md)). But a bug ticket isn't one piece of work. It's a process with a fork in the middle, and nobody knows which way the fork goes until someone has looked:
 

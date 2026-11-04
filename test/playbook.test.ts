@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { apply, loadPolicy, project } from "../src/harness/project.ts";
 import type { HarnessPolicy, State } from "../src/harness/project.ts";
 import { settle } from "../src/harness/rules.ts";
@@ -23,6 +24,9 @@ import { JiraWriter, adf } from "../src/harness/jira.ts";
 import { receiveEvent } from "../src/harness/events.ts";
 import type { OutsideEvent } from "../src/harness/events.ts";
 import { Sim } from "../src/harness/sim.ts";
+import { builtinCheck, splitCommand } from "../src/harness/checks.ts";
+import type { RunTests } from "../src/harness/checks.ts";
+import type { JobProvider } from "../src/harness/world.ts";
 import type { EngagementDef, GoalDef, HEvent, ServiceDef } from "../src/harness/types.ts";
 
 const full = loadPolicy(path.join(import.meta.dirname, "..", "policy", "harness.json"));
@@ -61,7 +65,7 @@ function finish(s: State, todoId: string, output: TurnOutput, files: string[] = 
   for (const e of settle(s, at)) apply(s, e);
   return v.events;
 }
-const run = "ev-" ; // run ids start with the event's id
+const run = "ev-"; // run ids start with the event's id
 const triageId = (s: State) => [...s.todos.values()].find((t) => t.play?.step === "triage")!.id;
 const step = (s: State, name: string) => [...s.todos.values()].find((t) => t.play?.step === name);
 
@@ -171,7 +175,7 @@ test("a duplicate's reply may go out by a standing answer; facts are kept by sub
   finish(pay, code.id, { done: true, facts: [{ subject: "code.refunds", text: "Refunds/RefundService.cs, method Issue" }] });
   assert.deepEqual(factLines(pay, "payments"), ["Known about payments (unconfirmed): code.refunds: Refunds/RefundService.cs, method Issue"]);
   assert.match(buildPacket(pay, step(pay, "diagnose")!, "test"), /Known about payments/);
-  const bumped = { ...pay, policy: { ...pay.policy, playbooks: { "jira-bug": { ...pay.policy.playbooks!["jira-bug"], version: 2 } } } };
+  const bumped = { ...pay, policy: { ...pay.policy, playbooks: { "jira-bug": { ...pay.policy.playbooks!["jira-bug"], version: pay.policy.playbooks!["jira-bug"].version + 1 } } } };
   assert.match(factLines(bumped, "payments")[0], /older playbook: recheck/);
   // Facts are about a service: a turn in a goal with none can't record one.
   const ev = finish(pay, triageId(pay), { done: false, facts: [{ subject: "x.y", text: "z" }] });
@@ -280,4 +284,140 @@ test("end to end: a ticket is triaged, its logs fetched and read, diagnosed as t
   assert.deepEqual(moves, ["5", "7"], "In Progress when routed, Waiting for customer after the reply");
   assert.equal(s.conducted.length, 1);
   assert.ok([...s.todos.values()].filter((t) => t.play).every((t) => t.status === "done"));
+});
+
+// ---------- the bug branch: a failing test, the fix, its pull request, the reply ----------
+
+const shipping = (p: HarnessPolicy = policy) => {
+  const s = project([engagement, goalEvent(goalDef({ id: "intake", scope: ["intake"] })), goalEvent(goalDef({ id: "pay", service: "payments", scope: ["payments"], ship: { repo: "o/pay", dir: "payments", syncMinutes: 0 } }))], p);
+  for (const e of settle(s, T0)) apply(s, e);
+  return s;
+};
+const toBug = (s: State) => {
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } });
+  const diag = step(s, "diagnose")!;
+  finish(s, diag.id, { done: true, outcome: "bug", slots: { summary: "refunds over 100 are dropped", where: "Refunds.cs Issue()" } });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === diag.id)!.id, { done: true, verdict: "accept" });
+};
+
+test("a bug, where the service ships, gets a failing test then the fix, in the service's code; where it can't ship, only the reply", () => {
+  const s = shipping();
+  toBug(s);
+  const repro = step(s, "repro")!;
+  const fix = step(s, "fix")!;
+  assert.ok(step(s, "reply"), "the reporter hears it's confirmed");
+  assert.deepEqual(repro.writeScope, ["payments"]);
+  assert.equal(repro.check, "tests-fail");
+  assert.ok(repro.conduct, "the conductor reads the test before the fix starts");
+  assert.deepEqual(fix.after, [repro.id]);
+  assert.equal(fix.check, "tests-pass");
+
+  const plain = st();
+  toBug(plain);
+  assert.ok(step(plain, "reply"));
+  assert.equal(step(plain, "repro"), undefined);
+  assert.ok(plain.goals.get("pay")!.notes.some((n) => /no repository to ship to/.test(n.text)));
+});
+
+test("the failing test ships only with its fix: one question, one pull request carrying both, linked to the ticket", () => {
+  const s = shipping();
+  toBug(s);
+  const repro = step(s, "repro")!;
+  finish(s, repro.id, { done: true }, ["payments/tests/refund.test"]);
+  finish(s, [...s.todos.values()].find((t) => t.conducts === repro.id)!.id, { done: true, verdict: "accept" });
+  assert.equal([...s.asks.values()].filter((a) => a.origin === "rule:ship").length, 0, "the test alone isn't shipped");
+  const fix = step(s, "fix")!;
+  finish(s, fix.id, { done: true }, ["payments/Refunds.cs"]);
+  const ask = [...s.asks.values()].find((a) => a.origin === "rule:ship")!;
+  assert.equal(ask.todo, fix.id);
+  apply(s, { id: "ship-yes", at: T0 + 300_000, by: "partner", type: "ask_answered", ask: ask.id, answeredBy: "partner", choice: "approve" });
+  for (const e of settle(s, T0 + 300_000)) apply(s, e);
+  const job = [...s.todos.values()].find((t) => t.job?.spec?.ship === fix.id)!;
+  assert.deepEqual(job.job!.spec.with, [repro.id]);
+  assert.match(job.job!.spec.body as string, /For PAY-1 \(https:\/\/jira.example.com\/browse\/PAY-1\): refunds over 100 are dropped/);
+});
+
+test("tests-fail holds only when the new test fails and the starting commit passes; tests-pass runs the service's tests", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "af-check-"));
+  const g = (args: string[], cwd = repo) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  g(["init", "-q"]);
+  fs.mkdirSync(path.join(repo, "svc"));
+  fs.writeFileSync(path.join(repo, "svc", "a.txt"), "base");
+  g(["add", "-A"]);
+  g(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+  fs.writeFileSync(path.join(repo, "svc", "new.test"), "shows the bug");
+  const svc: ServiceDef = { id: "x", dir: "svc", test: "run tests" };
+  const git = async (args: string[], cwd: string) => g(args, cwd);
+  // Fails wherever the new test is, unless the base is broken too.
+  const runner = (baseBroken: boolean): RunTests => async (cwd) => ({ ok: !fs.existsSync(path.join(cwd, "new.test")) && !baseBroken, tail: "1 failed" });
+  assert.deepEqual(await builtinCheck("tests-fail", repo, svc, { timeoutMs: 1000, run: runner(false), git }), []);
+  assert.match((await builtinCheck("tests-fail", repo, svc, { timeoutMs: 1000, run: runner(true), git }))[0], /already fails on the commit you started from/);
+  assert.match((await builtinCheck("tests-fail", repo, svc, { timeoutMs: 1000, run: async () => ({ ok: true, tail: "" }), git }))[0], /doesn't show the bug/);
+  assert.match((await builtinCheck("tests-pass", repo, svc, { timeoutMs: 1000, run: runner(false), git }))[0], /run tests fails:\n1 failed/);
+  assert.match((await builtinCheck("tests-pass", repo, { id: "y" }, { timeoutMs: 1000, git }))[0], /needs the service's test command/);
+  assert.equal(g(["worktree", "list"]).trim().split("\n").length, 1, "the base checkout is gone again");
+  assert.deepEqual(splitCommand(`dotnet test "My Tests.csproj" --no-restore`), ["dotnet", "test", "My Tests.csproj", "--no-restore"]);
+});
+
+test("end to end: a bug gets its failing test, its fix and a pull request you approve; once merged, the reporter hears it's fixed and the ticket is resolved", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-fix-"));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-fixlogs-"));
+  fs.writeFileSync(path.join(logDir, "pay-1.log"), "10:02 ERROR refund dropped amount=150 user=u-4417\n");
+  const posted: Array<{ url: string; method?: string; body?: string }> = [];
+  const jira = new JiraWriter({ env: { AF_JIRA_TOKEN: "tok" }, fetch: async (url, init) => {
+    posted.push({ url, method: init.method, body: init.body });
+    return { ok: true, status: 200, json: async () => ({ transitions: [{ id: "5", to: { name: "In Progress" } }, { id: "7", to: { name: "Waiting for customer" } }, { id: "9", to: { name: "Resolved" } }] }), text: async () => "" };
+  } });
+  // GitHub, played: each pull request opens, its checks pass, and it's merged.
+  const shipped: Array<Record<string, unknown>> = [];
+  const ship: JobProvider = {
+    async start(t) { shipped.push(t.job!.spec); return t.job!.spec.watch ? "watch|x" : "gh|https://api.github.com|o/pay|7|abc|0|AF_GITHUB_TOKEN"; },
+    async poll() { return { status: "succeeded", metrics: {}, note: "pull request https://github.com/o/pay/pull/7" }; },
+  };
+  // The service's tests: they fail while the new test is there without the fix.
+  const runTests: RunTests = async (cwd) => ({ ok: !fs.existsSync(path.join(cwd, "tests", "refund.test")) || fs.existsSync(path.join(cwd, "Refunds.fixed")), tail: "Refund_over_100 failed" });
+  let delivered = false;
+  const src = { ...source, statuses: { ...source.statuses, resolved: "Resolved" } };
+  const def: EngagementDef = {
+    id: "support", title: "Support", principals: { partner: "you" },
+    services: [{ id: "payments", dir: "payments", test: "dotnet test", logs: { kind: "files", where: path.join(logDir, "pay-*.log") } }],
+    events: { sources: [src], rules: [{ id: "bugs", match: { source: "jira", types: ["bug"] }, goal: "intake", playbook: "jira-bug" }] },
+    goals: [goalDef({ id: "intake", scope: ["intake"] }), goalDef({ id: "pay", service: "payments", scope: ["payments"], ship: { repo: "o/pay", dir: "payments", syncMinutes: 0 } })],
+  };
+  const lane = (l: string, run: Behavior["run"]): Behavior => ({ name: l, when: (c) => c.todo.lane === l, run });
+  const write = (wt: string, rel: string) => { fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true }); fs.writeFileSync(path.join(wt, rel), "x"); };
+  const agent = new ScriptedTurnAgent([
+    { name: "onboard", when: (c) => c.todo.play?.step === "onboard", run: () => ({ done: true }) },
+    lane("ticket-triage", () => ({ done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } })),
+    lane("research", () => ({ done: true, note: "Refunds.cs Issue() drops amounts over 100." })),
+    lane("diagnose", () => ({ done: true, outcome: "bug", slots: { summary: "refunds over 100 are dropped", where: "Refunds.cs Issue()" } })),
+    lane("conduct", () => ({ done: true, verdict: "accept" })),
+    lane("test-design", (c) => { write(c.wtDir, "payments/tests/refund.test"); return { done: true }; }),
+    lane("build", (c) => { write(c.wtDir, "payments/Refunds.fixed"); return { done: true }; }),
+    lane("probation-review", () => ({ done: true, verdict: "accept", note: "the fix and its test match the diagnosis" })),
+    lane("support", (c) => ({ done: true, reply: { text: c.todo.id.endsWith("fixed-reply") ? "It's fixed: refunds over 100 go through now." : "Confirmed: refunds over 100 are dropped. We're fixing it." } })),
+  ]);
+  const sim = await Sim.create({
+    dir, def, policy: full, start: "2026-11-04T09:00:00Z", agent, runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], jira, ship, runTests,
+    seed: async (repo) => {
+      fs.mkdirSync(path.join(repo.cwd, "payments"), { recursive: true });
+      fs.writeFileSync(path.join(repo.cwd, "payments", "Refunds.cs"), "// refunds");
+      await repo.runAsync(["add", "-A"]);
+      await repo.commitAll("the service's code", {});
+      await repo.runAsync(["push", "-q", "origin", "HEAD:main"]);
+    },
+    people: [{ role: "partner", answer: (a) => (["rule:jira_reply", "rule:ship"].includes(a.origin) ? { by: "partner", choice: a.origin === "rule:ship" ? "approve" : "send" } : a.origin === "rule:staffing" ? { by: "partner", choice: "without" } : null) }],
+    world: { events: { jira: { id: "jira", fetch: async () => (delivered ? [] : ((delivered = true), [ticket()])) } } },
+  });
+  await sim.run({ until: "2026-11-06T09:00:00Z" });
+  const s = await sim.harness.state();
+  const steps = agent.calls.map((c) => s.todos.get(c.todo)?.play?.step ?? c.lane).filter((x) => x !== "onboard");
+  assert.deepEqual(steps, ["triage", "code", "diagnose", "conduct", "reply", "repro", "conduct", "fix", "probation-review", "fixed-reply"]);
+  const pr = shipped.find((x) => x.ship)!;
+  assert.deepEqual(pr.with, [`${triageId(s)}-repro`], "the pull request carries the failing test");
+  const comments = posted.filter((p) => p.method === "POST" && p.url.endsWith("/comment")).map((p) => JSON.parse(p.body!).body);
+  assert.deepEqual(comments, ["Confirmed: refunds over 100 are dropped. We're fixing it.", "It's fixed: refunds over 100 go through now."]);
+  const moves = posted.filter((p) => p.method === "POST" && p.url.endsWith("/transitions")).map((p) => JSON.parse(p.body!).transition.id);
+  assert.deepEqual(moves, ["5", "7", "9"], "In Progress, Waiting for customer, then Resolved after the fix merged");
 });

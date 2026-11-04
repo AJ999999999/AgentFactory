@@ -4,14 +4,15 @@ A user files "it doesn't work" in Jira. The harness takes the ticket through the
 
 ```
 ticket ─► triage ─► logs ∥ code ─► diagnose ─┬─► user error ─► reply
-                                             ├─► bug ─────────► reply
                                              ├─► needs info ──► reply
-        (triage can also say) duplicate ─────┴────────────────► reply
+                                             └─► bug ─► reply ("confirmed")
+                                                     └► failing test ─► fix ─► pull request ─► merged ─► reply ("fixed")
+        (triage can also say) duplicate ──────────────────────────────────────► reply
 ```
 
-Every reply goes to you as a draft first. The loop posts it on the ticket once you say send, then moves the ticket's status. No turn touches Jira or production.
+Every reply goes to you as a draft first. The loop posts it on the ticket once you say send, then moves the ticket's status. Every pull request is asked about first, and merging stays yours. No turn touches Jira, GitHub or production.
 
-This is the first part of the [design](next/230-jira-bug-playbook.md). Fixing the bug itself (a failing test, the fix, a pull request) comes next. Until then, a `bug` outcome confirms the bug to the reporter, and the diagnosis is on record for whoever fixes it.
+It follows the [design](next/230-jira-bug-playbook.md).
 
 ## How it works
 
@@ -27,6 +28,23 @@ The steps are a **playbook**, `policy/playbooks/jira-bug.json`. It's written onc
 
 The agent picks the outcome, but it never writes the next steps itself. The harness adds them from the playbook.
 
+### When it's a bug
+
+A `bug` diagnosis is still only an opinion. It becomes a fix only once a test shows it:
+
+- **Failing test.** A turn writes one test in the service's own suite that fails because of the bug. It must not fix the bug. The harness runs the service's `test` command twice:
+  - With the new test, it must fail.
+  - On the commit the turn started from, it must pass. This happens in a separate checkout, so nothing in the turn's own folder moves.
+
+  If the suite already fails on the starting commit, the turn is thrown away and told so. If no test can show the bug, the turn says why, and you decide. The conductor reads the test before the fix starts.
+- **Fix.** The smallest change that makes the test pass. The whole suite must pass.
+- **Pull request.** You're asked, as for any shipped work ([ship.md](ship.md)). The pull request carries both the fix and the failing test, says which ticket it's for, and goes through its checks and a review on another model. Merging is yours.
+- **Fixed.** Once it's merged, the reply saying it's fixed is drafted, and after you send it, the ticket moves to `resolved`.
+
+This needs the service's goal to ship to a repository (`ship` in the goal). Without that, a bug gets the "confirmed" reply and stops, with a note saying why.
+
+Between the failing test and the fix, the service's tests are red in the engagement's copy. That's deliberate: it's the proof. Other work in the same service goal sees that failure in its checks until the fix lands.
+
 ## What you set up, once
 
 Everything below names your systems, so it goes in `engagement.json` in your private folder, not in this repo.
@@ -37,7 +55,7 @@ Everything below names your systems, so it goes in `engagement.json` in your pri
 "services": [
   {
     "id": "payments", "names": ["PayAPI", "checkout"], "jiraComponents": ["Payments"],
-    "dir": "payments", "build": "dotnet build", "test": "dotnet test",
+    "dir": "payments", "build": "dotnet build", "test": "dotnet test --no-restore",
     "logs": { "kind": "files", "where": "\\\\pay-prod-01\\logs\\PayApi-*.log", "notes": "one file per day, times in UTC" },
     "sample": "samples/payments.log",
     "sop": "https://wiki.example.com/payments/support"
@@ -49,13 +67,16 @@ Everything below names your systems, so it goes in `engagement.json` in your pri
 - **`logs.where`** is a folder the runner can read, with `*` in the file name for files that roll over. Read-only access for the account the scheduled task runs as is enough.
 - **`sample`** is a short log file, with personal data removed, so the model sees the real format. Put it in the seed.
 - **`notes`** covers what the sample doesn't show.
+- **`test`** is the command the harness runs for the failing test and the fix, in the service's `dir`, on the runner. The runner needs the service's toolchain (the .NET SDK, say).
+- **Let the turns run it too.** The failing-test and fix seats may run only the commands their grant names: `npm test` and `npm run build` by default (`shell:test` in `policy/harness-agents.json`). Add yours, for example `"--allow-tool", "shell(dotnet test)"` (Copilot matches the command and subcommand, whatever the flags), so a turn can try its test before it finishes.
 
 **2. The goals:** one intake goal for new tickets, and one perpetual goal per service with `"service"` set to the service's id:
 
 ```json
 "goals": [
   { "id": "intake", "title": "New tickets", "objective": "Route each ticket to its service", "owner": "partner", "scope": ["intake"], "assumptions": [], "budget": { "turnsPerWeek": 100 }, "perpetual": true },
-  { "id": "pay", "title": "Payments support", "objective": "Answer Payments tickets", "owner": "partner", "service": "payments", "scope": ["payments"], "assumptions": [], "budget": { "turnsPerWeek": 200 }, "perpetual": true }
+  { "id": "pay", "title": "Payments support", "objective": "Answer and fix Payments tickets", "owner": "partner", "service": "payments", "scope": ["payments"], "assumptions": [], "budget": { "turnsPerWeek": 200 }, "perpetual": true,
+    "ship": { "repo": "contoso/payments-api", "dir": "payments" } }
 ]
 ```
 
@@ -64,12 +85,12 @@ Everything below names your systems, so it goes in `engagement.json` in your pri
 ```json
 "events": {
   "sources": [{ "id": "jira-pay", "kind": "jira", "url": "https://jira.example.com", "jql": "project = PAY AND issuetype = Bug", "tokenEnv": "AF_JIRA_TOKEN",
-                "statuses": { "routed": "In Progress", "replied": "Waiting for customer" } }],
+                "statuses": { "routed": "In Progress", "replied": "Waiting for customer", "resolved": "Resolved" } }],
   "rules": [{ "id": "bugs", "match": { "source": "jira-pay", "types": ["Bug"] }, "goal": "intake", "playbook": "jira-bug", "maxOpen": 3 }]
 }
 ```
 
-The token in `AF_JIRA_TOKEN` now also has to comment and change status. Give it an account that can do only that.
+The token in `AF_JIRA_TOKEN` now also has to comment and change status. Give it an account that can do only that. Each status is matched by the transition's name or the status it leads to.
 
 **4. Check it before it runs:**
 
@@ -93,7 +114,6 @@ npm run harness -- facts confirm payments logs.format
 
 ## What's not here yet
 
-- **The fix:** a test that fails on the bug, the fix, and its pull request, through [ship](ship.md).
 - **The reporter's answer coming back in.** Today, a ticket that already has a run ignores its later changes, so our own comment doesn't start a new run. Answering `needs_info` means a person reads the reporter's reply.
 - **Log tools** other than files, such as Application Insights or Splunk.
 - **Learning across tickets:** the close step, lessons proposed to you, and numbers per playbook.

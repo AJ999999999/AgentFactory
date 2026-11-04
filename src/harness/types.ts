@@ -119,6 +119,9 @@ export type EngagementDef = {
   // Whose memory the agents should see, and on which subjects ("work.*"): what applies
   // reaches their packets as defaults and things to check, never as permission.
   memory?: { principal: string; subjects: string[] };
+  // Events from outside (Jira, feedback, production checks) and the rules that route them
+  // into goals (events.ts). Kept here, in your private folder, since they name your systems.
+  events?: import("./events.ts").EventsDef;
 };
 
 // ---------- work ----------
@@ -291,6 +294,11 @@ export type HEvent = Base &
     | { type: "ask_auto_closed"; ask: string; reason: "criteria_met" | "precedent" | "standing"; precedentAsk?: string; choice?: string; note?: string }
     // A standing answer taken back: questions of that shape reach the person again.
     | { type: "standing_revoked"; goal: string; shape: string; reason?: string }
+    // Something that happened outside, as its source reported it, with the rule that
+    // matched it when it arrived (null: recorded only). events.ts.
+    | { type: "event_received"; event: import("./events.ts").OutsideEvent; rule: string | null }
+    // The engagement's event sources and rules, set or changed after it was opened.
+    | { type: "events_configured"; events: import("./events.ts").EventsDef }
     | { type: "finding"; finding: Finding }
     | { type: "finding_discounted"; finding: string; reason: string }
     | { type: "assumption_reset"; goal: string; assumption: string; reason: string }

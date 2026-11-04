@@ -15,6 +15,7 @@
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
 //   npm run harness -- pause [--reason ..] | resume                         stop anything new from starting, or let it start
 //   npm run harness -- budget <goal> turns=300[,usd=50]                     a new budget for a goal
+//   npm run harness -- drop <todo> --reason "why"                           drop work (and what waits on it), as the partner
 //
 // npm run panel shows all of this (and answers) in a page on this PC.
 //
@@ -445,6 +446,12 @@ async function main(): Promise<void> {
       if (!rest[0] || !rest[1] || rest[0].startsWith("--")) throw new Error("usage: budget <goal> turns=300[,usd=50,gpuHours=10]");
       await (await harness(currentEngagement())).setBudget(rest[0], kv(rest[1]), flag("by", "partner"));
       console.log(`${rest[0]}: budget ${rest[1]}`);
+      return;
+    }
+    case "drop": {
+      if (!rest[0] || rest[0].startsWith("--")) throw new Error('usage: drop <todo> --reason "why"');
+      const gone = await (await harness(currentEngagement())).drop(rest[0], flag("reason") ?? "", flag("by", "partner"));
+      console.log(`dropped ${gone.join(", ")}`);
       return;
     }
     case "escalation": {

@@ -290,6 +290,9 @@ export type HEvent = Base &
     // standing: "from now on", so the next question of the same shape is settled with
     // this choice (standing.ts).
     | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision; standing?: boolean }
+    // A person fixes what their answer said. Only the note changes: the choice, and what
+    // it already did (work done or dropped, a goal closed), stand.
+    | { type: "answer_corrected"; ask: string; note: string }
     // The harness settled an ask without the person: the todo's own checker already
     // passed (criteria_met), the same question was answered before (precedent), or a standing
     // answer covers questions of its shape (standing; precedentAsk is that answer's ask). Always

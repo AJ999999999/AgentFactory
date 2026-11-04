@@ -47,13 +47,13 @@ const def = (): EngagementDef => ({
 });
 
 // A workspace laid out the way `npm run harness -- open` leaves it.
-async function workspace(): Promise<{ dir: string; h: Harness }> {
+async function workspace(d: EngagementDef = def()): Promise<{ dir: string; h: Harness }> {
   const dir = tmp("ws");
   const home = path.join(dir, ".af", "harness", "shop");
   const control = await createWorkspace({ dir: home });
   fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ repo: control.cwd, remote: path.join(home, "origin.git") }));
   const h = new Harness({ control, engagement: "shop", policy, clock: new SystemClock(), world: {}, agent: noTurns, worktreeRoot: path.join(home, "wt") });
-  await h.open(def());
+  await h.open(d);
   return { dir, h };
 }
 
@@ -112,6 +112,24 @@ test("a new budget answers the harness's own question about it, or is recorded a
   assert.deepEqual(s.goals.get("g")!.def.budget, { turns: 25 });
   await assert.rejects(h.setBudget("g", { turns: -1 }), /0 or more/);
   await assert.rejects(h.setBudget("nope", { turns: 5 }), /no goal/);
+});
+
+test("the partner can drop work with a reason, and what waits on it goes too; work under way can't be dropped", async () => {
+  const d = def();
+  d.goals[0].todos!.push({ id: "polish", lane: "build", text: "Polish the core loop", after: ["core"] });
+  const { h } = await workspace(d);
+  await assert.rejects(h.drop("core", "  "), /say why/);
+  await assert.rejects(h.drop("nope", "no such work"), /no todo/);
+  assert.deepEqual((await h.drop("core", "an agent proposed it twice")).sort(), ["core", "polish"]);
+  let s = await h.state();
+  assert.equal(s.todos.get("core")!.status, "superseded");
+  assert.match(s.todos.get("core")!.reason ?? "", /dropped by partner: an agent proposed it twice/);
+  assert.equal(s.todos.get("polish")!.status, "superseded", "work that waits on it is dropped by the rules");
+  assert.ok(!s.autonomous.some((a) => a.what.includes("Build the core loop")), "the partner's drop isn't listed as something the harness did on its own");
+  await assert.rejects(h.drop("core", "again"), /already superseded/);
+  s = await h.state();
+  assert.equal(s.todos.get("play")!.status, "running", "the parent's playtest is with the parent from the start");
+  await assert.rejects(h.drop("play", "not this week"), /under way/);
 });
 
 // ---------- what the page shows ----------

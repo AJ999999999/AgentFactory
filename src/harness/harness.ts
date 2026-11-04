@@ -34,7 +34,7 @@ import type { AskState, HarnessPolicy, State, TodoState } from "./project.ts";
 import { apply, beliefs, compare, findAssumption, openAsks, project, seatOf, seatPermissions } from "./project.ts";
 import { settle } from "./rules.ts";
 import type { Answer } from "./answers.ts";
-import { answerEvents } from "./answers.ts";
+import { answerEvents, correctionEvents } from "./answers.ts";
 import type { Hint, Runner } from "./select.ts";
 import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.ts";
 import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
@@ -166,6 +166,18 @@ export class Harness {
     return events;
   }
 
+  // Fix the note of an answer already given; the agents get the new note from then on.
+  // Returns nothing when the note already says that.
+  async correctAnswer(askId: string, c: { by: string; note: string }): Promise<HEvent[]> {
+    const s = await this.state();
+    const events = correctionEvents(s, askId, c, this.clock.now());
+    if (!events.length) return events;
+    for (const e of events) apply(s, e);
+    const follow = settle(s, this.clock.now());
+    await appendEvents(this.control, this.engagement, [...events, ...follow], `correct ${askId}`, { Ask: askId, "Corrected-by": c.by });
+    return events;
+  }
+
   // ---------- the partner's controls ----------
 
   // Pause: nothing new starts (turns, jobs, waits, people's tasks) until resumed.
@@ -235,6 +247,27 @@ export class Harness {
     const follow = settle(s, now);
     await appendEvents(this.control, this.engagement, [e, ...follow], `work for ${goalId}: ${text.slice(0, 60)}`, { "Changed-by": by });
     return id;
+  }
+
+  // Drop work, as the partner: an agent's proposal that repeats planned work, or work
+  // that no longer makes sense, with the partner's reason in the log. Work that waits on
+  // it is dropped too, by the rules. Work already under way is left alone: stop its turn,
+  // or answer its person's question with "cannot", first.
+  async drop(todoId: string, reason: string, by = "partner"): Promise<string[]> {
+    const why = reason?.trim();
+    if (!why) throw new Error("say why it's dropped (--reason)");
+    const s = await this.state();
+    const t = s.todos.get(todoId);
+    if (!t) throw new Error(`no todo ${todoId}`);
+    if (t.status === "done" || t.status === "superseded") throw new Error(`${todoId} is already ${t.status}`);
+    if (t.status === "running") throw new Error(`${todoId} is under way: stop its turn, or answer its question with "cannot", first`);
+    const before = new Set([...s.todos.values()].filter((x) => x.status === "superseded").map((x) => x.id));
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("drop", by, todoId, now), at: now, by, type: "todo_superseded", todo: todoId, reason: `dropped by ${by}: ${why}` };
+    apply(s, e);
+    const follow = settle(s, now);
+    await appendEvents(this.control, this.engagement, [e, ...follow], `drop ${todoId}: ${why.slice(0, 60)}`, { "Changed-by": by });
+    return [...s.todos.values()].filter((x) => x.status === "superseded" && !before.has(x.id)).map((x) => x.id);
   }
 
   async setBudget(goalId: string, budget: Budget, by = "partner"): Promise<void> {

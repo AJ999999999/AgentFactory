@@ -28,6 +28,7 @@ npm run harness -- tick [--copilot <path>]   # one wake: maintenance, then at mo
 npm run harness -- status --packet         # beliefs, open work and why it waits, questions for the partner
 npm run harness -- escalation              # which questions changed anything, blind follow rate, spot-check miss rate
 npm run harness -- answer <ask> --choice <id> [--result supports --metrics k=v --runs n --note ..]
+npm run harness -- correct <ask> --note ..  # fix what an answer's note says; its choice stands
 npm run harness -- pause | resume | budget <goal> turns=N
 npm run panel [-- --dir <folder> ...] [-- --demo]   # local page on 127.0.0.1:4700, over every folder `open` ran in: questions, live turns with Stop
 npm run mcp:partner [-- --dir <folder> ...]   # the partner's tools over MCP, over the panel's folders (status, open_questions, answer, add_work, pause, stop_turn)

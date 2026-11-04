@@ -13,8 +13,10 @@
 //   npm run harness -- events [config <file.json> | test <source>]  events from outside (Jira): what came in and where it went;
 //                                                                    set the sources and rules; fetch once from a source and print, writing nothing
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
+//   npm run harness -- correct <ask> --note "the new text" [--by partner]      fix what an answer's note says; its choice stands
 //   npm run harness -- pause [--reason ..] | resume                         stop anything new from starting, or let it start
 //   npm run harness -- budget <goal> turns=300[,usd=50]                     a new budget for a goal
+//   npm run harness -- drop <todo> --reason "why"                           drop work (and what waits on it), as the partner
 //
 // npm run panel shows all of this (and answers) in a page on this PC.
 //
@@ -24,6 +26,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { cloneControl, Git, initBare } from "../git.ts";
 import { readEvents } from "./store.ts";
 import { resolveCommand, runCommand, sleepUntil } from "../proc.ts";
@@ -59,6 +62,12 @@ function flag(name: string, fallback?: string): string | undefined {
   return i >= 0 ? rest[i + 1] : fallback;
 }
 
+// import() takes a URL, and on Windows a bare path ("C:\...") reads as one with the
+// scheme "c:", so a world module outside this repo has to go in as a file:// URL.
+function importFile(file: string): Promise<unknown> {
+  return import(pathToFileURL(path.resolve(file)).href);
+}
+
 function home(engagement: string): string {
   return path.join(process.cwd(), ".af", "harness", engagement);
 }
@@ -72,7 +81,9 @@ function currentEngagement(): string {
   return all[0];
 }
 
-async function harness(engagement: string): Promise<Harness> {
+// The harness's own events (lease taken, merged, each wake) go to stderr, unless the
+// caller keeps a log: the scheduled loop's stderr is for crashes only.
+async function harness(engagement: string, logLine?: (line: string) => void): Promise<Harness> {
   const cfg = JSON.parse(fs.readFileSync(path.join(home(engagement), "config.json"), "utf8")) as { repo: string; world?: string; memory?: string };
   const lib = policy.team?.library;
   const agent: TurnAgent = buildTurnAgent(agentsConfig(), {
@@ -86,7 +97,7 @@ async function harness(engagement: string): Promise<Harness> {
   // The engagement's world (checkers, providers) is saved when it's opened, so the
   // scheduled loop loads the same red lines a manual run does.
   const worldFile = flag("world") ?? cfg.world;
-  const world: World = !worldFile ? {} : worldFile.startsWith("case:") ? await caseWorld(worldFile.slice(5)) : ((await import(path.resolve(worldFile))) as { world: World }).world;
+  const world: World = !worldFile ? {} : worldFile.startsWith("case:") ? await caseWorld(worldFile.slice(5)) : ((await importFile(worldFile)) as { world: World }).world;
   // Memory about the people this engagement serves (open --memory <dir>), read fresh
   // for every turn so a lapsed plan is gone the moment it lapses.
   const memPolicy = loadMemoryPolicy(path.join(ROOT, "policy", "memory.json"));
@@ -95,7 +106,7 @@ async function harness(engagement: string): Promise<Harness> {
     if (!m || !cfg.memory) return [];
     return aboutLines(understand(readMemory(cfg.memory, m.principal), Date.now(), memPolicy, { subjects: m.subjects }), m.principal);
   };
-  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), turnsDir: path.join(home(engagement), "turns"), slots: Number(flag("slots", "2")), log: (e, d) => process.stderr.write(`${e} ${JSON.stringify(d)}\n`), about });
+  return new Harness({ control: new Git(cfg.repo), engagement, policy, clock: new SystemClock(), world, agent, worktreeRoot: path.join(home(engagement), "wt"), turnsDir: path.join(home(engagement), "turns"), slots: Number(flag("slots", "2")), log: (e, d) => (logLine ? logLine(`${e} ${JSON.stringify(d)}`) : process.stderr.write(`${e} ${JSON.stringify(d)}\n`)), about });
 }
 
 // --models model-a=pi:,model-b=codex: tries other CLIs for one run without editing the
@@ -163,7 +174,7 @@ async function main(): Promise<void> {
       const def = rest[0].startsWith("case:") ? await caseDef(rest[0].slice(5)) : (JSON.parse(fs.readFileSync(rest[0], "utf8")) as EngagementDef);
       // Check what's passed before anything is created.
       if (flag("seed") && !fs.statSync(path.resolve(flag("seed")!), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`--seed ${flag("seed")} is not a folder`);
-      if (flag("world") && !flag("world")!.startsWith("case:")) await import(path.resolve(flag("world")!));
+      if (flag("world") && !flag("world")!.startsWith("case:")) await importFile(flag("world")!);
       const dir = home(def.id);
       fs.mkdirSync(dir, { recursive: true });
       let remote = flag("remote");
@@ -197,7 +208,7 @@ async function main(): Promise<void> {
       }
       const w = flag("world");
       const world = w ? (w.startsWith("case:") ? w : path.resolve(w)) : undefined;
-      if (world && !world.startsWith("case:")) await import(world); // fail now, not in the scheduled task
+      if (world && !world.startsWith("case:")) await importFile(world); // fail now, not in the scheduled task
       const mem = flag("memory") ? path.resolve(flag("memory")!) : undefined;
       fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}), ...(mem ? { memory: mem } : {}) }, null, 2));
       await (await harness(def.id)).open(def);
@@ -231,15 +242,18 @@ async function main(): Promise<void> {
       // rechecks at least every --poll minutes so your answers are picked up (a quiet
       // recheck is one ls-remote), and rides out network drops instead of exiting.
       const eng = currentEngagement();
-      const h = await harness(eng);
-      const rn = runner();
-      const poll = Number(flag("poll", "10")) * 60_000;
       const logFile = flag("log");
       const say = (line: string) => {
         const l = `${new Date().toISOString()} ${line}`;
         console.log(l);
         if (logFile) appendLog(logFile, l);
       };
+      // With --log, the harness's events go there too. On stderr, the scheduled task's
+      // Windows PowerShell turned every one into a six-line error in loop.err.log, which
+      // never rotates and is where a crash should stand out.
+      const h = await harness(eng, logFile ? say : undefined);
+      const rn = runner();
+      const poll = Number(flag("poll", "10")) * 60_000;
       say(`loop started: ${eng}, runner ${rn.id}, pid ${process.pid}`);
       let backoff = 60_000;
       let checkedAt = -Infinity;
@@ -364,6 +378,12 @@ async function main(): Promise<void> {
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
       return;
     }
+    case "correct": {
+      if (!rest[0] || rest[0].startsWith("--") || flag("note") === undefined) throw new Error('usage: correct <ask> --note "the new text" [--by partner]');
+      const fixed = await (await harness(currentEngagement())).correctAnswer(rest[0], { by: flag("by") ?? "partner", note: flag("note")! });
+      console.log(fixed.length ? `corrected ${rest[0]}: agents get the new note from now on` : `${rest[0]} already says that`);
+      return;
+    }
     case "trace": {
       if (!rest[0] || rest[0].startsWith("--")) throw new Error("usage: trace <id>  (a goal, todo, question, finding, turn or event id)");
       const eng = currentEngagement();
@@ -445,6 +465,12 @@ async function main(): Promise<void> {
       if (!rest[0] || !rest[1] || rest[0].startsWith("--")) throw new Error("usage: budget <goal> turns=300[,usd=50,gpuHours=10]");
       await (await harness(currentEngagement())).setBudget(rest[0], kv(rest[1]), flag("by", "partner"));
       console.log(`${rest[0]}: budget ${rest[1]}`);
+      return;
+    }
+    case "drop": {
+      if (!rest[0] || rest[0].startsWith("--")) throw new Error('usage: drop <todo> --reason "why"');
+      const gone = await (await harness(currentEngagement())).drop(rest[0], flag("reason") ?? "", flag("by", "partner"));
+      console.log(`dropped ${gone.join(", ")}`);
       return;
     }
     case "escalation": {
@@ -584,7 +610,9 @@ async function doctor(): Promise<boolean> {
     }
     if (process.platform === "win32") {
       try {
-        const q = execFileSync("schtasks", ["/Query", "/TN", `AgentFactory harness - ${eng}`, "/FO", "LIST"], { encoding: "utf8", windowsHide: true });
+        // Piped, so schtasks's own "ERROR: The system cannot find the file specified."
+        // doesn't land between doctor's lines when there's no task.
+        const q = execFileSync("schtasks", ["/Query", "/TN", `AgentFactory harness - ${eng}`, "/FO", "LIST"], { encoding: "utf8", windowsHide: true, stdio: "pipe" });
         const status = q.match(/Status:\s*(.+)/)?.[1]?.trim() ?? "?";
         line(true, `${eng}: scheduled task installed (${status})`);
       } catch {

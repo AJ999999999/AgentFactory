@@ -1,6 +1,6 @@
 {
   "id": "jira-bug",
-  "version": 3,
+  "version": 4,
   "title": "Jira bug",
   "start": "triage",
   "steps": {
@@ -238,5 +238,17 @@
         "means": "nothing for us to do: a thank-you, or they say it's sorted."
       }
     }
+  },
+  "closeAfterDays": 3,
+  "close": {
+    "lane": "retro",
+    "priority": 3,
+    "text": "Look back at {ticket.id}: {ticket.title}",
+    "brief": [
+      "{ticket.id} has been quiet for a few days. Look back at what happened, listed in your todo, and at the notes and files it names.",
+      "Propose at most three lessons that would have made this ticket quicker or the reply better, and that hold for the next {service} ticket too. Each is a fact with a subject starting lesson., such as lesson.refund-tickets.",
+      "Only what this ticket showed and what held to the end. Not guesses, not hypotheses that were dropped along the way, not general advice. If there's nothing worth keeping, record none: that's a fine answer.",
+      "The partner decides which to keep; nothing you propose is used before that."
+    ]
   }
 }

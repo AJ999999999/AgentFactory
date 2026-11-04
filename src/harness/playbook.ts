@@ -58,6 +58,9 @@ export type Playbook = {
   // When someone comments on a ticket after its run finished: the first step of a new round.
   followUp?: PlayStep;
   maxFollowUps?: number; // rounds per ticket before it's left to a person (5)
+  // Once a ticket has been quiet this long, a judge looks back and proposes lessons (retro.ts).
+  close?: PlayStep;
+  closeAfterDays?: number; // 3
 };
 
 export function loadPlaybooks(dir: string): Record<string, Playbook> {
@@ -76,7 +79,7 @@ export function playbookProblems(pb: Playbook): string[] {
   const out: string[] = [];
   if (!pb.id || !Number.isInteger(pb.version)) out.push("needs an id and a whole-number version");
   if (!pb.steps?.[pb.start]) out.push(`start step ${pb.start} doesn't exist`);
-  const all = { ...(pb.steps ?? {}), ...(pb.onboard ? { onboard: pb.onboard } : {}), ...(pb.followUp ? { [FOLLOW_UP]: pb.followUp } : {}) };
+  const all = { ...(pb.steps ?? {}), ...(pb.onboard ? { onboard: pb.onboard } : {}), ...(pb.followUp ? { [FOLLOW_UP]: pb.followUp } : {}), ...(pb.close ? { close: pb.close } : {}) };
   for (const [id, st] of Object.entries(all)) {
     for (const a of st.after ?? []) if (!pb.steps[a]) out.push(`${id}: after ${a}, which doesn't exist`);
     for (const [o, b] of Object.entries(st.outcomes ?? {})) for (const n of b.next) if (!pb.steps[n]) out.push(`${id}: outcome ${o} leads to ${n}, which doesn't exist`);
@@ -90,7 +93,7 @@ export const playbookOf = (s: State, ref?: PlayRef) => (ref ? s.policy.playbooks
 export const stepOf = (s: State, t: Pick<TodoState, "play">): PlayStep | undefined => {
   const pb = playbookOf(s, t.play);
   if (!pb || !t.play) return undefined;
-  return t.play.step === "onboard" ? pb.onboard : t.play.step === FOLLOW_UP ? pb.followUp : pb.steps[t.play.step];
+  return special(pb, t.play.step) ?? pb.steps[t.play.step];
 };
 
 export const serviceOf = (s: State, id?: string): ServiceDef | undefined => (id ? (s.engagement?.services ?? []).find((x) => x.id === id) : undefined);
@@ -121,14 +124,16 @@ function vars(s: State, ref: PlayRef, outcome?: string): Record<string, string |
 
 // A run's first step is the run itself; each later step is "<run>-<step>", so taking a
 // branch twice adds it once.
-const stepId = (pb: Playbook, run: string, step: string) => (step === pb.start || step === FOLLOW_UP ? run : `${run}-${step}`);
+const stepId = (pb: Playbook, run: string, step: string) => (step === pb.start || step === FOLLOW_UP || step === "close" ? run : `${run}-${step}`);
 export const FOLLOW_UP = "follow-up";
+// Steps outside the main flow: each is the first (and only) step of a run of its own.
+const special = (pb: Playbook, step: string): PlayStep | undefined => (step === "onboard" ? pb.onboard : step === FOLLOW_UP ? pb.followUp : step === "close" ? pb.close : undefined);
 const LIVE = ["open", "running", "review", "blocked"];
 
 // One step of a run, as a todo.
 export function stepTodo(s: State, ref: PlayRef, step: string, outcome?: string): TodoDraft & { id: string } {
   const pb = playbookOf(s, ref)!;
-  const st = step === "onboard" ? pb.onboard! : step === FOLLOW_UP ? pb.followUp! : pb.steps[step];
+  const st = special(pb, step) ?? pb.steps[step];
   const id = stepId(pb, ref.run, step);
   const v = vars(s, ref, outcome);
   const svc = serviceOf(s, ref.service);
@@ -171,7 +176,8 @@ export function playPrompt(s: State, t: TodoState): string[] {
 // What's known about a service, for the packet: confirmed facts first, then unconfirmed
 // ones, marked; facts learned under an older playbook are marked to recheck.
 export function factLines(s: State, service: string, max = 4): string[] {
-  const facts = [...(s.facts.get(service)?.values() ?? [])];
+  // A lesson counts only once the partner kept it (retro.ts).
+  const facts = [...(s.facts.get(service)?.values() ?? [])].filter((f) => !f.subject.startsWith("lesson.") || f.confirmed);
   const current = (f: Fact) => !f.playbook || (s.policy.playbooks?.[f.playbook.id]?.version ?? f.playbook.version) <= f.playbook.version;
   const label = (f: Fact & { confirmed?: boolean }) => (f.confirmed ? "confirmed" : !current(f) ? "learned under an older playbook: recheck" : "unconfirmed");
   return facts
@@ -326,7 +332,8 @@ export function followUp(s: State, evt: string, e: import("./events.ts").Outside
   const pb = s.policy.playbooks?.[playbook];
   if (!pb?.followUp || !e.comments?.length) return undefined;
   const mine = [...s.todos.values()].filter((t) => t.play?.ticket?.source === e.source && t.play.ticket.id === e.id).sort((a, b) => a.addedAt - b.addedAt);
-  if (!mine.length || mine.some((t) => LIVE.includes(t.status))) return undefined;
+  // A look back waiting for its quiet days isn't work under way: a new comment goes ahead of it.
+  if (!mine.length || mine.some((t) => LIVE.includes(t.status) && t.play!.step !== "close")) return undefined;
   const rounds = mine.filter((t) => t.play!.step === FOLLOW_UP);
   // Past the cap, the ticket is a person's: said once, on the ticket's goal.
   if (rounds.length >= (pb.maxFollowUps ?? 5)) return { capped: { goal: mine[mine.length - 1].goal, text: `${e.id} has had ${rounds.length} follow-up rounds, the most a playbook runs: its new comments are yours to read (${e.url ?? e.id}).` } };

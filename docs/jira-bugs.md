@@ -129,7 +129,35 @@ npm run harness -- facts confirm payments logs.format
 - A fact learned under an older version of the playbook is shown as **recheck**. Change the playbook's `version` when you change its process, and the old facts get checked again rather than trusted.
 - A ticket's own working notes (hypotheses, what was tried) stay in that ticket's record. Nothing a turn guesses halfway through becomes a fact.
 
+## After a ticket
+
+**Looking back.** Once a ticket has been quiet for `closeAfterDays` (3), a judge on the strong model reads its whole history: each step and what it chose, how long it took, what the conductor sent back, and the replies as sent. It proposes at most three **lessons** for the next ticket on that service, such as "refund tickets: check the order's History first". You're asked whether to keep them:
+- **Kept** lessons are confirmed facts, and later packets for that service include them.
+- **Proposals you haven't kept** never reach a packet.
+- If someone comments before the look back has run, it waits for the new round to finish.
+
+**Drift.** Two signs that a step's brief no longer matches how the work is done:
+- you rewrote 3 of the last 5 replies of one kind, for one service;
+- the conductor sent the same step back 3 times in its last 5 reads.
+
+Either one gives a judge a todo with the evidence: the current wording, the drafts beside what you sent, the conductor's reasons. It drafts new wording and asks you. The playbook is policy, so neither it nor the harness can change it: you change `policy/playbooks/jira-bug.json`, and raise its `version` so facts learned under the old one are rechecked.
+
+**The numbers,** worked out from the log alone:
+
+```powershell
+npm run harness -- playbooks
+```
+
+For each playbook and service, it lists:
+- tickets, by how each ended (user error, bug, needs info, duplicate…)
+- follow-up rounds, and tickets looked back on
+- replies sent, rewritten by you, or held
+- lessons kept out of those proposed
+- for each step: how many finished, the median time, and how often the conductor sent it back
+
+A service whose tickets are mostly `user_error` points at its docs or its screens more than at support.
+
 ## What's not here yet
 
 - **Log tools** other than files, such as Application Insights or Splunk.
-- **Learning across tickets:** the close step, lessons proposed to you, and numbers per playbook.
+- **New kinds of tickets.** A kind no playbook covers still needs a playbook written for it. The design's "plans on probation", drafted by triage and promoted after three clean closes, isn't built.

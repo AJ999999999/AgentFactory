@@ -18,6 +18,7 @@ import { ScriptedTurnAgent, turnPrompt } from "../src/harness/agents.ts";
 import type { Behavior } from "../src/harness/agents.ts";
 import { cannotStand } from "../src/harness/standing.ts";
 import { factLines, playbookProblems } from "../src/harness/playbook.ts";
+import { playbookStats } from "../src/harness/retro.ts";
 import type { Playbook } from "../src/harness/playbook.ts";
 import { readLogs } from "../src/harness/logs.ts";
 import { JiraWriter, adf } from "../src/harness/jira.ts";
@@ -32,6 +33,7 @@ import type { EngagementDef, GoalDef, HEvent, ServiceDef } from "../src/harness/
 const full = loadPolicy(path.join(import.meta.dirname, "..", "policy", "harness.json"));
 const policy: HarnessPolicy = { ...full, team: undefined };
 const T0 = Date.parse("2026-11-04T09:00:00Z");
+const DAY = 86_400_000;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-"));
 let seq = 0;
 
@@ -283,7 +285,13 @@ test("end to end: a ticket is triaged, its logs fetched and read, diagnosed as t
   const moves = posted.filter((p) => p.method === "POST" && p.url.endsWith("/transitions")).map((p) => JSON.parse(p.body!).transition.id);
   assert.deepEqual(moves, ["5", "7"], "In Progress when routed, Waiting for customer after the reply");
   assert.equal(s.conducted.length, 1);
-  assert.ok([...s.todos.values()].filter((t) => t.play).every((t) => t.status === "done"));
+  assert.ok([...s.todos.values()].filter((t) => t.play && t.play.step !== "close").every((t) => t.status === "done"));
+  // The look back waits until the ticket has been quiet for closeAfterDays.
+  const closes = [...s.todos.values()].filter((t) => t.play?.step === "close");
+  assert.equal(closes.length, 1, "made once the ticket was quiet, not while a reply was on its way");
+  const close = closes[0];
+  assert.equal(close.status, "open");
+  assert.ok(Date.parse(close.notBefore!) >= Date.parse("2026-11-07T09:00:00Z"));
 });
 
 // ---------- the bug branch: a failing test, the fix, its pull request, the reply ----------
@@ -563,4 +571,109 @@ test("Jira's comments come in with the ticket: every name the author goes by, th
     { id: "7", at: "2026-11-04T12:30:00.000+0000", text: "plain text", author: "jdoe | jane@x.com | Jane Doe" },
     { id: "8", at: "2026-11-04T12:31:00.000+0000", text: "from cloud", author: "abc | Bot" },
   ]);
+});
+
+// ---------- after a ticket: looking back, drift, the numbers ----------
+
+// A ticket diagnosed as the user's mistake, its reply sent and the send job done.
+function answered(at = T0) {
+  const s = st();
+  receive(s, ticket(), at + 1000);
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } });
+  const logs = step(s, "logs")!;
+  apply(s, { id: `done-${logs.id}`, at: at + 20_000, by: "harness", type: "todo_done", todo: logs.id });
+  finish(s, step(s, "code")!.id, { done: true });
+  const diag = step(s, "diagnose")!;
+  finish(s, diag.id, { done: true, outcome: "user_error", slots: { summary: "already refunded", how: "see History" } });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === diag.id)!.id, { done: true, verdict: "accept" });
+  finish(s, step(s, "reply")!.id, { done: true, reply: { text: "It was refunded already." } });
+  return s;
+}
+const settleAt = (s: State, at: number) => { for (const e of settle(s, at)) apply(s, e); };
+const sendReply = (s: State, choice: "send" | "edit", at: number, note?: string) => {
+  const a = [...s.asks.values()].find((x) => x.origin.startsWith("rule:jira_reply") && x.status === "open")!;
+  apply(s, { id: `ans-${a.id}`, at, by: "partner", type: "ask_answered", ask: a.id, answeredBy: "partner", choice, ...(note ? { note } : {}) });
+  settleAt(s, at);
+  for (const t of [...s.todos.values()].filter((x) => (x.job?.spec?.jira as { comment?: string } | undefined)?.comment && x.status === "open")) apply(s, { id: `sent-${t.id}`, at: at + 1, by: "harness", type: "todo_done", todo: t.id });
+  settleAt(s, at + 60_000);
+};
+
+test("a ticket that has gone quiet gets one look back, after closeAfterDays, with its history; a new round drops one that hasn't started", () => {
+  const s = answered();
+  assert.equal([...s.todos.values()].filter((t) => t.play?.step === "close").length, 0, "not while the reply waits for the partner");
+  sendReply(s, "send", T0 + 500_000);
+  const [close] = [...s.todos.values()].filter((t) => t.play?.step === "close");
+  assert.equal(close.goal, "pay");
+  assert.equal(close.lane, "retro");
+  assert.ok(Date.parse(close.notBefore!) >= T0 + 500_000 + 3 * DAY);
+  assert.match(close.text, /diagnose → user_error .*: already refunded/);
+  assert.match(close.text, /reply sent: "It was refunded already\."/);
+  // Someone comments: the close that hasn't run yet is dropped, and a new one follows the new round.
+  receive(s, withComments("2026-11-05T12:00:00Z", [{ id: "300", author: "jdoe", at: "2026-11-05T11:00:00.000+0000", text: "thanks!" }]), T0 + 600_000);
+  assert.equal(s.todos.get(close.id)!.status, "superseded");
+  const f = rounds(s)[0];
+  finish(s, f.id, { done: true, outcome: "none" });
+  settleAt(s, T0 + 700_000);
+  const closes = [...s.todos.values()].filter((t) => t.play?.step === "close");
+  assert.deepEqual(closes.map((t) => t.status), ["superseded", "open"]);
+});
+
+test("the look back's lessons reach packets only once the partner keeps them", () => {
+  const s = answered();
+  sendReply(s, "send", T0 + 500_000);
+  const close = [...s.todos.values()].find((t) => t.play?.step === "close")!;
+  finish(s, close.id, { done: true, facts: [{ subject: "lesson.refunds", text: "Refund tickets: check the order's History first; most are already refunded." }] });
+  const ask = [...s.asks.values()].find((a) => a.origin === "rule:play_lessons")!;
+  assert.match(ask.question, /refunds: Refund tickets: check the order's History first/);
+  assert.equal(factLines(s, "payments").filter((l) => /lesson/.test(l)).length, 0, "not before it's kept");
+  apply(s, { id: "keep", at: T0 + 900_000, by: "partner", type: "ask_answered", ask: ask.id, answeredBy: "partner", choice: "keep" });
+  settleAt(s, T0 + 900_000);
+  assert.deepEqual(factLines(s, "payments").filter((l) => /lesson/.test(l)), ["Known about payments (confirmed): lesson.refunds: Refund tickets: check the order's History first; most are already refunded."]);
+});
+
+test("three rewritten replies of one kind in the last five, or three send-backs of one step, ask a judge to draft a change to that step", () => {
+  const s = st();
+  for (let i = 0; i < 3; i++) {
+    receive(s, ticket(`PAY-${10 + i}`), T0 + i * 1_000_000 + 1000);
+    const triage = [...s.todos.values()].find((t) => t.play?.step === "triage" && t.play.ticket?.id === `PAY-${10 + i}`)!;
+    finish(s, triage.id, { done: true, outcome: "needs_info", slots: { service: "payments", missing: "the order id", summary: "refund" } });
+    const reply = [...s.todos.values()].find((t) => t.play?.step === "reply" && t.play.ticket?.id === `PAY-${10 + i}`)!;
+    finish(s, reply.id, { done: true, reply: { text: `Dear customer, kindly provide the order id. (${i})` } });
+    sendReply(s, "edit", T0 + i * 1_000_000 + 500_000, `Hi! Which order was it? (${i})`);
+  }
+  const drift = [...s.todos.values()].filter((t) => t.provenance === "rule:play_drift");
+  assert.equal(drift.length, 1);
+  assert.equal(drift[0].lane, "retro");
+  assert.match(drift[0].text, /You rewrote 3 of the last 3 needs info replies for payments/);
+  assert.match(drift[0].text, /Dear customer, kindly provide the order id\. \(2\)" → sent as: "Hi! Which order was it\? \(2\)"/);
+  assert.match(drift[0].text, /you can't change it, and neither can the harness/);
+
+  const c = st();
+  for (let i = 0; i < 3; i++) {
+    receive(c, ticket(`PAY-${20 + i}`), T0 + i * 1000 + 1000);
+    const triage = [...c.todos.values()].find((t) => t.play?.step === "triage" && t.play.ticket?.id === `PAY-${20 + i}`)!;
+    finish(c, triage.id, { done: true, outcome: "route", slots: { service: "payments", terms: "x", summary: "s" } });
+    const diag = [...c.todos.values()].find((t) => t.play?.step === "diagnose" && t.play.ticket?.id === `PAY-${20 + i}`)!;
+    finish(c, diag.id, { done: true, outcome: "user_error", slots: { summary: "s", how: "h" } });
+    finish(c, [...c.todos.values()].find((t) => t.conducts === diag.id)!.id, { done: true, verdict: "reject", note: `no log line quoted (${i})` });
+  }
+  const back = [...c.todos.values()].filter((t) => t.provenance === "rule:play_drift");
+  assert.equal(back.length, 1);
+  assert.match(back[0].text, /The conductor sent the diagnose step back 3 times in its last 3 reads/);
+});
+
+test("the numbers per playbook and service: tickets by outcome, follow-ups, each step's time and send-backs, replies rewritten, lessons kept", () => {
+  const s = answered();
+  sendReply(s, "edit", T0 + 500_000, "Hi! It was refunded on the 2nd.");
+  const [r] = playbookStats(s);
+  assert.equal(r.playbook, "jira-bug");
+  assert.equal(r.service, "payments");
+  assert.equal(r.tickets, 1);
+  assert.deepEqual(r.outcomes, { user_error: 1 });
+  assert.deepEqual(r.replies, { sent: 1, rewritten: 1, held: 0 });
+  const diag = r.steps.find((x) => x.step === "diagnose")!;
+  assert.equal(diag.conducted, 1);
+  assert.equal(diag.sentBack, 0);
+  assert.equal(r.steps.find((x) => x.step === "triage")!.done, 1);
+  assert.equal(typeof r.steps.find((x) => x.step === "triage")!.medianMinutes, "number");
 });

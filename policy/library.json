@@ -45,8 +45,8 @@
     "triage": "maintainer", "deps": "maintainer", "security": "maintainer",
     "probation-review": "blind-reviewer",
     "conduct": "conductor",
-    "ticket-triage": "triager", "diagnose": "researcher", "support": "support-writer"
+    "ticket-triage": "triager", "diagnose": "researcher", "support": "support-writer", "retro": "strategist"
   },
   "generated": { "agent": "author", "model": "model-a", "permissions": ["repo:read", "repo:write:lease"] },
-  "judgeLanes": ["replan", "synthesis", "probation-review", "conduct", "ticket-triage"]
+  "judgeLanes": ["replan", "synthesis", "probation-review", "conduct", "ticket-triage", "retro"]
 }

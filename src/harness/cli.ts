@@ -439,6 +439,20 @@ async function main(): Promise<void> {
       for (const r of eventSummary(s)) console.log(`${r.source.padEnd(16)} ${r.type.padEnd(14)} ${r.received} in, ${r.routed} became work or evidence, ${r.waiting} waiting for room, ${r.unmatched} matched no rule`);
       return;
     }
+    case "playbooks": {
+      // The numbers per playbook and service, from the log alone.
+      const h = await harness(currentEngagement());
+      const { playbookStats } = await import("./retro.ts");
+      const rows = playbookStats(await h.state());
+      if (!rows.length) console.log("no playbook runs yet (docs/jira-bugs.md)");
+      for (const r of rows) {
+        console.log(`## ${r.playbook} · ${r.service}: ${r.tickets} ticket(s), ${r.followUps} follow-up round(s), ${r.closed} looked back on`);
+        console.log(`outcomes: ${Object.entries(r.outcomes).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ") || "-"}`);
+        console.log(`replies: ${r.replies.sent} sent, ${r.replies.rewritten} rewritten by you, ${r.replies.held} held · lessons: ${r.lessons.kept} kept of ${r.lessons.proposed} proposed`);
+        for (const x of r.steps) console.log(`  ${x.step.padEnd(14)} done ${String(x.done).padStart(3)} · median ${x.medianMinutes === null ? "-" : `${x.medianMinutes} min`}${x.conducted ? ` · conductor sent back ${x.sentBack} of ${x.conducted}` : ""}`);
+      }
+      return;
+    }
     case "facts": {
       // What the playbooks have learned about each service, and confirming it.
       const h = await harness(currentEngagement());
@@ -529,7 +543,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | events | facts | logs test <service> | doctor | agents [install]");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | events | playbooks | facts | logs test <service> | doctor | agents [install]");
   }
 }
 

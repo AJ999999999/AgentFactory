@@ -55,6 +55,10 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
   // Agents that weren't told so called such failures "not mine" and said they were done.
   const red = s.engagement?.redLines ?? [];
   const checks = t.check || red.length ? [`Checked when you finish: ${[t.check, red.length ? `red lines ${red.join(", ")}` : ""].filter(Boolean).join("; ")}. Any failure throws the whole turn away, even one in code you didn't write: fix it, or set a blocker saying why you can't.`] : [];
+  // The goal's other open work. Without it, a turn that finished one step proposed the
+  // planned next steps again as new todos, in lanes of its own, every time.
+  const planned = [...s.todos.values()].filter((x) => x.goal === g.id && x.id !== t.id && !["done", "superseded"].includes(x.status));
+  const plannedLine = planned.length ? [`Already planned, so don't propose it again: ${cut(planned.map((x) => `${x.id} (${x.lane}): ${cut(x.text, 50)}`).join("; "), 400)}`] : [];
 
   // Lines in priority order; the tail is dropped first when over budget.
   const must = [
@@ -68,6 +72,7 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
     ...about.slice(0, 2),
     `Why this one: ${cut(why, 160)}`,
     `Write only: ${(t.writeScope ?? []).join(", ") || "nothing (findings, todos and asks only)"}${freezes.length ? ` · frozen: ${freezes.map((f) => f.paths.join(",")).join("; ")}` : ""}`,
+    ...plannedLine,
   ];
   const nice = [
     t.tests || t.assumes?.length ? `Tests: ${t.tests ?? "-"} · assumes: ${(t.assumes ?? []).join(", ") || "-"}` : "",

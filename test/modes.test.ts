@@ -187,3 +187,10 @@ test("Codex: the first turn of a session is kept and its thread noted; later tur
   assert.ok(!c.input.includes("This continues your session"));
   assert.ok(log.some((l) => l.includes("turn 2, new")));
 });
+
+test("the turn prompt says what a finding's source may be and what a job needs, so a judge doesn't cite the packet or propose an empty job", () => {
+  const p = turnPrompt(ctx("synthesis"));
+  assert.match(p, /A finding's source is a URL you read or repo:<path> of a file that exists in this worktree; never a part of this prompt or the handoff packet/);
+  assert.match(p, /A job needs "job": \{"spec": \{/);
+  assert.match(p, /propose a task \(more work for an agent\) or an action \(work for a person\) instead/);
+});

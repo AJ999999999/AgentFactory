@@ -439,6 +439,20 @@ test("validation: a proposed todo's Windows paths are the same paths, so a follo
   assert.ok(v.reasons.some((r) => /todo 1: scope other\/x\.js is outside the goal's scope/.test(r)), v.reasons.join("; "));
 });
 
+test("a turn is told the goal's other open work, so it doesn't propose the planned next steps again", () => {
+  const s = st(
+    goal({ id: "G", assumptions: [A({ id: "D" })] }),
+    todo("G", { id: "rules", lane: "build", text: "Build the rules", tests: "D" }),
+    todo("G", { id: "backtest", lane: "build", text: "Add a backtest over cached bars", tests: "D", after: ["rules"] }),
+    todo("G", { id: "gone", lane: "build", text: "An old idea", tests: "D" }),
+    { id: "sup", at: T0 + 1, by: "partner", type: "todo_superseded", todo: "gone", reason: "dropped" },
+  );
+  const p = buildPacket(s, s.todos.get("rules")!, "why");
+  assert.match(p, /Already planned, so don't propose it again: backtest \(build\): Add a backtest over cached bars/);
+  assert.doesNotMatch(p, /gone/, "dropped work isn't listed");
+  assert.doesNotMatch(p.split("\n").find((l) => l.startsWith("Already planned")) ?? "", /rules \(build\)/, "nor the turn's own todo");
+});
+
 test("validation: an agent can't make its own work survive a pivot, outlast the turn cap, or name a reviewer nobody is", () => {
   const s = st(goal({ id: "G", assumptions: [A({ id: "D" })] }), todo("G", { id: "r", lane: "x", text: "r", tests: "D" }));
   const v = validate(s, "r", { todos: [

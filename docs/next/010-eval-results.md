@@ -5,4 +5,4 @@ Results are in `.af/eval/full-copilot-2/report.md` and `.af/eval/full-codex-magp
 - **Codex, 29 of 80 so far:** every arm scored 1.00. D used about two thirds more tokens than B.
 - **Sessions never mattered:** todos finished in about one turn.
 - **Codex stopped on the `magpie` gateway's 429.** Resume it with `npm run eval -- --run-id full-codex-magpie --arms A,B,C,D --runs 2 --models "model-a=codex:,model-c=codex:"` once the limit resets.
-- **`usage-docs`'s check for `--page` and `--size` is stricter than its todo.** It wants both on one line, and every arm missed it in most runs. Loosen it or reword the todo.
+- **`usage-docs`'s check is loosened** (2026-11-04): `--page` and `--size` each need a working example, as the todo says, not both on one line. Earlier scores on that case aren't comparable with new ones.

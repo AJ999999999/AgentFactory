@@ -13,3 +13,6 @@ DEMO-OUTPUT.txt
 # Challenge runs and generated records
 .af/
 challenges/out/
+
+# Film render cache (fonts, frames, music)
+scripts/film/.cache/

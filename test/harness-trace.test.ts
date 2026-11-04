@@ -39,7 +39,8 @@ test("from a finding back to the Jira ticket: the turn that found it, its work, 
   const g = buildGraph(story(), { turnsDir: "/x/turns" });
   const text = traceText(g, "f1");
   assert.match(text, /^reported evidence for A: per-line rounding reproduced/);
-  assert.match(text, /← found in: turn by r1: completed, wrote work\/fix\.ts .*\/x\/turns\/t4\.log/, "points at the turn's log");
+  assert.match(text, /← found in: turn by r1: completed, wrote work\/fix\.ts/);
+  assert.ok(text.includes(path.join("/x/turns", "t4.log")), "points at the turn's log, in this system's own path form");
   assert.match(text, /← on: task in fix: bug PAY-7: Totals off by a cent/);
   assert.match(text, /← came from: jira-pay: bug PAY-7 "Totals off by a cent", routed by pay-bugs .*https:\/\/jira\.example\.com\/browse\/PAY-7/);
 });

@@ -4,7 +4,7 @@
 
 ![One ticket through intake, routing, review, evidence, your one question and the pull request](film/agentfactory.en.gif)
 
-The full films are `film/agentfactory.en.mp4` and `film/agentfactory.zh.mp4`: 1080p with music, about 6 MB each. The GIFs are the seven seconds from your one question to the merge.
+The full films are `film/agentfactory.en.mp4` and `film/agentfactory.zh.mp4`: 1080p with music, about 6 MB each. The GIFs are the seven seconds from your one question to the merge. `film/social-preview.png` (1280 × 640) is the title frame, for the repository's social preview in its settings.
 
 ## What it shows, and what's real
 

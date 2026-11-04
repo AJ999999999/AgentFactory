@@ -215,7 +215,7 @@ window.SPARK_TIMES = SPARKS.map(s => s.t);
 function cellOffset(i, j, t) { const A = 2600 * sm(seg(t, 34.5, 38.5)); return [A * Math.sin(j * .21 + t * .9 + Math.sin(i * .7 + t * .3) * 1.5), A * .6 * Math.cos(i * .33 + t * .7 + j * .05)]; }
 function conv(t, sx, sy) { const d = Math.hypot(sx - W / 2, sy - H / 2) / 1100, e = eio(seg(t, 40 + d * .5, 41.2 + d * .3)); return [lerp(sx, W / 2, e), lerp(sy, H / 2, e), e]; }
 function field(t) {
-  const fa = sm(seg(-Math.log(CAM[2]), -Math.log(.55), -Math.log(.12))); if (fa <= 0) return;
+  const fa = sm(seg(-Math.log(CAM[2]), -Math.log(.55), -Math.log(.12))) * (1 - sm(seg(t, 41.0, 41.3))); if (fa <= 0) return; // gone once everything has flowed into the flash
   const z = CAM[2], N = night(t); screen(); X.lineJoin = 'round'; X.lineCap = 'round'; const QUIET = mix(MUTE, '70,86,130', N);
   for (let i = -NI; i <= NI; i++) for (let j = -NJ; j <= NJ; j++) {
     if (!i && !j) continue; const o = cellOffset(i, j, t), wx = HOME[0] + i * CW + o[0], wy = HOME[1] + j * CHH + o[1];

@@ -157,7 +157,27 @@ For each playbook and service, it lists:
 
 A service whose tickets are mostly `user_error` points at its docs or its screens more than at support.
 
+## A kind of ticket no playbook covers
+
+Point a rule at the `jira-draft` playbook for tickets you have no playbook for yet, for example Jira's tasks:
+
+```json
+{ "id": "tasks", "match": { "source": "jira-pay", "types": ["Task"] }, "goal": "intake", "playbook": "jira-draft" }
+```
+
+Each such ticket is planned rather than triaged:
+
+- **A plan.** The main agent names the ticket's kind (for example `access-request`) and plans up to eight steps, each in a lane: research, build, support (the reply), or another. The plan must hold up: steps with ids of their own, an order that only looks back, and no judge's lanes. A kind that already has a playbook isn't new.
+- **On probation.** The conductor reads the plan before any step runs, and every step after it. Replies are asked about as usual.
+- **Made a playbook.** When three runs of one kind in a row go cleanly (the conductor sent nothing back, you rewrote or held no reply, you dropped no work), you're asked whether to make it a playbook. A run that doesn't go cleanly starts the count again.
+
+```powershell
+npm run harness -- playbooks                         # plans on probation, by kind: finished and clean
+npm run harness -- playbooks draft access-request    # a starting playbook from its latest plan
+```
+
+The starting file puts a triage step in front of the plan's steps and keeps the drafting playbook's reply, follow-up and look back. Its wording is still that one ticket's. Make it general, save it as `policy/playbooks/access-request.json`, and point a rule at it.
+
 ## What's not here yet
 
 - **Log tools** other than files, such as Application Insights or Splunk.
-- **New kinds of tickets.** A kind no playbook covers still needs a playbook written for it. The design's "plans on probation", drafted by triage and promoted after three clean closes, isn't built.

@@ -677,3 +677,87 @@ test("the numbers per playbook and service: tickets by outcome, follow-ups, each
   assert.equal(r.steps.find((x) => x.step === "triage")!.done, 1);
   assert.equal(typeof r.steps.find((x) => x.step === "triage")!.medianMinutes, "number");
 });
+
+// ---------- a kind of ticket no playbook covers: plans on probation ----------
+
+function drafting() {
+  const e: HEvent = { ...engagement, engagement: { ...(engagement as Extract<HEvent, { type: "engagement_opened" }>).engagement, events: { sources: [source], rules: [{ id: "tasks", match: { source: "jira", types: ["task"] }, goal: "intake", playbook: "jira-draft" }] } } };
+  const s = project([e, goalEvent(goalDef({ id: "intake", scope: ["intake"] })), goalEvent(goalDef({ id: "pay", service: "payments", scope: ["payments"] }))], policy);
+  for (const x of settle(s, T0)) apply(s, x);
+  return s;
+}
+const task = (id: string, at: string): OutsideEvent => ({ source: "jira", id, type: "task", updated: at, title: `Give ${id === "PAY-50" ? "Jane" : "someone"} access to refunds`, text: `Please grant refund access for ${id}.` });
+const accessPlan = [
+  { id: "look", lane: "research", text: "Find who may approve refund access in payments/docs" },
+  { id: "answer", lane: "support", text: "Tell the reporter how access is granted", after: ["look"], reply: true },
+];
+// One access-request ticket, planned, read by the conductor, worked and answered.
+function planAndRun(s: State, id: string, at: number, o: { sendBack?: boolean } = {}) {
+  receive(s, task(id, new Date(at).toISOString()), at);
+  const plan = [...s.todos.values()].find((t) => t.play?.step === "plan" && t.play.ticket?.id === id)!;
+  finish(s, plan.id, { done: true, outcome: "planned", slots: { kind: "access-request", service: "payments", summary: "refund access" }, plan: accessPlan });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === plan.id)!.id, { done: true, verdict: "accept" });
+  const look = s.todos.get(`${plan.id}-look`)!;
+  finish(s, look.id, { done: true, note: "approvals go to the payments lead" });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === look.id)!.id, o.sendBack ? { done: true, verdict: "reject", note: "name the lead" } : { done: true, verdict: "accept" });
+  if (o.sendBack) {
+    finish(s, look.id, { done: true, note: "the payments lead, Sam" });
+  }
+  const answer = s.todos.get(`${plan.id}-answer`)!;
+  finish(s, answer.id, { done: true, reply: { text: `Refund access is approved by the payments lead (${id}).` } });
+  const ca = [...s.todos.values()].find((t) => t.conducts === answer.id);
+  if (ca) finish(s, ca.id, { done: true, verdict: "accept" });
+  sendReply(s, "send", at + 500_000);
+  return plan;
+}
+
+test("a ticket no playbook covers gets a plan, read by the conductor; a plan that doesn't hold up isn't taken", () => {
+  const s = drafting();
+  receive(s, task("PAY-50", "2026-11-04T08:00:00Z"));
+  const plan = [...s.todos.values()].find((t) => t.play?.step === "plan")!;
+  assert.ok(plan.conduct);
+  const bad = (out: TurnOutput, re: RegExp) => {
+    const ev = finish(s, plan.id, out);
+    assert.ok((ev[0] as Extract<HEvent, { type: "turn" }>).turn.reasons.some((r) => re.test(r)), String(re));
+    assert.equal(s.todos.get(plan.id)!.status, "open");
+  };
+  bad({ done: true, outcome: "planned", slots: { kind: "jira-bug", summary: "s" }, plan: accessPlan }, /there's a playbook jira-bug already/);
+  bad({ done: true, outcome: "planned", slots: { kind: "access-request", summary: "s" }, plan: [{ id: "a", lane: "support", text: "x", after: ["b"] }] }, /after b, which isn't an earlier step/);
+  bad({ done: true, outcome: "planned", slots: { kind: "access-request", summary: "s" }, plan: [{ id: "a", lane: "conduct", text: "x" }] }, /lane "conduct" can't be planned/);
+  finish(s, plan.id, { done: true, outcome: "planned", slots: { kind: "access-request", service: "payments", summary: "refund access" }, plan: accessPlan });
+  assert.equal(s.todos.get(`${plan.id}-look`), undefined, "nothing runs before the conductor reads the plan");
+  finish(s, [...s.todos.values()].find((t) => t.conducts === plan.id)!.id, { done: true, verdict: "accept" });
+  const look = s.todos.get(`${plan.id}-look`)!;
+  const answer = s.todos.get(`${plan.id}-answer`)!;
+  assert.equal(look.goal, "pay");
+  assert.ok(look.conduct && answer.conduct, "every step of a plan on probation is read");
+  assert.deepEqual(answer.after, [look.id]);
+  assert.match(turnPrompt({ turn: "x", agent: "r1", now: T0, packet: "", todo: answer, goal: s.goals.get("pay")!.def, beliefs: [], findings: [], wtDir: tmp, state: s } as Parameters<typeof turnPrompt>[0]), /Add "reply"/);
+});
+
+test("three clean runs of one kind of plan in a row propose a playbook; a send-back starts the count again", () => {
+  const s = drafting();
+  planAndRun(s, "PAY-50", T0 + 1000);
+  planAndRun(s, "PAY-51", T0 + 2_000_000, { sendBack: true });
+  planAndRun(s, "PAY-52", T0 + 4_000_000);
+  planAndRun(s, "PAY-53", T0 + 6_000_000);
+  assert.equal([...s.asks.values()].filter((a) => a.origin === "rule:play_promote").length, 0, "two clean since the send-back");
+  planAndRun(s, "PAY-54", T0 + 8_000_000);
+  const [ask] = [...s.asks.values()].filter((a) => a.origin === "rule:play_promote");
+  assert.match(ask.question, /access-request tickets have gone well 3 times in a row/);
+  assert.match(ask.question, /playbooks draft access-request/);
+});
+
+test("the starting playbook for a kind: the plan's steps behind a triage that routes to them, well formed", async () => {
+  const { draftPlaybook } = await import("../src/harness/retro.ts");
+  const s = drafting();
+  planAndRun(s, "PAY-50", T0 + 1000);
+  const pb = draftPlaybook(s, "access-request")!;
+  assert.deepEqual(playbookProblems(pb), []);
+  assert.equal(pb.id, "access-request");
+  assert.deepEqual(pb.steps.triage.outcomes!.route.next, ["look", "answer"]);
+  assert.ok(pb.steps.triage.outcomes!.needs_info, "the drafting playbook's other outcomes stay");
+  assert.ok(pb.steps.reply, "with the steps they lead to");
+  assert.equal(pb.steps.answer.reply, true);
+  assert.equal(draftPlaybook(s, "nothing"), undefined);
+});

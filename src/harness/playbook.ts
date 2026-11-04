@@ -43,6 +43,7 @@ export type PlayStep = {
   shipWith?: string[];
   needsShip?: boolean; // only added when the service's goal ships to a repository
   merged?: string[]; // steps added once its pull request is merged
+  plans?: boolean; // its "planned" outcome carries a plan: the run's own steps, on probation
 };
 
 export type Playbook = {
@@ -61,6 +62,7 @@ export type Playbook = {
   // Once a ticket has been quiet this long, a judge looks back and proposes lessons (retro.ts).
   close?: PlayStep;
   closeAfterDays?: number; // 3
+  promoteAfter?: number; // clean runs in a row of one kind of plan before it's proposed as a playbook (3)
 };
 
 export function loadPlaybooks(dir: string): Record<string, Playbook> {
@@ -93,8 +95,19 @@ export const playbookOf = (s: State, ref?: PlayRef) => (ref ? s.policy.playbooks
 export const stepOf = (s: State, t: Pick<TodoState, "play">): PlayStep | undefined => {
   const pb = playbookOf(s, t.play);
   if (!pb || !t.play) return undefined;
-  return special(pb, t.play.step) ?? pb.steps[t.play.step];
+  return special(pb, t.play.step) ?? pb.steps[t.play.step] ?? planned(s, t.play.run, t.play.step);
 };
+
+// A step of a run's own plan, as a playbook step. A plan is on probation, so the conductor
+// reads every step of it before the next starts.
+function planned(s: State, run: string, step: string): PlayStep | undefined {
+  const p = s.plans.get(run)?.steps.find((x) => x.id === step);
+  if (!p) return undefined;
+  return {
+    lane: p.lane, text: p.text, after: p.after, reply: p.reply, writes: p.writes, conduct: true, priority: 1,
+    brief: [`This step is part of a plan drafted for this ${s.plans.get(run)!.kind} ticket, on probation: "${p.text}". Do just this step.`, ...(p.reply ? [`Add "reply": {"text": "..."}: the reply to the person who filed the ticket. It goes to the partner first.`] : [])],
+  };
+}
 
 export const serviceOf = (s: State, id?: string): ServiceDef | undefined => (id ? (s.engagement?.services ?? []).find((x) => x.id === id) : undefined);
 export const serviceGoal = (s: State, id?: string) => (id ? [...s.goals.values()].find((g) => g.def.service === id && g.status === "active") : undefined);
@@ -133,7 +146,7 @@ const LIVE = ["open", "running", "review", "blocked"];
 // One step of a run, as a todo.
 export function stepTodo(s: State, ref: PlayRef, step: string, outcome?: string): TodoDraft & { id: string } {
   const pb = playbookOf(s, ref)!;
-  const st = special(pb, step) ?? pb.steps[step];
+  const st = special(pb, step) ?? pb.steps[step] ?? planned(s, ref.run, step)!;
   const id = stepId(pb, ref.run, step);
   const v = vars(s, ref, outcome);
   const svc = serviceOf(s, ref.service);
@@ -229,7 +242,9 @@ export function playRules(s: State, now: number, emit: (e: HEvent) => void): voi
     }
     const ref: PlayRef = { ...t.play, service, slots: { ...slots, outcome: o.outcome } };
     const pb = playbookOf(s, t.play)!;
-    for (const step of branch.next) {
+    // A plan's steps are the run's own; they follow the branch's.
+    const own = st.plans ? (s.plans.get(t.play.run)?.steps ?? []).map((x) => x.id) : [];
+    for (const step of [...branch.next, ...own]) {
       // A fix only makes sense where it can ship; without a repository it stops at the reply.
       if (pb.steps[step]?.needsShip && !goal?.def.ship) {
         emit({ id: eid("play-noship", t.play.run, step), at: now, by: H, type: "note", goal: goal?.id ?? t.goal, text: `${t.play.ticket?.id ?? t.play.run}: ${step} isn't started, since ${service ?? "this service"} has no repository to ship to (ship in its goal).` });

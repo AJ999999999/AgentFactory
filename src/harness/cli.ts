@@ -442,8 +442,17 @@ async function main(): Promise<void> {
     case "playbooks": {
       // The numbers per playbook and service, from the log alone.
       const h = await harness(currentEngagement());
-      const { playbookStats } = await import("./retro.ts");
-      const rows = playbookStats(await h.state());
+      const { draftPlaybook, planRuns, playbookStats } = await import("./retro.ts");
+      if (rest[0] === "draft") {
+        if (!rest[1]) throw new Error("usage: playbooks draft <kind>");
+        const pb = draftPlaybook(await h.state(), rest[1]);
+        if (!pb) throw new Error(`no drafted plan of kind ${rest[1]}`);
+        console.log(JSON.stringify(pb, null, 2));
+        return;
+      }
+      const st = await h.state();
+      for (const [kind, r] of planRuns(st)) console.log(`plan on probation: ${kind}, ${r.runs.filter((x) => x.finished).length} finished, ${r.runs.filter((x) => x.finished && x.clean).length} clean`);
+      const rows = playbookStats(st);
       if (!rows.length) console.log("no playbook runs yet (docs/jira-bugs.md)");
       for (const r of rows) {
         console.log(`## ${r.playbook} · ${r.service}: ${r.tickets} ticket(s), ${r.followUps} follow-up round(s), ${r.closed} looked back on`);
@@ -543,7 +552,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | events | playbooks | facts | logs test <service> | doctor | agents [install]");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | events | playbooks [draft <kind>] | facts | logs test <service> | doctor | agents [install]");
   }
 }
 

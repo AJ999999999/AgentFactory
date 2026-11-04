@@ -1,6 +1,6 @@
 # Design: the Jira bug playbook
 
-Steps 1 to 3 below are built, and so is the reporter's reply coming back in: [docs/jira-bugs.md](../jira-bugs.md) says how to set them up. What's left is plans on probation for new kinds of tickets (section 6), and log tools other than files. Three things changed from this design while it was being built:
+Steps 1 to 3 below are built, and so is the reporter's reply coming back in: [docs/jira-bugs.md](../jira-bugs.md) says how to set them up. Plans on probation for new kinds of tickets (section 6) are built too. What's left is log tools other than files. Three things changed from this design while it was being built:
 - **Reading logs is the runner's access, not a catalog permission.** The log job runs on the runner with the runner account's read access. No turn has that access.
 - **A proposed playbook change is drafted and asked, not committed.** The playbook is policy in this repo, outside the engagement's, so the harness can't commit it: the partner makes the change.
 - **The reporter's reply starts a follow-up round, not a reopened step.** A new comment that isn't ours starts a round whose first step, the main agent, chooses to look again, answer, or do nothing. Rounds have ids of their own, so a step can run again.

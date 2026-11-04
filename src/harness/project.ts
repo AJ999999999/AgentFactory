@@ -10,7 +10,7 @@ import { askShape, type Standing, standingKey } from "./standing.ts";
 import type { Received } from "./events.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
-  EventOf, Fact, SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
+  EventOf, Fact, PlanStep, SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
 } from "./types.ts";
 import { loadPlaybooks } from "./playbook.ts";
 import type { Playbook } from "./playbook.ts";
@@ -160,6 +160,7 @@ export type State = {
   // Playbook runs: each fork step's latest outcome, drafted replies, and facts by service.
   playOutcomes: Map<string, { run: string; step: string; outcome: string; slots: Record<string, string>; at: number }>;
   replies: Map<string, EventOf<"reply_drafted">>;
+  plans: Map<string, { kind: string; steps: PlanStep[]; at: number }>; // by run
   facts: Map<string, Map<string, Fact & { at: number; confirmed?: boolean }>>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
@@ -189,6 +190,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     conducted: [],
     playOutcomes: new Map(),
     replies: new Map(),
+    plans: new Map(),
     facts: new Map(),
     autonomous: [],
     eventIds: new Set(),
@@ -435,6 +437,9 @@ export function apply(s: State, e: HEvent): void {
       break;
     case "play_outcome":
       s.playOutcomes.set(e.todo, { run: e.run, step: e.step, outcome: e.outcome, slots: e.slots, at: e.at });
+      break;
+    case "play_plan":
+      s.plans.set(e.run, { kind: e.kind, steps: e.steps, at: e.at });
       break;
     case "reply_drafted":
       // The first draft is the one asked about; a later turn's draft doesn't replace it.

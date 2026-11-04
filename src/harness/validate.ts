@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
-import type { AskOption, Budget, Direction, Effect, Fact, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import type { AskOption, Budget, Direction, Effect, Fact, Finding, PlanStep, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
 import { stepOf } from "./playbook.ts";
 import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
@@ -43,6 +43,7 @@ export type TurnOutput = {
   slots?: Record<string, string>;
   reply?: { text: string }; // a step that drafts the reply to the ticket's reporter
   facts?: Array<{ subject: string; text: string; source?: string }>; // about the goal's service
+  plan?: PlanStep[]; // a planning step's steps for this ticket (playbook.ts)
 };
 
 export type Validated = { result: TurnResult; granularity: Granularity; events: HEvent[]; reasons: string[] };
@@ -235,6 +236,16 @@ export function validateTurn(input: {
     } else if (missing.length) {
       reasons.push(`outcome ${o.outcome} needs slots ${missing.join(", ")}`);
       done = false;
+    } else if (step.plans && o.outcome === "planned") {
+      // A plan for a kind of ticket no playbook covers: the run's own steps, if they hold up.
+      const p = planOf(s, t, o.plan, slots.kind);
+      if (typeof p === "string") {
+        reasons.push(`plan: ${p}`);
+        done = false;
+      } else {
+        events.push({ id: eid("plan", t.id, turn), at, by, type: "play_plan", todo: t.id, run: t.play.run, kind: slots.kind, steps: p });
+        events.push({ id: eid("outcome", t.id, turn), at, by, type: "play_outcome", todo: t.id, run: t.play.run, step: t.play.step, outcome: o.outcome!, slots, turn });
+      }
     } else events.push({ id: eid("outcome", t.id, turn), at, by, type: "play_outcome", todo: t.id, run: t.play.run, step: t.play.step, outcome: o.outcome!, slots, turn });
   }
   if (done && t.play && step?.reply) {
@@ -392,6 +403,36 @@ export function conducted(s: State, t: TodoState, checked: boolean): boolean {
   if (!t.conduct && c.lanes && !c.lanes.includes(t.lane)) return false;
   if (!t.conduct && c.skipChecked && checked) return false;
   return t.redirects < (c.maxRedirects ?? 1);
+}
+
+// A plan's steps, checked: short ids of their own, lanes the harness knows how to staff
+// (never a judge's), an order that only looks back, and at most eight steps. Writing code
+// only where the service has a folder to write in.
+const RESERVED = new Set(["plan", "close", "follow-up", "onboard"]);
+function planOf(s: State, t: TodoState, raw: unknown, kind: string): PlanStep[] | string {
+  if (!/^[a-z][a-z0-9-]{1,40}$/.test(kind ?? "")) return `"kind" must be a short lowercase name for this kind of ticket, like access-request`;
+  if (s.policy.playbooks?.[kind]) return `there's a playbook ${kind} already: this kind of ticket isn't new`;
+  if (!Array.isArray(raw) || !raw.length) return `needs "plan": [{"id", "lane", "text", "after", "reply", "writes"}]`;
+  if (raw.length > 8) return "at most eight steps";
+  const judges = new Set([...(s.policy.team?.library.judgeLanes ?? []), REVIEW_LANE, CONDUCT_LANE]);
+  const pb = stepOf(s, t) ? s.policy.playbooks?.[t.play!.playbook] : undefined;
+  const seen = new Set<string>();
+  const out: PlanStep[] = [];
+  for (const [i, x] of raw.entries()) {
+    const d = (x ?? {}) as Partial<PlanStep>;
+    const id = String(d.id ?? "");
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(id) || RESERVED.has(id) || pb?.steps[id] || seen.has(id)) return `step ${i}: needs an id of its own, short and lowercase`;
+    const lane = String(d.lane ?? "");
+    if (!/^[a-z][a-z0-9-]{0,40}$/.test(lane) || judges.has(lane)) return `step ${id}: lane "${lane}" can't be planned`;
+    const text = String(d.text ?? "").trim();
+    if (!text) return `step ${id}: says nothing to do`;
+    const after = Array.isArray(d.after) ? d.after.map(String) : [];
+    const bad = after.find((a) => !seen.has(a));
+    if (bad) return `step ${id}: after ${bad}, which isn't an earlier step`;
+    seen.add(id);
+    out.push({ id, lane, text: text.slice(0, 600), ...(after.length ? { after } : {}), ...(d.reply === true ? { reply: true } : {}), ...(d.writes === true ? { writes: true } : {}) });
+  }
+  return out;
 }
 
 // What a turn found, as short strings only: an agent's JSON isn't trusted to be small.

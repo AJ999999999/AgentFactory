@@ -368,6 +368,9 @@ export type HEvent = Base &
     | { type: "play_outcome"; todo: string; run: string; step: string; outcome: string; slots: Record<string, string>; turn: string }
     // A drafted reply to the person who filed a ticket. It goes out only once the partner
     // says send (playbook.ts); the loop sends it, never a turn.
+    // A plan drafted for a kind of ticket no playbook covers yet: its steps become the run's
+    // own, on probation (playbook.ts). The latest one for a run replaces the one before.
+    | { type: "play_plan"; todo: string; run: string; kind: string; steps: PlanStep[] }
     | { type: "reply_drafted"; todo: string; run: string; outcome: string; text: string; ticket: { source: string; id: string; title: string; url?: string } }
     // Something learned about a service (where code is, what the logs look like), as an
     // agent reported it: unconfirmed until the partner confirms it. The newest on a subject
@@ -382,6 +385,8 @@ export type HEvent = Base &
   );
 
 export type EventOf<T extends HEvent["type"]> = Extract<HEvent, { type: T }>;
+
+export type PlanStep = { id: string; lane: string; text: string; after?: string[]; reply?: boolean; writes?: boolean };
 
 export type Fact = {
   id: string;

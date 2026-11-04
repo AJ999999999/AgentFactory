@@ -69,14 +69,85 @@ export function retroRules(s: State, now: number, emit: (e: HEvent) => void): vo
   if (!s.policy.playbooks) return;
   for (const k of tickets(s)) closeRule(s, k, now, emit);
   driftRules(s, now, emit);
+  promoteRule(s, now, emit);
+}
+
+// ---------- plans on probation ----------
+
+// Each drafted plan's kind, with how its runs went, in order: finished, and clean (the
+// conductor sent nothing back, the partner rewrote or held no reply, dropped no work).
+export function planRuns(s: State): Map<string, { pb: Playbook; goal: string; runs: Array<{ root: string; finished: boolean; clean: boolean }> }> {
+  const out = new Map<string, { pb: Playbook; goal: string; runs: Array<{ root: string; finished: boolean; clean: boolean }> }>();
+  for (const k of tickets(s)) {
+    const plan = s.plans.get(k.root);
+    if (!plan) continue;
+    const ids = new Set(k.todos.map((t) => t.id));
+    const sentBack = s.conducted.some((c) => ids.has(c.todo) && c.verdict === "reject");
+    const rewritten = k.todos.some((t) => ["edit", "hold"].includes(s.asks.get(eid("ask-reply", t.id))?.choice ?? ""));
+    const dropped = k.todos.some((t) => t.status === "superseded" && /^dropped by /.test(t.reason ?? ""));
+    const finished = !isBusy(s, k) && k.todos.some((t) => t.status === "done" && t.play!.run === k.root && t.play!.step !== k.pb.start);
+    const row = out.get(plan.kind) ?? { pb: k.pb, goal: k.todos[k.todos.length - 1].goal, runs: [] };
+    row.runs.push({ root: k.root, finished, clean: !sentBack && !rewritten && !dropped });
+    out.set(plan.kind, row);
+  }
+  return out;
+}
+
+function promoteRule(s: State, now: number, emit: (e: HEvent) => void): void {
+  for (const [kind, r] of planRuns(s)) {
+    const done = r.runs.filter((x) => x.finished);
+    let streak = 0;
+    for (const x of [...done].reverse()) {
+      if (!x.clean) break;
+      streak++;
+    }
+    const need = r.pb.promoteAfter ?? 3;
+    if (streak < need) continue;
+    // Asked again after each further run of that many clean ones, if not made a playbook yet.
+    const id = eid("ask-promote", r.pb.id, kind, Math.floor(done.filter((x) => x.clean).length / need));
+    if (s.asks.has(id)) continue;
+    emit({ id, at: now, by: H, type: "ask_opened", ask: {
+      id, goal: r.goal, to: s.goals.get(r.goal)?.def.owner ?? "partner", kind: "decision", origin: "rule:play_promote",
+      question: `${kind} tickets have gone well ${streak} times in a row on drafted plans, with nothing sent back, rewritten or dropped. Make it a playbook of its own? \`npm run harness -- playbooks draft ${kind}\` prints a starting file: save it as policy/playbooks/${kind}.json, and add an event rule that names it.`,
+      options: [{ id: "make", label: "I'll make it a playbook", effect: { type: "ack" } }, { id: "wait", label: "Keep drafting plans for now", effect: { type: "ack" } }],
+    } });
+  }
+}
+
+// A starting playbook for a kind, from its latest plan: the drafting playbook's own first
+// step, routed to the plan's steps, with the ticket's id made a placeholder. Its wording is
+// still one ticket's: generalise it before you save it.
+export function draftPlaybook(s: State, kind: string): Playbook | undefined {
+  const latest = [...s.plans.entries()].filter(([, p]) => p.kind === kind).sort((a, b) => b[1].at - a[1].at)[0];
+  if (!latest) return undefined;
+  const [run, plan] = latest;
+  const from = tickets(s).find((k) => k.root === run);
+  if (!from) return undefined;
+  const ticket = from.todos[0].play!.ticket?.id ?? "";
+  const general = (x: string) => (ticket ? x.split(ticket).join("{ticket.id}") : x);
+  const start = from.pb.steps[from.pb.start];
+  const outcomes = Object.fromEntries(Object.entries(start.outcomes ?? {}).filter(([o]) => o !== "planned"));
+  const steps: Playbook["steps"] = {
+    triage: { ...start, plans: undefined, conduct: undefined, text: "Triage {ticket.id}: {ticket.title}", brief: [`Read the ticket and say whether it's a ${kind} ticket you can route.`, "The services we support: {services}."],
+      outcomes: { route: { next: plan.steps.map((x) => x.id), needs: ["summary"], means: "it's this kind of ticket: \"summary\" says what's asked, in a sentence." }, ...outcomes } },
+  };
+  for (const x of plan.steps) steps[x.id] = { lane: x.lane, text: general(x.text), brief: [general(x.text)], ...(x.after ? { after: x.after } : {}), ...(x.reply ? { reply: true } : {}), ...(x.writes ? { writes: true } : {}) };
+  for (const n of Object.values(outcomes).flatMap((o) => o.next)) if (!steps[n] && from.pb.steps[n]) steps[n] = from.pb.steps[n];
+  return { id: kind, version: 1, title: kind.replace(/-/g, " "), start: "triage", steps, ...(from.pb.replies ? { replies: from.pb.replies } : {}), ...(from.pb.close ? { close: from.pb.close, closeAfterDays: from.pb.closeAfterDays } : {}), ...(from.pb.followUp ? { followUp: from.pb.followUp, maxFollowUps: from.pb.maxFollowUps } : {}) };
+}
+
+// Work under way on a ticket: a step, a reply on its way, or a question about one.
+function isBusy(s: State, k: Ticket): boolean {
+  const work = k.todos.filter((t) => t.play!.step !== CLOSE);
+  return work.some((t) => LIVE.includes(t.status)) || k.sends.some((t) => LIVE.includes(t.status)) ||
+    [...s.asks.values()].some((a) => a.status === "open" && a.todo && work.some((t) => t.id === a.todo));
 }
 
 function closeRule(s: State, k: Ticket, now: number, emit: (e: HEvent) => void): void {
   if (!k.pb.close) return;
   const work = k.todos.filter((t) => t.play!.step !== CLOSE);
   const closes = k.todos.filter((t) => t.play!.step === CLOSE);
-  const busy = work.some((t) => LIVE.includes(t.status)) || k.sends.some((t) => LIVE.includes(t.status)) ||
-    [...s.asks.values()].some((a) => a.status === "open" && a.todo && work.some((t) => t.id === a.todo));
+  const busy = isBusy(s, k);
   if (busy) {
     // A new round: its close comes after it.
     for (const c of closes) if (c.status === "open" && !c.turns) emit({ id: eid("sup", c.id), at: now, by: H, type: "todo_superseded", todo: c.id, reason: "the ticket has a new round" });

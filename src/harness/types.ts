@@ -95,6 +95,8 @@ export type GoalDef = {
   blackouts?: Blackout[];
   interfaces?: string[]; // contract files a child goal builds against; must exist to spawn it
   todos?: TodoDraft[]; // seed work
+  // Its done work goes to GitHub as pull requests, once you approve each (ship.ts).
+  ship?: import("./ship.ts").ShipDef;
 };
 
 export type GoalRevision = {

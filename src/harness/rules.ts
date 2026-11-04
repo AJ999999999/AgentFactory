@@ -5,6 +5,7 @@
 import { standingEvents } from "./answers.ts";
 import { standingFor } from "./standing.ts";
 import { routeEvents } from "./events.ts";
+import { shipRules } from "./ship.ts";
 import { sha256 } from "../util.ts";
 import type { Ask, AskOption, HEvent, TodoDraft } from "./types.ts";
 import type { GoalState, State, TodoState } from "./project.ts";
@@ -103,6 +104,9 @@ function rules(s: State, now: number, emitOut: Emit): void {
       const d = standingFor(s, a, now);
       if (d) for (const e of standingEvents(s, a.id, d, now)) emit(e);
     }
+
+    // Done work in a goal that ships: ask, then open its pull request (ship.ts).
+    shipRules(s, g, now, emit);
 
     // Staffing: the first open task in a lane gets that lane a seat.
     for (const lane of new Set(live.filter((x) => x.status === "open" && x.kind === "task").map((x) => x.lane))) {

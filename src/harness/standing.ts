@@ -18,6 +18,8 @@ export const MUST_ASK = new Set([
   "rule:budget_exhausted", "rule:budget_forecast", "rule:load_bearing_refuted", "rule:spin", "rule:contested", "rule:probation",
   // The brakes on a standing "retry": the turn cap, and a turn you stopped yourself.
   "rule:turn_cap", "rule:stopped",
+  // A pull request larger than the goal's ship.maxFiles: look at it every time.
+  "rule:ship_large",
 ]);
 // The effects a standing answer may repeat: ones that don't change the goal itself.
 const STANDABLE = new Set(["ack", "approve", "retry", "reopen"]);

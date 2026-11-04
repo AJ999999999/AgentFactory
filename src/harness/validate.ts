@@ -21,7 +21,7 @@ import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
 import { activeFreezes } from "./select.ts";
 import { eid, safeId } from "./store.ts";
-import { REVIEW_LANE } from "./team.ts";
+import { CONDUCT_LANE, REVIEW_LANE } from "./team.ts";
 
 export type FindingDraft = { assumption?: string; direction: Direction; grade: Grade; source: string; text: string; metrics?: Record<string, number> };
 export type AskDraft = { question: string; options: AskOption[]; to?: string; recommend?: { option: string; why: string } };
@@ -36,7 +36,7 @@ export type TurnOutput = {
   supersede?: Array<{ todo: string; reason: string }>;
   discount?: Array<{ finding: string; reason: string }>;
   note?: string;
-  verdict?: Verdict; // probation reviews only
+  verdict?: Verdict; // reviews and the conductor only
 };
 
 export type Validated = { result: TurnResult; granularity: Granularity; events: HEvent[]; reasons: string[] };
@@ -255,6 +255,22 @@ export function validateTurn(input: {
       events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
       result = "completed";
     }
+  } else if (done && t.conducts) {
+    // The conductor's verdict: accept lets the work count, reject sends it back with
+    // directions the next turn reads. Without directions a send-back helps no one.
+    const why = String(o.note ?? "").trim().slice(0, 600);
+    if (o.verdict !== "accept" && o.verdict !== "reject") reasons.push(`the conductor needs a verdict: "accept" or "reject"`);
+    else if (o.verdict === "reject" && !why) reasons.push(`a send-back needs directions in "note": what to change, and where`);
+    else {
+      const target = s.todos.get(t.conducts);
+      if (target && target.status === "review" && target.reviewTodo === t.id) {
+        events.push({ id: eid("conducted", t.id), at, by, type: "conduct_verdict", todo: target.id, conduct: t.id, lane: target.lane, seat: seatKeyOf(target), verdict: o.verdict, ...(why ? { note: why } : {}) });
+        if (o.verdict === "accept") events.push({ id: eid("done", target.id, "conduct", t.id), at, by, type: "todo_done", todo: target.id, turn });
+        else events.push({ id: eid("reopen", target.id, "conduct", t.id), at, by, type: "todo_reopened", todo: target.id, reason: `the conductor sent it back: ${why}` });
+      }
+      events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
+      result = "completed";
+    }
   } else if (done) {
     const firstAsk = events.find((e) => e.type === "ask_opened" && e.ask.origin === `turn:${turn}` && !autoClosed.has(e.ask.id));
     if (firstAsk && firstAsk.type === "ask_opened" && !t.review) {
@@ -283,12 +299,25 @@ export function validateTurn(input: {
         },
       });
       events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, reviewTodo: rid });
+    } else if (conducted(s, t, input.checked)) {
+      // The conductor reads finished work before it counts, so a turn that went the wrong
+      // way is turned back before other work builds on it (docs/conductor.md).
+      const cid = eid("cnd", t.id, t.turns + 1);
+      const note = o.note ? ` The worker's note: "${String(o.note).slice(0, 200)}".` : "";
+      events.push({
+        id: `add-${cid}`, at, by: "harness", type: "todo_added", provenance: "rule:conductor",
+        todo: {
+          id: cid, goal: t.goal, lane: CONDUCT_LANE, kind: "task", priority: Math.max(1, t.priority), conducts: t.id, because: t.id, maxTurns: 2,
+          text: `Read the finished ${t.lane} todo ${t.id} before it counts: "${t.text.slice(0, 240)}". It changed ${files.join(", ") || "no files"}${input.checked ? `, and its check ${t.check} passed` : ""}.${note} Did it do what the todo, the goal and its contracts ask? Reply with a verdict, "accept" or "reject"; to reject, say in "note" exactly what to change and where.`,
+        },
+      });
+      events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, reviewTodo: cid });
     } else {
       events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
     }
     result = "completed";
   }
-  if (o.verdict && !t.reviews && !t.prReview) reasons.push("verdict ignored: only a review gives one");
+  if (o.verdict && !t.reviews && !t.prReview && !t.conducts) reasons.push("verdict ignored: only a review gives one");
 
   // ---- granularity ----
   const flips = beliefFlips(s, accepted.findings);
@@ -311,6 +340,21 @@ export function validateTurn(input: {
   events.unshift({ id: `turn-${turn}`, at, by, type: "turn", turn: rec });
   return { result, granularity, events, reasons };
 }
+
+// Whether a finished todo goes to the conductor first: only when the policy has one, only
+// work lanes (judges, reviews and the conductor itself never), and at most maxRedirects
+// send-backs per todo, so it can't hold work forever.
+export function conducted(s: State, t: TodoState, checked: boolean): boolean {
+  const c = s.policy.conductor;
+  if (!c || t.kind !== "task" || t.reviews || t.prReview || t.conducts) return false;
+  const judges = new Set([...(s.policy.team?.library.judgeLanes ?? []), REVIEW_LANE, CONDUCT_LANE]);
+  if (judges.has(t.lane)) return false;
+  if (c.lanes && !c.lanes.includes(t.lane)) return false;
+  if (c.skipChecked && checked) return false;
+  return t.redirects < (c.maxRedirects ?? 1);
+}
+
+const seatKeyOf = (t: TodoState) => `${t.goal}/${t.lane}`;
 
 function failed(input: { s: State; todo: TodoState; agent: string; turn: string; now: number; why: string; files: string[]; seat?: SeatState }, hard: string[]): Validated {
   const rec: TurnRecord = { id: input.turn, todo: input.todo.id, goal: input.todo.goal, agent: input.agent, result: "validation_failed", granularity: "none", reasons: hard, files: input.files, why: input.why, seat: input.seat?.key };

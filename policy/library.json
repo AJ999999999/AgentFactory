@@ -24,7 +24,8 @@
     "market-tester": { "version": 1, "kind": "worker", "model": "model-a", "skills": ["demand-test-design", "landing-copy"], "permissions": ["repo:read", "repo:write:lease", "web:read"], "decisionRights": [] },
     "strategist": { "version": 1, "kind": "side", "model": "model-b", "skills": ["weigh-evidence", "replan-to-riskiest"], "permissions": ["repo:read", "mcp:context:author"], "decisionRights": [] },
     "maintainer": { "version": 1, "kind": "worker", "model": "model-a", "skills": ["triage", "dependency-hygiene", "patch-release"], "permissions": ["repo:read", "repo:write:lease", "shell:test", "web:read"], "decisionRights": ["implementation"] },
-    "blind-reviewer": { "version": 1, "kind": "side", "model": "model-b", "skills": ["review-against-the-todo"], "permissions": ["repo:read"], "decisionRights": [] }
+    "blind-reviewer": { "version": 1, "kind": "side", "model": "model-b", "skills": ["review-against-the-todo"], "permissions": ["repo:read"], "decisionRights": [] },
+    "conductor": { "version": 1, "kind": "side", "model": "model-b", "skills": ["check-direction", "send-back-with-directions"], "permissions": ["repo:read"], "decisionRights": [] }
   },
   "moduleKinds": {
     "backend": "backend-engineer",
@@ -40,8 +41,9 @@
     "market": "market-tester",
     "plan": "planner", "replan": "strategist", "synthesis": "strategist",
     "triage": "maintainer", "deps": "maintainer", "security": "maintainer",
-    "probation-review": "blind-reviewer"
+    "probation-review": "blind-reviewer",
+    "conduct": "conductor"
   },
   "generated": { "agent": "author", "model": "model-a", "permissions": ["repo:read", "repo:write:lease"] },
-  "judgeLanes": ["replan", "synthesis", "probation-review"]
+  "judgeLanes": ["replan", "synthesis", "probation-review", "conduct"]
 }

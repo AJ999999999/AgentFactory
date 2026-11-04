@@ -38,7 +38,7 @@ import { VENDOR_DEFAULTS } from "./vendors.ts";
 import type { Problem } from "./preflight.ts";
 import { holds, modelsOf, preflight } from "./preflight.ts";
 import { Harness } from "./harness.ts";
-import { escalationReport, worthAsking } from "./escalation.ts";
+import { conductorReport, escalationReport, worthAsking } from "./escalation.ts";
 import { buildPacket } from "./packet.ts";
 import { beliefs, loadPolicy, seatPermissions } from "./project.ts";
 import { blockers, phase } from "./select.ts";
@@ -477,7 +477,8 @@ async function main(): Promise<void> {
       // How well the harness chooses when to ask you, from the log so far.
       const eng = currentEngagement();
       const h = await harness(eng);
-      const r = escalationReport(readEvents(h.control.cwd, eng), h.policy);
+      const all = readEvents(h.control.cwd, eng);
+      const r = escalationReport(all, h.policy);
       const k = h.policy.escalation?.missCostRatio ?? 10;
       const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
       const rate = (b: { n: number; followed: number }) => (b.n ? `${b.followed}/${b.n}` : "-");
@@ -489,6 +490,12 @@ async function main(): Promise<void> {
       console.log(`closed by the harness itself: ${r.autoClosed}`);
       const v = r.audits.verdicts;
       console.log(`\n## Spot checks of decisions made without asking\n${r.audits.asked} asked, ${r.audits.answered} answered: same ${v.same} · would differ ${v.would_differ} · wanted to be asked ${v.wanted_to_be_asked} · estimated miss rate ${pct(r.audits.missRate)}`);
+      const c = conductorReport(all);
+      if (c.read || h.policy.conductor) {
+        console.log(`\n## The conductor (docs/conductor.md)\nread ${c.read} finished todos, sent back ${c.sentBack} (${pct(c.read ? c.sentBack / c.read : null)})`);
+        for (const l of c.byLane) console.log(`${l.lane.padEnd(28)} read ${l.read} · sent back ${l.sentBack}`);
+        for (const b of c.recent) console.log(`- ${b.todo} (${b.lane}): ${b.note.slice(0, 200)}`);
+      }
       return;
     }
     default:

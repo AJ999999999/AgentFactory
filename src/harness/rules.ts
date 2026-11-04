@@ -129,9 +129,13 @@ function rules(s: State, now: number, emitOut: Emit): void {
     }
     // Work waiting on a probation review that was dropped goes with it: dropping the
     // review must never let unreviewed work through.
+    // The conductor is different: it only advises, and the work already passed its checks,
+    // so losing its read lets the work count.
     for (const t of live.filter((x) => x.status === "review" && x.reviewTodo)) {
       const r = s.todos.get(t.reviewTodo!);
-      if (r?.status === "superseded") emit(supersede(now, t, `its review was dropped (${r.reason})`));
+      if (r?.status !== "superseded") continue;
+      if (r.conducts === t.id) emit({ id: eid("done", t.id, "conduct-dropped", r.id), at: now, by: H, type: "todo_done", todo: t.id });
+      else emit(supersede(now, t, `its review was dropped (${r.reason})`));
     }
 
     for (const t of live.filter((x) => x.status === "open")) {

@@ -78,7 +78,9 @@ export function turnPrompt(ctx: TurnContext): string {
     `Your role: ${seat.role} (${seat.skills.join(", ")}).${seat.charter ? ` ${seat.charter}` : ""}`,
     ...probation,
   ];
-  const review = ctx.todo.lane === REVIEW_LANE ? [`This is a review: include "verdict": "accept" or "reject" in the JSON, and say why in "note".`] : [];
+  const review = ctx.todo.conducts
+    ? [`You are the conductor: include "verdict": "accept" or "reject" in the JSON. To reject, say in "note" exactly what the next turn must change, and where.`]
+    : ctx.todo.lane === REVIEW_LANE ? [`This is a review: include "verdict": "accept" or "reject" in the JSON, and say why in "note".`] : [];
   // A resumed session remembers its earlier turns, but each turn starts in a fresh
   // checkout: say what carried over and what didn't.
   // Who an action can go to: the validator drops an action whose assignee isn't one.

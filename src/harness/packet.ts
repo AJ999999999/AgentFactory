@@ -51,6 +51,9 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
   // in a real run repeated the same mistake until the todo ran out of tries.
   const last = s.turns.findLast((x) => x.todo === t.id);
   const thrownAway = last?.result === "validation_failed" && last.reasons?.length ? [`Your last try was thrown away: ${cut(last.reasons.join(" | "), 300)}`] : [];
+  // Work sent back (by the conductor, a reviewer or a person) hears why, or the next turn
+  // repeats what was sent back. The reason was recorded but never shown before.
+  const sentBack = t.sentBack ? [`Sent back: ${cut(t.sentBack, 500)}`] : [];
   // The checks see the whole worktree, so a test another todo broke fails this turn too.
   // Agents that weren't told so called such failures "not mine" and said they were done.
   const red = s.engagement?.redLines ?? [];
@@ -67,6 +70,7 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
     `Beliefs: ${count("supported")} supported, ${count("refuted")} refuted, ${count("contested")} contested, ${count("testing")} testing, ${count("untested")} untested`,
     `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, 600)}`,
     ...thrownAway,
+    ...sentBack,
     ...checks,
     ...answersFor(s, t).map((a) => `From ${a.answeredBy} (${a.id}): ${cut(a.note ?? `chose ${a.choice}`, 320)}`),
     ...about.slice(0, 2),

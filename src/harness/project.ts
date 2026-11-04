@@ -44,6 +44,11 @@ export type HarnessPolicy = {
   // Standing answers ("from now on"): how long one lasts, and origins that are always
   // asked on top of the built-in must-ask list (standing.ts).
   standing?: { days?: number; mustAsk?: string[] };
+  // A strong model reads each finished todo before it counts, and sends it back with
+  // directions when it went the wrong way (docs/conductor.md). Off when absent.
+  // lanes: only these work lanes (default: every work lane). skipChecked: not when the
+  // todo's own checker passed. maxRedirects: send-backs per todo before it goes through.
+  conductor?: { lanes?: string[]; skipChecked?: boolean; maxRedirects?: number };
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
@@ -91,6 +96,8 @@ export type TodoState = TodoDraft & {
   reviewTodo?: string; // a probation review in progress
   doneAt?: number;
   reason?: string;
+  sentBack?: string; // why it was last sent back, until its next turn reads it
+  redirects: number; // times the conductor sent it back
 };
 
 export type SeatState = SeatDef & {
@@ -143,6 +150,8 @@ export type State = {
   shipSynced: Map<string, string>;
   // Pull request reviews by review todo: the verdict, and whether it's on GitHub yet.
   prReviews: Map<string, { ship: string; verdict: Verdict; note?: string; at: number; posted?: boolean }>;
+  // The conductor's verdicts, oldest first: what its send-back rate is worked out from.
+  conducted: Array<{ todo: string; conduct: string; lane: string; goal: string; seat?: string; verdict: Verdict; note?: string; at: number }>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -168,6 +177,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     outside: new Map(),
     shipSynced: new Map(),
     prReviews: new Map(),
+    conducted: [],
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -254,7 +264,7 @@ export function apply(s: State, e: HEvent): void {
       const g = s.goals.get(e.todo.goal);
       s.todos.set(e.todo.id, {
         ...e.todo, kind: e.todo.kind ?? "task", priority: e.todo.priority ?? 2, status: "open", goalVersion: g?.version ?? 1,
-        addedAt: e.at, provenance: e.provenance, failures: 0, turns: 0, capFrom: 0,
+        addedAt: e.at, provenance: e.provenance, failures: 0, turns: 0, capFrom: 0, redirects: 0,
       });
       break;
     }
@@ -275,7 +285,7 @@ export function apply(s: State, e: HEvent): void {
     }
     case "todo_reopened": {
       const t = s.todos.get(e.todo);
-      if (t && t.status !== "superseded") Object.assign(t, { status: "open", stopped: false, reason: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
+      if (t && t.status !== "superseded") Object.assign(t, { status: "open", stopped: false, reason: e.reason, sentBack: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
       break;
     }
     case "todo_superseded": {
@@ -372,6 +382,7 @@ export function apply(s: State, e: HEvent): void {
         if (e.turn.result === "host_failure" || e.turn.result === "validation_failed") t.failures++;
         else if (e.turn.result !== "claim_lost" && e.turn.result !== "stopped") t.failures = 0;
         t.stopped = e.turn.result === "stopped";
+        t.sentBack = undefined; // this turn was told
       }
       break;
     }
@@ -410,6 +421,12 @@ export function apply(s: State, e: HEvent): void {
     case "paused":
       s.paused = e.paused ? { at: e.at, by: e.by, reason: e.reason } : null;
       break;
+    case "conduct_verdict": {
+      const t = s.todos.get(e.todo);
+      if (t && e.verdict === "reject") t.redirects++;
+      s.conducted.push({ todo: e.todo, conduct: e.conduct, lane: e.lane, goal: t?.goal ?? "", seat: e.seat, verdict: e.verdict, note: e.note, at: e.at });
+      break;
+    }
     case "review_verdict": {
       const seat = s.seats.get(e.seat);
       if (!seat) break;

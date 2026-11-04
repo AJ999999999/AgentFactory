@@ -139,6 +139,7 @@ Each guide is its own file, so a change to one feature touches only its own page
 - [The panel](docs/panel.md): the partner's page over every engagement
 - [The desk](docs/desk.md): all your Copilot CLI terminals as threads in a window of its own, like a Claude project: the threads on the left, the terminal you are working in on the right (it keeps running when the desk stops), Ctrl+K to any thread's terminal, notes between them, what their sessions teach kept in git, and permission asks on Teams or Slack while you are away
 - [From your own Copilot or Claude Code session](docs/partner-tools.md): the partner's MCP tools
+- [The harness's questions on Slack](docs/harness-slack.md): a card per question, answered with one tap that comes back by mail
 - [Events from outside](docs/events.md): Jira tickets fetched on a schedule and routed by your rules into work, or recorded when nothing handles them
 - [Memory about the people you serve](docs/memory.md): typed memory, what it may be used for, and how it expires
 - [A terminal animation of one engagement](docs/demo-animation.md): when the partner is called, and why, in 15 seconds

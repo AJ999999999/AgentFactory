@@ -7,6 +7,7 @@
 //   npm run harness -- status [--goal G] [--for partner]                      handoff packets and open questions
 //   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300] [--from-now-on]
 //   npm run harness -- standing [revoke <goal> <shape>]              standing answers ("from now on"), or take one back
+//   npm run harness -- slack test                                    one card to your Slack workflow, to check it (docs/harness-slack.md)
 //   npm run harness -- events [config <file.json> | test <source>]  events from outside (Jira): what came in and where it went;
 //                                                                    set the sources and rules; fetch once from a source and print, writing nothing
 //                     [--result supports|refutes|neutral --metrics attempts=9,minutes=40 --runs 3]   what you observed, as evidence
@@ -40,6 +41,7 @@ import { checkLibrary } from "./team.ts";
 import type { EngagementDef, GoalRevision } from "./types.ts";
 import type { World } from "./world.ts";
 import { SystemClock } from "./world.ts";
+import { notifyTick, slackTest } from "./notify.ts";
 import { rememberFolder } from "../panel/folders.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
@@ -249,6 +251,16 @@ async function main(): Promise<void> {
           }
           const r = await h.tick(rn, { slots: Number(flag("slots", "1")) });
           heartbeat(eng, rn.id, r.hint, !!r.quiet);
+          // Your questions on Slack, and your taps back (notify.ts); nothing without ~/.af/harness/slack.json.
+          try {
+            const n = await notifyTick({ engagement: eng, state: () => h.state(), answer: (a, ans) => h.answer(a, ans) });
+            if (n.sent.length) say(`on Slack: ${n.sent.join(", ")}`);
+            for (const a of n.answered) say(`answered on Slack: ${a.ask} -> ${a.choice}`);
+            for (const x of n.ignored) say(`a Slack reply was ignored (${x.why}): ${x.subject}`);
+            if (n.failed) say(`Slack: ${n.failed}`);
+          } catch (e) {
+            say(`Slack: ${(e as Error).message.split("\n")[0]}`);
+          }
           for (const t of r.turns) say(`${t.todo}: ${t.result}/${t.granularity}${t.reasons.length ? ` (${t.reasons.join("; ").slice(0, 200)})` : ""}`);
           for (const s of r.started) say(`started ${s}`);
           if (r.hint.action === "stop") {
@@ -348,6 +360,13 @@ async function main(): Promise<void> {
         ...(rest.includes("--from-now-on") ? { standing: true } : {}),
       });
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
+      return;
+    }
+    case "slack": {
+      if (rest[0] !== "test") throw new Error("usage: slack test   (setup: docs/harness-slack.md)");
+      const r = await slackTest();
+      console.log(r.lines.join("\n"));
+      if (!r.ok) process.exitCode = 1;
       return;
     }
     case "events": {

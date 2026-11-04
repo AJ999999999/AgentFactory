@@ -82,12 +82,13 @@ export async function slackTick(home = deskHome(), now = Date.now(), about: (a: 
 
 // One mail the workflow sent you, as Outlook has it.
 export type Mail = { subject: string; body: string; from: string };
-export type ReadMail = (only?: string) => Promise<Mail[]>;
+export type ReadMail = (only?: string, prefix?: string) => Promise<Mail[]>;
 
 const READER = path.join(import.meta.dirname, "..", "..", "scripts", "windows", "outlook-replies.ps1");
-export const readOutlook: ReadMail = async (only) => {
+// `prefix`: whose mails ("af-desk" for the desk's, "af-harness" for the harness's).
+export const readOutlook: ReadMail = async (only, prefix) => {
   if (process.platform !== "win32") throw new Error("answers by Outlook need the Outlook app on Windows");
-  const { stdout } = await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", READER, ...(only ? ["-Only", only] : [])], { timeout: 60_000 });
+  const { stdout } = await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", READER, ...(only ? ["-Only", only] : []), ...(prefix ? ["-Prefix", prefix] : [])], { timeout: 60_000 });
   const v = JSON.parse(stdout.trim() || "[]") as unknown;
   return (Array.isArray(v) ? v : [v]).filter((m): m is Mail => !!m && typeof (m as Mail).subject === "string");
 };

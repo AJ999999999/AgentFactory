@@ -28,7 +28,7 @@ The goals are seeded from a **service map** in the private folder, next to `even
     {
       "id": "payments-api", "names": ["Payments", "PayAPI", "checkout"], "jiraComponents": ["Payments"],
       "repo": "contoso/payments-api", "dir": "payments-api",
-      "logs": { "kind": "appinsights", "app": "pay-prod", "tokenEnv": "AF_LOGS_TOKEN" },
+      "logs": { "kind": "files", "where": "\\\\pay-prod-01\\logs\\PayApi-*.log", "sample": "samples/payments-api.log", "notes": "one file per day; exceptions span several lines" },
       "build": "dotnet build", "test": "dotnet test",
       "owners": ["pay-team"]
     }
@@ -37,6 +37,19 @@ The goals are seeded from a **service map** in the private folder, next to `even
 ```
 
 One event rule sends every bug ticket to a single intake goal, in the `triage` lane. Triage reads the ticket and moves it into the right service goal. A ticket that names no known service becomes a question to the partner ("which service is this, or is it new?"), with the triage turn's guess as its recommendation.
+
+## 1b. Logs: told where and shown a sample, never parsed by rules
+
+Most of the firm's logs are written by its own applications: exceptions and a few important events, in a format each team chose. So a service's `logs` entry describes them instead of parsing them:
+- **`kind`:** `files` (a path or share, with a wildcard), or a tool the company runs (`appinsights`, `splunk`, `elk`, …) with its query endpoint and token.
+- **`sample`:** a short log file, with personal data removed, so the model sees the real format.
+- **`notes`:** anything the sample doesn't show, such as the time zone, rotation, or where the user id is.
+
+The harness fetches and the model reads:
+- **The fetch is a job.** The `logs` step's job runs on the runner, with the harness's own read-only access. For a file it takes the window around the ticket's time and the lines that mention the ticket's user or error text, with a size cap. For a tool it runs the query the triage turn wrote. The raw lines come back as `measured` evidence. No turn reads production directly.
+- **What the model makes of the lines is a `reported` finding**, citing the lines it used.
+
+The sample is where the model starts, not the spec. On a service's first ticket, the diagnose turn writes what it learned about the format as a fact, for example "timestamps are UTC, the user id is the fourth field, a stack trace follows `ERROR` until a blank line". Later tickets use that fact and confirm it. When a reading stops matching the lines, the fact is marked as contested (see 4b).
 
 ## 2. The playbook
 
@@ -81,6 +94,22 @@ Two rules sit underneath:
 
 Each packet gets the facts about its service that apply, up to a line budget. It gets confirmed facts first, then reported ones marked as unconfirmed.
 
+## 4b. Keeping it up to date
+
+The process changes too: the team moves to a new Jira workflow, or an SOP adds a step. Knowledge built up under the old way then contradicts the new one. Each kind of knowledge is kept current in its own way:
+- **The process is the people's.** The playbook changes rarely and deliberately: each change is a commit with a reason and a new version. Where the company has an SOP, the playbook links to it rather than copying it, so there's one source of truth. A step's brief quotes the SOP's section, and the packet says which version.
+- **Facts expire by themselves.** Each fact records the playbook version and the code commit it was learned under. A new playbook version marks the facts and lessons learned under the old one as "recheck", in the same way an artifact pinned to a basis goes stale when the basis changes. A change to the file a fact points at does the same. Rechecked facts aren't deleted. The next turn that uses one either confirms it or replaces it. Two facts that disagree become a question to the partner, never an average.
+- **The harness notices when the process has drifted, and proposes the change.** For example:
+  - Jira returns a status the playbook's mapping doesn't know, which means the workflow changed. That's a setup problem, and the partner is asked.
+  - The partner edits drafted replies the same way three times. The harness proposes changing the reply step's brief.
+  - The conductor keeps sending back the same step. The harness proposes changing that step's brief.
+
+  Each is a proposed playbook change, shown with its evidence. Accepting it makes the commit and the new version.
+
+So people set things up once and then answer occasional proposals. They don't keep a document up to date by hand.
+
+**Setting up a service** takes the service map entry, the log sample and the repository. A first `onboard` turn reads all three and drafts the service's starting facts: the code map, the log format, and the build and test commands it found. The partner skims that draft and accepts it.
+
 ## 5. What the main agent may decide
 
 The triage seat and the conductor are judge-lane seats, on a stronger model than the workers.
@@ -103,13 +132,14 @@ A new kind of ticket with no playbook gets a plan drafted by triage, on probatio
 
 ## What gets built, in order
 
-1. **Triage, look and diagnose, with the reply path only.** This covers the service map and goals, the intake rule, playbook instantiation and the fork, the log job, Jira write-back with asking first, and the `facts` log. No code changes reach any repository yet. This alone answers most tickets and builds the facts.
+1. **Triage, look and diagnose, with the reply path only.** This covers the service map and goals, onboarding a service, the intake rule, playbook instantiation and the fork, the file log job, Jira write-back with asking first, and the `facts` log with its expiry. No code changes reach any repository yet. This alone answers most tickets and builds the facts.
 2. **The bug branch.** The failing-test step and its check against the base, connected to the existing ship path. Then after the merge: the production check, the reply, the status change.
-3. **Close and learning.** The close step, lessons into memory, playbook stats, and plans for new kinds of tickets on probation.
+3. **Close and learning.** The close step, lessons into memory, playbook stats, proposed playbook changes from drift, and plans for new kinds of tickets on probation.
 
 ## Still to settle in the office
 
-- **The log tool**, such as Application Insights, Splunk or ELK, and a read-only token for it. That decides the log job's provider.
+- **Each service's logs:** where they are, a sample with personal data removed, and read-only access for the runner. Most are the applications' own files, so `kind: files` comes first. A tool provider is added when a service needs one.
+- **Where the SOPs live,** so playbooks can link to them.
 - **Jira write access:** a service account that can comment and change status, and nothing more.
 - **Where the service map comes from:** written by hand once, or read from a service catalog if the company has one.
 - **Who approves replies**, if not the partner alone: for example a team lead for one service.

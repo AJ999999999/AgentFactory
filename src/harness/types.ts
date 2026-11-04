@@ -166,6 +166,7 @@ export type TodoDraft = {
   cost?: { usd: number }; // money: authorized before, not accounted after
   maxTurns?: number; // stopping rule for open-ended tasks
   reviews?: string; // probation review: the todo whose output this reviews
+  prReview?: string; // a pull request's review: the ship job whose pull request this reviews (ship.ts)
 };
 
 // ---------- the team ----------
@@ -305,6 +306,10 @@ export type HEvent = Base &
     // The engagement's copy of a shipping goal's repository took in the base at this commit
     // (applied), or couldn't (applied false, with why); the first look only notes the base.
     | { type: "ship_synced"; goal: string; sha: string; applied: boolean; note?: string }
+    // A review of a pull request by the judge lane's seat (another model), and its posting
+    // to GitHub as a comment (never an approval: a person's approval is still needed).
+    | { type: "pr_review"; review: string; ship: string; verdict: Verdict; note?: string }
+    | { type: "pr_review_posted"; review: string; url?: string; error?: string }
     | { type: "finding"; finding: Finding }
     | { type: "finding_discounted"; finding: string; reason: string }
     | { type: "assumption_reset"; goal: string; assumption: string; reason: string }

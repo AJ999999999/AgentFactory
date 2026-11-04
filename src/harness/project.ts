@@ -10,7 +10,7 @@ import { askShape, type Standing, standingKey } from "./standing.ts";
 import type { Received } from "./events.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
-  SeatDef, TodoDraft, TodoKind, TurnRecord,
+  SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
 } from "./types.ts";
 
 export type HarnessPolicy = {
@@ -139,6 +139,8 @@ export type State = {
   outside: Map<string, Received>;
   // The base commit each shipping goal's copy is in step with (ship.ts).
   shipSynced: Map<string, string>;
+  // Pull request reviews by review todo: the verdict, and whether it's on GitHub yet.
+  prReviews: Map<string, { ship: string; verdict: Verdict; note?: string; at: number; posted?: boolean }>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -163,6 +165,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     standing: new Map(),
     outside: new Map(),
     shipSynced: new Map(),
+    prReviews: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -299,6 +302,14 @@ export function apply(s: State, e: HEvent): void {
     case "standing_revoked":
       s.standing.delete(standingKey(e.goal, e.shape));
       break;
+    case "pr_review":
+      if (!s.prReviews.has(e.review)) s.prReviews.set(e.review, { ship: e.ship, verdict: e.verdict, ...(e.note ? { note: e.note } : {}), at: e.at });
+      break;
+    case "pr_review_posted": {
+      const r = s.prReviews.get(e.review);
+      if (r && !e.error) r.posted = true;
+      break;
+    }
     case "ship_synced":
       if (e.applied) s.shipSynced.set(e.goal, e.sha);
       break;

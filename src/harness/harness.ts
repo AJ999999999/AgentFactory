@@ -37,7 +37,9 @@ import type { Answer } from "./answers.ts";
 import { answerEvents, correctionEvents } from "./answers.ts";
 import type { Hint, Runner } from "./select.ts";
 import { blockers, nextPollAt, nextWake, rank, readyTodos, ts } from "./select.ts";
-import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
+import { HARNESS_DIR, appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } from "./store.ts";
+import { FileLogs } from "./logs.ts";
+import { JiraWriter } from "./jira.ts";
 import type { Budget, EngagementDef, Finding, HEvent, TodoDraft, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 import { budgetProblem, criteriaHash, validateTurn } from "./validate.ts";
@@ -76,7 +78,10 @@ export class Harness {
 
   // Where done work goes as pull requests (ship.ts); tests pass one that plays GitHub.
   ship: JobProvider;
-  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string; ship?: JobProvider }) {
+  // A playbook's jobs: a service's logs around a ticket, and replies sent to Jira.
+  logs: JobProvider;
+  jira: JobProvider;
+  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string; ship?: JobProvider; logs?: JobProvider; jira?: JobProvider }) {
     if (opts.policy.claims.turnTimeoutMinutes >= opts.policy.claims.ttlMinutes) throw new Error("turn timeout must be shorter than the claim TTL, or a slow turn could outlive its claim");
     if (!safeId(opts.engagement)) throw new Error(`bad engagement id ${opts.engagement}`);
     this.control = opts.control;
@@ -85,6 +90,8 @@ export class Harness {
     this.clock = opts.clock;
     this.world = opts.world;
     this.ship = opts.ship ?? new GitHubShip({ control: opts.control, root: path.join(opts.worktreeRoot, "..", "ship") });
+    this.logs = opts.logs ?? new FileLogs();
+    this.jira = opts.jira ?? new JiraWriter();
     this.agent = opts.agent;
     this.claims = new Claims(opts.control, opts.engagement);
     this.pulse = new Pulse(opts.control, opts.engagement);
@@ -104,8 +111,10 @@ export class Harness {
     const { goals, ...meta } = def;
     events.push({ id: eid("open", def.id), at: now, by, type: "engagement_opened", engagement: meta });
     const basisNames = new Set<string>();
+    const services = new Set((def.services ?? []).map((x) => x.id));
     for (const g of goals) {
       if (!safeId(g.id)) throw new Error(`bad goal id ${g.id}`);
+      if (g.service && !services.has(g.service)) throw new Error(`goal ${g.id} is for service ${g.service}, which isn't in the engagement's services`);
       // Every pool of turns starts here, with the partner: nothing later can create one.
       const unbudgeted = budgetProblem(g.id, g.budget);
       if (unbudgeted) throw new Error(unbudgeted);
@@ -203,6 +212,20 @@ export class Harness {
     const e: HEvent = { id: eid("events", sha256(JSON.stringify(d)).slice(0, 12), now), at: now, by, type: "events_configured", events: d };
     apply(s, e);
     await appendEvents(this.control, this.engagement, [e, ...settle(s, now)], `events: ${(d.sources ?? []).length} source(s), ${(d.rules ?? []).length} rule(s)`, { "Changed-by": by });
+  }
+
+  // A fact about a service, confirmed by the partner: packets show it as confirmed, ahead of
+  // the ones agents only reported (playbook.ts). Returns false when it already is.
+  async confirmFact(service: string, subject: string, by = "partner"): Promise<boolean> {
+    const s = await this.state();
+    const f = s.facts.get(service)?.get(subject);
+    if (!f) throw new Error(`no fact ${subject} about ${service}`);
+    if (f.confirmed) return false;
+    const now = this.clock.now();
+    const e: HEvent = { id: eid("fact-ok", f.id), at: now, by, type: "fact_confirmed", service, subject, fact: f.id };
+    apply(s, e);
+    await appendEvents(this.control, this.engagement, [e, ...settle(s, now)], `confirm what's known about ${service}: ${subject}`, { "Changed-by": by });
+    return true;
   }
 
   // Take back a standing answer: questions of that shape reach the person again.
@@ -445,7 +468,7 @@ export class Harness {
       if (nextPollAt(s, t, pulse, now) > now) continue;
       pulseOut.polls[t.id] = { at: now, n: (pulse.polls[t.id]?.n ?? 0) + 1 };
       if (t.kind === "job") {
-        const eta = await this.pollJob(s, t, now, add);
+        const eta = await this.pollJob(s, t, now, add, (w) => basisWrites.push(w));
         if (eta !== undefined) pulseOut.polls[t.id].eta = eta;
       } else await this.pollWait(s, t, now, add);
     }
@@ -580,15 +603,29 @@ export class Harness {
 
   // Shipping jobs go to GitHub (ship.ts); every other job to the world's provider.
   private jobsFor(t: TodoState): JobProvider | undefined {
+    if (t.job?.spec?.logs) return this.logs;
+    if (t.job?.spec?.jira) return this.jira;
     return t.job?.spec?.ship || t.job?.spec?.watch ? this.ship : this.world.jobs;
   }
 
-  private async pollJob(s: State, t: TodoState, now: number, add: (e: HEvent) => void): Promise<number | undefined> {
+  private async pollJob(s: State, t: TodoState, now: number, add: (e: HEvent) => void, write: (w: (repo: string) => void) => void): Promise<number | undefined> {
     const jobs = this.jobsFor(t);
     if (!jobs) return;
     const r = await jobs.poll(t.handle!, now);
     if (r.status === "running") return r.eta;
     add({ id: eid("fin", t.id, t.failures, t.handle ?? ""), at: now, by: "harness", type: "job_finished", todo: t.id, status: r.status, metrics: r.metrics, gpuHours: r.gpuHours });
+    // A playbook's own jobs (a log excerpt, a reply sent to Jira): what they did is noted,
+    // and an excerpt lands in the repo under the harness's path, in the same commit.
+    if (t.job?.spec?.logs || t.job?.spec?.jira) {
+      if (r.note) add({ id: eid("job-note", t.id, t.failures, r.status), at: now, by: "harness", type: "note", goal: t.goal, text: r.note.slice(0, this.policy.proposals.noteChars) });
+      for (const [rel, text] of Object.entries(r.files ?? {})) {
+        if (!rel.startsWith(`${HARNESS_DIR}/${this.engagement}/`) || rel.includes("..")) continue;
+        write((repo) => {
+          fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+          fs.writeFileSync(path.join(repo, rel), text);
+        });
+      }
+    }
     const watched = t.job?.spec?.watch as string | undefined;
     if (watched) {
       // Merged: noted, and the goal's production check run once. Closed without merging is a

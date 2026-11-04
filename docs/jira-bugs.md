@@ -1,0 +1,99 @@
+# Jira bugs, triaged, diagnosed and answered
+
+A user files "it doesn't work" in Jira. The harness takes the ticket through the steps a support engineer would follow:
+
+```
+ticket ─► triage ─► logs ∥ code ─► diagnose ─┬─► user error ─► reply
+                                             ├─► bug ─────────► reply
+                                             ├─► needs info ──► reply
+        (triage can also say) duplicate ─────┴────────────────► reply
+```
+
+Every reply goes to you as a draft first. The loop posts it on the ticket once you say send, then moves the ticket's status. No turn touches Jira or production.
+
+This is the first part of the [design](next/230-jira-bug-playbook.md). Fixing the bug itself (a failing test, the fix, a pull request) comes next. Until then, a `bug` outcome confirms the bug to the reporter, and the diagnosis is on record for whoever fixes it.
+
+## How it works
+
+The steps are a **playbook**, `policy/playbooks/jira-bug.json`. It's written once and filled in for each ticket:
+
+- **Triage** runs on the judges' strong model. It reads the ticket and picks one of three outcomes: `route` to one of your services, `duplicate`, or `needs_info`. With each outcome it fills in what it found: the service, the words to search the logs for, the time window, a one-line summary.
+- **Logs** is a job, not a turn. The runner reads the service's log files, takes the lines that mention those words (with a few lines before and the stack trace after), and saves the excerpt in the engagement's repo. Turns can read it but not change it. No rules parse the logs: the model reads them as they are.
+- **Code** reads the part of the service's code the ticket is about, and says where it is.
+- **Diagnose** puts the logs and the code together and picks `user_error`, `bug` or `needs_info`, with the evidence. Then [the conductor](conductor.md) reads it before the branch is taken, even if you haven't turned the conductor on elsewhere. A wrong call here costs the most.
+- **Reply** drafts the answer to the reporter. You get it as a question: **Send**, **Send my text instead**, or **Don't send**.
+  - A `user_error` reply is always yours to approve. Telling someone it was their mistake, when it was really our bug, is the worst error this path can make.
+  - Other kinds, such as a duplicate's link, can be sent by a standing answer ("from now on").
+
+The agent picks the outcome, but it never writes the next steps itself. The harness adds them from the playbook.
+
+## What you set up, once
+
+Everything below names your systems, so it goes in `engagement.json` in your private folder, not in this repo.
+
+**1. The services**, one entry each:
+
+```json
+"services": [
+  {
+    "id": "payments", "names": ["PayAPI", "checkout"], "jiraComponents": ["Payments"],
+    "dir": "payments", "build": "dotnet build", "test": "dotnet test",
+    "logs": { "kind": "files", "where": "\\\\pay-prod-01\\logs\\PayApi-*.log", "notes": "one file per day, times in UTC" },
+    "sample": "samples/payments.log",
+    "sop": "https://wiki.example.com/payments/support"
+  }
+]
+```
+
+- **`dir`** is where the service's code is in the engagement's repo. Seed it with `open --seed`, or let a shipping goal keep it in step with GitHub ([ship.md](ship.md)).
+- **`logs.where`** is a folder the runner can read, with `*` in the file name for files that roll over. Read-only access for the account the scheduled task runs as is enough.
+- **`sample`** is a short log file, with personal data removed, so the model sees the real format. Put it in the seed.
+- **`notes`** covers what the sample doesn't show.
+
+**2. The goals:** one intake goal for new tickets, and one perpetual goal per service with `"service"` set to the service's id:
+
+```json
+"goals": [
+  { "id": "intake", "title": "New tickets", "objective": "Route each ticket to its service", "owner": "partner", "scope": ["intake"], "assumptions": [], "budget": { "turnsPerWeek": 100 }, "perpetual": true },
+  { "id": "pay", "title": "Payments support", "objective": "Answer Payments tickets", "owner": "partner", "service": "payments", "scope": ["payments"], "assumptions": [], "budget": { "turnsPerWeek": 200 }, "perpetual": true }
+]
+```
+
+**3. The Jira rule,** which names the playbook instead of a lane. The source's `statuses` say where a ticket moves when it's routed and after a reply is sent:
+
+```json
+"events": {
+  "sources": [{ "id": "jira-pay", "kind": "jira", "url": "https://jira.example.com", "jql": "project = PAY AND issuetype = Bug", "tokenEnv": "AF_JIRA_TOKEN",
+                "statuses": { "routed": "In Progress", "replied": "Waiting for customer" } }],
+  "rules": [{ "id": "bugs", "match": { "source": "jira-pay", "types": ["Bug"] }, "goal": "intake", "playbook": "jira-bug", "maxOpen": 3 }]
+}
+```
+
+The token in `AF_JIRA_TOKEN` now also has to comment and change status. Give it an account that can do only that.
+
+**4. Check it before it runs:**
+
+```powershell
+npm run harness -- logs test payments --terms u-4417,9001 --from 2026-11-04   # the excerpt the log job would fetch; writes nothing
+npm run harness -- events test jira-pay                                      # what Jira returns, and which rule each ticket meets
+```
+
+## What it learns, and how it stays current
+
+When a service goal opens, it gets a **first look**: one turn reads the code, the log sample and the commands, and records what it finds as facts. Later turns add facts too, such as where the refund code is, or how a line in the logs is laid out. Each packet in that service's goal starts from them.
+
+```powershell
+npm run harness -- facts                          # what's known, by service
+npm run harness -- facts confirm payments logs.format
+```
+
+- A fact is **unconfirmed** until you confirm it. The newest fact on a subject replaces the one before it.
+- A fact learned under an older version of the playbook is shown as **recheck**. Change the playbook's `version` when you change its process, and the old facts get checked again rather than trusted.
+- A ticket's own working notes (hypotheses, what was tried) stay in that ticket's record. Nothing a turn guesses halfway through becomes a fact.
+
+## What's not here yet
+
+- **The fix:** a test that fails on the bug, the fix, and its pull request, through [ship](ship.md).
+- **The reporter's answer coming back in.** Today, a ticket that already has a run ignores its later changes, so our own comment doesn't start a new run. Answering `needs_info` means a person reads the reporter's reply.
+- **Log tools** other than files, such as Application Insights or Splunk.
+- **Learning across tickets:** the close step, lessons proposed to you, and numbers per playbook.

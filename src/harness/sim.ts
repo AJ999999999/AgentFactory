@@ -54,11 +54,13 @@ export class Sim {
     people: Person[];
     seed?: (repo: Git) => Promise<void>;
     ship?: import("./world.ts").JobProvider;
+    logs?: import("./world.ts").JobProvider;
+    jira?: import("./world.ts").JobProvider;
   }): Promise<Sim> {
     const control = await createWorkspace({ dir: opts.dir });
     if (opts.seed) await opts.seed(control);
     const clock = new SimClock(opts.start);
-    const harness = new Harness({ control, engagement: opts.def.id, policy: opts.policy, clock, world: opts.world, agent: opts.agent, worktreeRoot: path.join(opts.dir, "wt"), ...(opts.ship ? { ship: opts.ship } : {}) });
+    const harness = new Harness({ control, engagement: opts.def.id, policy: opts.policy, clock, world: opts.world, agent: opts.agent, worktreeRoot: path.join(opts.dir, "wt"), ...(opts.ship ? { ship: opts.ship } : {}), ...(opts.logs ? { logs: opts.logs } : {}), ...(opts.jira ? { jira: opts.jira } : {}) });
     await harness.open(opts.def);
     return new Sim({ harness, clock, runners: opts.runners, people: opts.people });
   }

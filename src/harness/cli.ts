@@ -439,6 +439,36 @@ async function main(): Promise<void> {
       for (const r of eventSummary(s)) console.log(`${r.source.padEnd(16)} ${r.type.padEnd(14)} ${r.received} in, ${r.routed} became work or evidence, ${r.waiting} waiting for room, ${r.unmatched} matched no rule`);
       return;
     }
+    case "facts": {
+      // What the playbooks have learned about each service, and confirming it.
+      const h = await harness(currentEngagement());
+      if (rest[0] === "confirm") {
+        if (!rest[1] || !rest[2]) throw new Error("usage: facts confirm <service> <subject>");
+        console.log((await h.confirmFact(rest[1], rest[2], flag("by", "partner"))) ? `confirmed: ${rest[1]} ${rest[2]}` : `${rest[1]} ${rest[2]} was already confirmed`);
+        return;
+      }
+      const s = await h.state();
+      const only = rest[0];
+      if (!s.facts.size) console.log("nothing learned yet: facts come from playbook turns (docs/jira-bugs.md)");
+      for (const [svc, m] of s.facts) {
+        if (only && svc !== only) continue;
+        for (const f of m.values()) console.log(`${svc.padEnd(16)} ${f.subject.padEnd(24)} ${f.confirmed ? "confirmed  " : "unconfirmed"} ${f.text}${f.source ? `  (${f.source})` : ""}`);
+      }
+      return;
+    }
+    case "logs": {
+      // For setting up a service: what the log job would fetch for these terms. Writes nothing.
+      if (rest[0] !== "test" || !rest[1]) throw new Error("usage: logs test <service> --terms a,b [--from <iso>] [--to <iso>]");
+      const h = await harness(currentEngagement());
+      const s = await h.state();
+      const svc = (s.engagement?.services ?? []).find((x) => x.id === rest[1]);
+      if (!svc?.logs) throw new Error(`no service ${rest[1]} with logs in the engagement (services: ${(s.engagement?.services ?? []).map((x) => x.id).join(", ") || "none"})`);
+      const { readLogs } = await import("./logs.ts");
+      const r = readLogs({ service: svc.id, ...svc.logs, terms: (flag("terms") ?? "").split(",").map((x) => x.trim()).filter(Boolean), from: flag("from"), to: flag("to") });
+      console.log(r.text);
+      console.log(`${r.matches} matching line(s) in ${r.files} file(s); ${r.lines} lines in the excerpt; nothing was written`);
+      return;
+    }
     case "standing": {
       const h = await harness(currentEngagement());
       if (rest[0] === "revoke") {
@@ -499,7 +529,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | doctor | agents [install]");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | events | facts | logs test <service> | doctor | agents [install]");
   }
 }
 

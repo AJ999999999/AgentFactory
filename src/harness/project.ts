@@ -10,8 +10,10 @@ import { askShape, type Standing, standingKey } from "./standing.ts";
 import type { Received } from "./events.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
-  SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
+  EventOf, Fact, SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
 } from "./types.ts";
+import { loadPlaybooks } from "./playbook.ts";
+import type { Playbook } from "./playbook.ts";
 
 export type HarnessPolicy = {
   version: number;
@@ -49,14 +51,17 @@ export type HarnessPolicy = {
   // lanes: only these work lanes (default: every work lane). skipChecked: not when the
   // todo's own checker passed. maxRedirects: send-backs per todo before it goes through.
   conductor?: { lanes?: string[]; skipChecked?: boolean; maxRedirects?: number };
+  // Playbooks by id, loaded from the folder the policy names (playbook.ts).
+  playbooks?: Record<string, Playbook>;
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
-  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Omit<HarnessPolicy, "team"> & { team?: { library: string; catalog: string } };
-  const { team, ...rest } = raw;
-  if (!team) return rest;
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Omit<HarnessPolicy, "team" | "playbooks"> & { team?: { library: string; catalog: string }; playbooks?: string };
+  const { team, playbooks, ...rest } = raw;
+  const pbs = playbooks ? { playbooks: loadPlaybooks(path.resolve(path.dirname(file), playbooks)) } : {};
+  if (!team) return { ...rest, ...pbs };
   const read = (f: string) => JSON.parse(fs.readFileSync(path.resolve(path.dirname(file), f), "utf8"));
-  return { ...rest, team: { library: read(team.library) as Library, catalog: read(team.catalog) as Catalog } };
+  return { ...rest, ...pbs, team: { library: read(team.library) as Library, catalog: read(team.catalog) as Catalog } };
 }
 
 export type GoalState = {
@@ -152,6 +157,10 @@ export type State = {
   prReviews: Map<string, { ship: string; verdict: Verdict; note?: string; at: number; posted?: boolean }>;
   // The conductor's verdicts, oldest first: what its send-back rate is worked out from.
   conducted: Array<{ todo: string; conduct: string; lane: string; goal: string; seat?: string; verdict: Verdict; note?: string; at: number }>;
+  // Playbook runs: each fork step's latest outcome, drafted replies, and facts by service.
+  playOutcomes: Map<string, { run: string; step: string; outcome: string; slots: Record<string, string>; at: number }>;
+  replies: Map<string, EventOf<"reply_drafted">>;
+  facts: Map<string, Map<string, Fact & { at: number; confirmed?: boolean }>>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -178,6 +187,9 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     shipSynced: new Map(),
     prReviews: new Map(),
     conducted: [],
+    playOutcomes: new Map(),
+    replies: new Map(),
+    facts: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -421,6 +433,25 @@ export function apply(s: State, e: HEvent): void {
     case "paused":
       s.paused = e.paused ? { at: e.at, by: e.by, reason: e.reason } : null;
       break;
+    case "play_outcome":
+      s.playOutcomes.set(e.todo, { run: e.run, step: e.step, outcome: e.outcome, slots: e.slots, at: e.at });
+      break;
+    case "reply_drafted":
+      // The first draft is the one asked about; a later turn's draft doesn't replace it.
+      if (!s.replies.has(e.todo)) s.replies.set(e.todo, e);
+      break;
+    case "fact_recorded": {
+      const m = s.facts.get(e.fact.service) ?? new Map();
+      s.facts.set(e.fact.service, m);
+      // The newest on a subject replaces the one before, and isn't confirmed until it is.
+      m.set(e.fact.subject, { ...e.fact, at: e.at });
+      break;
+    }
+    case "fact_confirmed": {
+      const f = s.facts.get(e.service)?.get(e.subject);
+      if (f && f.id === e.fact) f.confirmed = true;
+      break;
+    }
     case "conduct_verdict": {
       const t = s.todos.get(e.todo);
       if (t && e.verdict === "reject") t.redirects++;

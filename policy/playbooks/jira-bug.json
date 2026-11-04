@@ -1,0 +1,90 @@
+{
+  "id": "jira-bug",
+  "version": 1,
+  "title": "Jira bug",
+  "start": "triage",
+  "steps": {
+    "triage": {
+      "lane": "ticket-triage",
+      "priority": 1,
+      "text": "Triage {ticket.id}: {ticket.title}",
+      "brief": [
+        "You're the triage lead. Read the ticket in your todo and decide where it goes. Don't fix or answer anything yet.",
+        "The services we support: {services}.",
+        "For \"terms\", give the words to search that service's logs for: the user's id or email, an order or request id, the error text, the screen or action. Comma-separated, the most specific first.",
+        "For \"from\" and \"to\", the time window the ticket points at, as ISO dates, if it says or implies one."
+      ],
+      "outcomes": {
+        "route": { "next": ["logs", "code", "diagnose"], "needs": ["service", "terms", "summary"], "means": "it's about one of our services and there's enough to look into. \"service\" is its id from the list above (or your best guess at a new one), \"summary\" one sentence on what the user says went wrong." },
+        "duplicate": { "next": ["reply"], "needs": ["duplicate_of", "summary"], "means": "it's the same problem as another ticket you can name in \"duplicate_of\"." },
+        "needs_info": { "next": ["reply"], "needs": ["missing", "summary"], "means": "nobody could tell what went wrong from what it says. \"missing\" is exactly what to ask the reporter for." }
+      }
+    },
+    "logs": {
+      "lane": "logs",
+      "kind": "job",
+      "logs": true,
+      "priority": 1,
+      "text": "Fetch the {service} logs for {ticket.id}: {slots.terms}",
+      "brief": []
+    },
+    "code": {
+      "lane": "research",
+      "priority": 1,
+      "text": "Read the {service} code that {ticket.id} is about: {slots.summary}",
+      "brief": [
+        "Read the code in {dir} that handles what the ticket describes: \"{slots.summary}\". Change nothing.",
+        "In \"note\", say which files and functions handle it, and what in them could produce what the user saw, with repo:<path> for each.",
+        "What the next ticket would want to know about where things are in {dir} goes in \"facts\", as code.<area>."
+      ]
+    },
+    "diagnose": {
+      "lane": "diagnose",
+      "after": ["logs", "code"],
+      "conduct": true,
+      "priority": 1,
+      "text": "Diagnose {ticket.id}: {slots.summary}",
+      "brief": [
+        "Work out what happened to the user in {ticket.id}, from the evidence, and say which it is.",
+        "The log lines the harness fetched are in {logsFile}. The service's logs look like {sample} ({logs.notes}). Read them as they are; quote the lines you rely on.",
+        "The code research is in the notes in your packet. Open the files it names.",
+        "If you learned something about how {service}'s logs are written (time zone, where the user id is, how an error looks), record it in \"facts\" as logs.format.",
+        "A wrong call here is costly: telling a user it was their mistake when it was our bug is the worst one. If the evidence doesn't settle it, say so and choose needs_info."
+      ],
+      "outcomes": {
+        "user_error": { "next": ["reply"], "needs": ["summary", "how"], "means": "the service did what it should; the user needs to do something differently. \"how\" is what they should do." },
+        "bug": { "next": ["reply"], "needs": ["summary", "where"], "means": "it's a fault on our side. \"where\" is the file and function, and the log lines that show it." },
+        "needs_info": { "next": ["reply"], "needs": ["missing", "summary"], "means": "the logs and code don't settle it. \"missing\" is what to ask the reporter for." }
+      }
+    },
+    "reply": {
+      "lane": "support",
+      "priority": 1,
+      "reply": true,
+      "text": "Draft the reply on {ticket.id} ({outcome})",
+      "brief": [
+        "Write the reply to the person who filed {ticket.id}. {replyGuide}",
+        "What was found: {slots.summary} {slots.how} {slots.where} {slots.missing} {slots.duplicate_of}",
+        "Plain, friendly words, under 120 words. No internal file names, no blame, no promised dates. Sign off as the support team.",
+        "Follow the team's procedure if it says more about replies: {sop}"
+      ]
+    }
+  },
+  "replies": {
+    "user_error": "Explain, step by step, how to do what they were trying to do. Make clear nothing is wrong with them for asking.",
+    "bug": "Say it's confirmed as a problem on our side, what it affects, and that a fix is being worked on.",
+    "needs_info": "Ask for exactly this, and say why it helps: {slots.missing}",
+    "duplicate": "Say it's the same problem as {slots.duplicate_of}, where updates will be posted."
+  },
+  "onboard": {
+    "lane": "research",
+    "priority": 2,
+    "text": "First look at {service}: where its code is, what its logs look like, how it's built and tested",
+    "brief": [
+      "This is the first look at {service}, so later tickets start from what's known. Change nothing.",
+      "Read the code in {dir}: its main parts and where requests, errors and logging are handled. Record each as a fact: code.<area>.",
+      "Read the log sample {sample} ({logs.notes}): record how a line is laid out, the time zone, where a user or request id is, and how an error and its stack trace look, as logs.format.",
+      "Find how it's built and tested (the service map says build \"{build}\", test \"{test}\"); record what you find as build.commands."
+    ]
+  }
+}

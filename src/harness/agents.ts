@@ -8,6 +8,7 @@ import { spawnCommand } from "../proc.ts";
 import type { Belief, State, TodoState } from "./project.ts";
 import type { SeatView, ToolConfig } from "./team.ts";
 import { REVIEW_LANE, toolFlags } from "./team.ts";
+import { playPrompt } from "./playbook.ts";
 import type { Finding, GoalDef } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 
@@ -88,10 +89,13 @@ export function turnPrompt(ctx: TurnContext): string {
   const continuing = ctx.session?.resumed ? [
     `This continues your session on this ${ctx.session.scope} (turn ${ctx.session.turn}). Your working directory is a fresh checkout: what the harness accepted from your earlier turns is in it, and anything that isn't was thrown away. The packet above is the current truth.`,
   ] : [];
+  // A playbook step's own brief and what it must hand back (playbook.ts).
+  const play = ctx.state && ctx.todo.play ? ["", ...playPrompt(ctx.state, ctx.todo)] : [];
   return [
     ctx.packet,
     ...role,
     ...continuing,
+    ...play,
     "",
     ...review,
     "Do one bounded piece of this todo now, then stop. Write files only inside the scope above.",

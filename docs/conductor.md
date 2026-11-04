@@ -30,6 +30,7 @@ The conductor is that someone, for as long as the harness needs it. Every time i
 - **It only reviews finished work in work lanes.** Judge lanes, reviews and the conductor's own todos are never sent to it.
 - **Other reviewers come first.** A todo a named person reviews, or a role on probation whose work goes to the blind reviewer, skips the conductor. They already have an independent check.
 - **`lanes`** limits it to some lanes, for example `["build", "research"]`.
+- **A todo marked `conduct`** is read even when the policy's conductor is off. The Jira bug playbook marks its diagnosis this way ([jira-bugs.md](jira-bugs.md)).
 - **`skipChecked: true`** skips todos whose own checker passed. Off by default, because a checker that passes can still miss half a feature: in the eval, that's how part of the multi-currency feature went undone.
 - **Its turns count against the goal's turn budget**, like any turn. A conductor that never sends anything back is costing turns for nothing, and its numbers will show that.
 - **If its todo is dropped, the work is done.** The conductor gives advice; losing that advice shouldn't lose the work. This is the opposite of a probation review, where dropping the review drops the work.

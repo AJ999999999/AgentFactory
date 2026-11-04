@@ -16,7 +16,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
-import type { AskOption, Budget, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import type { AskOption, Budget, Direction, Effect, Fact, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import { stepOf } from "./playbook.ts";
 import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
 import { activeFreezes } from "./select.ts";
@@ -37,6 +38,11 @@ export type TurnOutput = {
   discount?: Array<{ finding: string; reason: string }>;
   note?: string;
   verdict?: Verdict; // reviews and the conductor only
+  // A playbook step (playbook.ts): where the run goes next, and what the turn found.
+  outcome?: string;
+  slots?: Record<string, string>;
+  reply?: { text: string }; // a step that drafts the reply to the ticket's reporter
+  facts?: Array<{ subject: string; text: string; source?: string }>; // about the goal's service
 };
 
 export type Validated = { result: TurnResult; granularity: Granularity; events: HEvent[]; reasons: string[] };
@@ -199,12 +205,45 @@ export function validateTurn(input: {
     }
   }
 
+  // ---- facts about the goal's service ----
+  for (const [i, f] of (o.facts ?? []).slice(0, 6).entries()) {
+    const service = g.def.service;
+    const subject = typeof f?.subject === "string" ? f.subject.trim().slice(0, 80) : "";
+    const text = typeof f?.text === "string" ? f.text.trim().slice(0, 400) : "";
+    if (!service) { reasons.push(`fact ${i}: facts are about a service, and ${t.goal} has none`); continue; }
+    if (!/^[a-z0-9][\w.-]*$/i.test(subject) || !text) { reasons.push(`fact ${i}: needs a "subject" like logs.format and a "text"`); continue; }
+    const pb = t.play ? s.policy.playbooks?.[t.play.playbook] : undefined;
+    const fact: Fact = { id: eid(turn, "fact", i), service, subject, text, ...(typeof f.source === "string" && f.source ? { source: f.source.slice(0, 200) } : {}), by: actor, ...(pb ? { playbook: { id: pb.id, version: pb.version } } : {}), turn };
+    events.push({ id: fact.id, at, by, type: "fact_recorded", fact });
+  }
+
   // ---- note ----
   if (o.note) events.push({ id: eid(turn, "note"), at, by, type: "note", goal: t.goal, text: String(o.note).slice(0, p.proposals.noteChars), turn });
 
   // ---- outcome ----
   let result: TurnResult = "progress";
   let done = !!o.done;
+  // ---- playbook steps: a fork needs its outcome, a reply step its draft ----
+  const step = stepOf(s, t);
+  if (done && t.play && step?.outcomes) {
+    const branch = typeof o.outcome === "string" ? step.outcomes[o.outcome] : undefined;
+    const slots = cleanSlots(o.slots);
+    const missing = (branch?.needs ?? []).filter((n) => !slots[n]);
+    if (!branch) {
+      reasons.push(`step ${t.play.step} needs an "outcome": one of ${Object.keys(step.outcomes).join(", ")}`);
+      done = false;
+    } else if (missing.length) {
+      reasons.push(`outcome ${o.outcome} needs slots ${missing.join(", ")}`);
+      done = false;
+    } else events.push({ id: eid("outcome", t.id, turn), at, by, type: "play_outcome", todo: t.id, run: t.play.run, step: t.play.step, outcome: o.outcome!, slots, turn });
+  }
+  if (done && t.play && step?.reply) {
+    const text = typeof o.reply?.text === "string" ? o.reply.text.trim().slice(0, 2000) : "";
+    if (!text || !t.play.ticket) {
+      reasons.push(text ? "a reply needs the run's ticket" : `step ${t.play.step} needs "reply": {"text": "..."}`);
+      done = false;
+    } else events.push({ id: eid("reply", t.id), at, by, type: "reply_drafted", todo: t.id, run: t.play.run, outcome: t.play.slots?.outcome ?? "", text, ticket: t.play.ticket });
+  }
   if (o.blocker) {
     const id = eid("ask-blocked", t.id, t.turns + 1);
     events.push({
@@ -345,13 +384,25 @@ export function validateTurn(input: {
 // work lanes (judges, reviews and the conductor itself never), and at most maxRedirects
 // send-backs per todo, so it can't hold work forever.
 export function conducted(s: State, t: TodoState, checked: boolean): boolean {
-  const c = s.policy.conductor;
+  // A todo marked `conduct` (a playbook's diagnosis) is read even with the policy's off.
+  const c = s.policy.conductor ?? (t.conduct ? {} : undefined);
   if (!c || t.kind !== "task" || t.reviews || t.prReview || t.conducts) return false;
   const judges = new Set([...(s.policy.team?.library.judgeLanes ?? []), REVIEW_LANE, CONDUCT_LANE]);
   if (judges.has(t.lane)) return false;
-  if (c.lanes && !c.lanes.includes(t.lane)) return false;
-  if (c.skipChecked && checked) return false;
+  if (!t.conduct && c.lanes && !c.lanes.includes(t.lane)) return false;
+  if (!t.conduct && c.skipChecked && checked) return false;
   return t.redirects < (c.maxRedirects ?? 1);
+}
+
+// What a turn found, as short strings only: an agent's JSON isn't trusted to be small.
+function cleanSlots(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, x] of Object.entries(v).slice(0, 12)) {
+    if (!/^[a-z][\w-]{0,30}$/i.test(k) || x === null || x === undefined) continue;
+    out[k] = (Array.isArray(x) ? x.join(", ") : String(x)).slice(0, 400);
+  }
+  return out;
 }
 
 const seatKeyOf = (t: TodoState) => `${t.goal}/${t.lane}`;

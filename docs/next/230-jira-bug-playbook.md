@@ -1,5 +1,9 @@
 # Design: the Jira bug playbook
 
+Step 1 below is built: [docs/jira-bugs.md](../jira-bugs.md) says how to set it up and what it doesn't do yet. Steps 2 and 3 are still to do. Two things changed from this design while it was being built:
+- **Reading logs is the runner's access, not a catalog permission.** The log job runs on the runner with the runner account's read access. No turn has that access.
+- **The reporter's reply doesn't come back in yet.** A ticket that already has a run ignores its later changes, so the harness's own comment can't start a new run. Bringing a reply into its `needs_info` step is part of step 2.
+
 A user files "it doesn't work" in Jira. Today a rule turns that ticket into one todo in one lane ([events.md](../events.md)). But a bug ticket isn't one piece of work. It's a process with a fork in the middle, and nobody knows which way the fork goes until someone has looked:
 
 ```
@@ -114,7 +118,7 @@ So people set things up once and then answer occasional proposals. They don't ke
 
 The triage seat and the conductor are judge-lane seats, on a stronger model than the workers.
 - **May:** choose the service, the playbook and the outcome of triage; fill in the slots; write each step's brief (the charter: the repo's build and test commands, where its logs are, what done means, the known pitfalls from facts); send work back; ask the partner.
-- **May not:** open or close goals; grant permissions (a brief can say "read the logs", but only the catalog's `logs:read` lets the job run); send anything outside the firm; merge.
+- **May not:** open or close goals; grant access (the log job reads with the runner's own access, which no turn has); send anything outside the firm; merge.
 
 A brief is a role prompt made specific. "You're a senior .NET engineer" goes in a brief at most once. The brief's force comes from the service's own facts and the step's check.
 

@@ -20,7 +20,9 @@ import { SystemClock } from "../harness/world.ts";
 import type { EngagementView, RunnerView } from "./view.ts";
 import { engagementView } from "./view.ts";
 
-export type PanelOptions = { dir: string | string[]; policy: HarnessPolicy; port?: number; log?: (line: string) => void };
+// models: the agents policy's placeholder -> CLI mapping, so the page can say what runs
+// each agent. It's the policy's mapping; a loop started with --models overrides it.
+export type PanelOptions = { dir: string | string[]; policy: HarnessPolicy; models?: Record<string, string>; port?: number; log?: (line: string) => void };
 export type Panel = { url: string; port: number; token: string; close: () => Promise<void> };
 
 const PAGE = path.join(import.meta.dirname, "page.html");
@@ -40,11 +42,13 @@ type Entry = { key: string; id: string; dir: string };
 export class Workspace {
   dirs: string[];
   policy: HarnessPolicy;
+  models?: Record<string, string>;
   private harnesses = new Map<string, Harness>();
   private lastGood = new Map<string, EngagementView>();
-  constructor(dirs: string | string[], policy: HarnessPolicy) {
+  constructor(dirs: string | string[], policy: HarnessPolicy, models?: Record<string, string>) {
     this.dirs = typeof dirs === "string" ? [dirs] : dirs;
     this.policy = policy;
+    this.models = models;
   }
 
   get dir(): string {
@@ -122,13 +126,14 @@ export class Workspace {
     const engagements = await Promise.all(this.entries().map(async (e) => {
       const home = this.home(e);
       try {
-        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key)), running: this.live(e.key).list(now), folder: e.dir };
+        const running = this.live(e.key).list(now);
+        const v = { ...engagementView(await this.harness(e.key).state(), e.key, now, this.runners(e.key), { models: this.models, running }), running, folder: e.dir };
         this.lastGood.set(home, v);
         return v;
       } catch (err) {
         const msg = (err as Error).message.split("\n")[0].slice(0, 300);
         const last = this.lastGood.get(home);
-        return last ? { ...last, id: e.key, running: this.live(e.key).list(now), error: msg } : { id: e.key, title: e.key, paused: null, capacity: [], running: this.live(e.key).list(now), goals: [], asks: [], runners: this.runners(e.key), error: msg, folder: e.dir };
+        return last ? { ...last, id: e.key, running: this.live(e.key).list(now), error: msg } : { id: e.key, title: e.key, paused: null, standing: [], capacity: [], running: this.live(e.key).list(now), goals: [], asks: [], runners: this.runners(e.key), error: msg, folder: e.dir };
       }
     }));
     return { now, dir: this.dir, dirs: this.dirs, engagements };
@@ -137,7 +142,7 @@ export class Workspace {
 
 // ---------- requests ----------
 
-type AnswerBody = { engagement: string; ask: string; choice: string; relayed?: boolean; note?: string; budget?: Record<string, number>; revision?: GoalRevision; observation?: { direction: Direction; metrics?: Record<string, number>; runs?: number } };
+type AnswerBody = { engagement: string; ask: string; choice: string; relayed?: boolean; standing?: boolean; note?: string; budget?: Record<string, number>; revision?: GoalRevision; observation?: { direction: Direction; metrics?: Record<string, number>; runs?: number } };
 
 function str(v: unknown, name: string, max = 4000): string {
   if (typeof v !== "string" || !v.length || v.length > max) throw new BadRequest(`${name} is missing or too long`);
@@ -170,6 +175,7 @@ export async function answerFromBody(ws: Workspace, b: AnswerBody): Promise<void
     by: b.relayed === true ? ask.to : "partner",
     choice: str(b.choice, "choice", 100),
     ...(note ? { note } : {}),
+    ...(b.standing === true ? { standing: true } : {}),
     ...(b.budget ? { budget: numbers(b.budget, "budget") } : {}),
     ...(b.revision ? { revision: b.revision } : {}),
     ...(o ? { finding: { assumption: tests, direction: o.direction, text: note ?? "", ...(o.metrics ? { metrics: numbers(o.metrics, "metrics") } : {}), ...(o.runs !== undefined ? { runs: Math.max(1, Math.round(Number(o.runs)) || 1) } : {}) } } : {}),
@@ -184,7 +190,7 @@ function sameToken(given: string | undefined, token: string): boolean {
 }
 
 export async function startPanel(opts: PanelOptions): Promise<Panel> {
-  const ws = new Workspace(opts.dir, opts.policy);
+  const ws = new Workspace(opts.dir, opts.policy, opts.models);
   const token = randomBytes(24).toString("hex");
   const log = opts.log ?? (() => {});
   let port = 0;
@@ -219,6 +225,12 @@ export async function startPanel(opts: PanelOptions): Promise<Panel> {
       if (!sameToken(req.headers["x-panel-token"] as string | undefined, token)) return json(res, 403, { error: "this page is out of date: reload it" });
 
       if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, await ws.snapshot());
+      if (req.method === "GET" && url.pathname === "/api/trace") {
+        // How a question (or anything else in the log) came about: harness trace, for the card.
+        const { buildGraph, traceTree } = await import("../harness/trace.ts");
+        const t = traceTree(buildGraph(await ws.harness(str(url.searchParams.get("engagement") ?? "", "engagement", 100)).events()), str(url.searchParams.get("id") ?? "", "id", 300), 3);
+        return t ? json(res, 200, t) : json(res, 404, { error: "nothing in the log by that id" });
+      }
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
       if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "send JSON" });
       const body = await readBody(req);
@@ -241,6 +253,12 @@ export async function startPanel(opts: PanelOptions): Promise<Panel> {
           const turn = str(body.turn, "turn", 200);
           if (!ws.live(eng).requestStop(turn, "partner", Date.now())) throw new BadRequest("that turn isn't running any more");
           log(`stop requested: ${eng} ${turn}`);
+          break;
+        }
+        case "/api/standing/revoke": {
+          const eng = str(body.engagement, "engagement", 100);
+          if (!(await ws.harness(eng).revokeStanding(str(body.goal, "goal", 100), str(body.shape, "shape", 300), "partner"))) throw new BadRequest("that standing answer is already gone");
+          log(`took back the standing answer to ${body.shape} in ${eng}/${body.goal}`);
           break;
         }
         case "/api/budget":

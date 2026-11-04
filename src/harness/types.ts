@@ -46,6 +46,7 @@ export type Finding = {
   metrics?: Record<string, number>;
   runs?: number;
   untrusted?: boolean; // came from outside content (web pages, client text)
+  event?: string; // the event from outside it records (events.ts)
   todo?: string;
   turn?: string;
 };
@@ -95,6 +96,8 @@ export type GoalDef = {
   blackouts?: Blackout[];
   interfaces?: string[]; // contract files a child goal builds against; must exist to spawn it
   todos?: TodoDraft[]; // seed work
+  // Its done work goes to GitHub as pull requests, once you approve each (ship.ts).
+  ship?: import("./ship.ts").ShipDef;
 };
 
 export type GoalRevision = {
@@ -119,6 +122,9 @@ export type EngagementDef = {
   // Whose memory the agents should see, and on which subjects ("work.*"): what applies
   // reaches their packets as defaults and things to check, never as permission.
   memory?: { principal: string; subjects: string[] };
+  // Events from outside (Jira, feedback, production checks) and the rules that route them
+  // into goals (events.ts). Kept here, in your private folder, since they name your systems.
+  events?: import("./events.ts").EventsDef;
 };
 
 // ---------- work ----------
@@ -160,6 +166,7 @@ export type TodoDraft = {
   cost?: { usd: number }; // money: authorized before, not accounted after
   maxTurns?: number; // stopping rule for open-ended tasks
   reviews?: string; // probation review: the todo whose output this reviews
+  prReview?: string; // a pull request's review: the ship job whose pull request this reviews (ship.ts)
 };
 
 // ---------- the team ----------
@@ -280,12 +287,29 @@ export type HEvent = Base &
     | { type: "todo_superseded"; todo: string; reason: string }
     | { type: "todo_blocked"; todo: string; reason: string; ask?: string }
     | { type: "ask_opened"; ask: Ask }
-    | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision }
+    // standing: "from now on", so the next question of the same shape is settled with
+    // this choice (standing.ts).
+    | { type: "ask_answered"; ask: string; answeredBy: string; choice: string; note?: string; revision?: GoalRevision; standing?: boolean }
     // The harness settled an ask without the person: the todo's own checker already
-    // passed (criteria_met), or the same question was answered before (precedent). Always
+    // passed (criteria_met), the same question was answered before (precedent), or a standing
+    // answer covers questions of its shape (standing; precedentAsk is that answer's ask). Always
     // follows the ask's ask_opened, and is never dressed up as a person's answer, so audits
     // can sample these decisions and the escalation numbers stay honest.
-    | { type: "ask_auto_closed"; ask: string; reason: "criteria_met" | "precedent"; precedentAsk?: string; choice?: string; note?: string }
+    | { type: "ask_auto_closed"; ask: string; reason: "criteria_met" | "precedent" | "standing"; precedentAsk?: string; choice?: string; note?: string }
+    // A standing answer taken back: questions of that shape reach the person again.
+    | { type: "standing_revoked"; goal: string; shape: string; reason?: string }
+    // Something that happened outside, as its source reported it, with the rule that
+    // matched it when it arrived (null: recorded only). events.ts.
+    | { type: "event_received"; event: import("./events.ts").OutsideEvent; rule: string | null }
+    // The engagement's event sources and rules, set or changed after it was opened.
+    | { type: "events_configured"; events: import("./events.ts").EventsDef }
+    // The engagement's copy of a shipping goal's repository took in the base at this commit
+    // (applied), or couldn't (applied false, with why); the first look only notes the base.
+    | { type: "ship_synced"; goal: string; sha: string; applied: boolean; note?: string }
+    // A review of a pull request by the judge lane's seat (another model), and its posting
+    // to GitHub as a comment (never an approval: a person's approval is still needed).
+    | { type: "pr_review"; review: string; ship: string; verdict: Verdict; note?: string }
+    | { type: "pr_review_posted"; review: string; url?: string; error?: string }
     | { type: "finding"; finding: Finding }
     | { type: "finding_discounted"; finding: string; reason: string }
     | { type: "assumption_reset"; goal: string; assumption: string; reason: string }

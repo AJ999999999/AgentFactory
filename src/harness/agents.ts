@@ -100,9 +100,11 @@ export function turnPrompt(ctx: TurnContext): string {
     ` "asks": [{"question": "...", "options": [{"id": "...", "label": "...", "consequence": "what follows if chosen", "irreversible": bool}], "recommend": {"option": "id", "why": "..."}}],`,
     ` "supersede": [{"todo": "id", "reason": "..."}], "discount": [{"finding": "id", "reason": "..."}]}`,
     "An ask should be answerable from what it says: say what follows from each option, mark the ones that can't be undone, and recommend one with your reason.",
-    "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a todo that produces it.",
-    // The first real turns proposed jobs with no spec, and cited a "file" that was the
-    // packet; the validator dropped both. Say what each kind needs up front.
+    "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a job, wait or action that produces it.",
+    // What the first judge turn got wrong (docs/next/030): it cited a part of this prompt as a
+    // source, and proposed a job with nothing to run.
+    "A finding's source is a URL you read or repo:<path> of a file that exists in this worktree; never a part of this prompt or the handoff packet. Without one, put what you think in the note.",
+    'A job needs "job": {"spec": {...what to run...}, "informs": [{"assumption": "id", "metric": "name"}]}. If you can\'t say what to run, propose a task (more work for an agent) or an action (work for a person) instead.',
     `Kinds: "task" is agent work (the default). "action" is something a person does or observes, with "assignee" one of: ${people.join(", ") || "the engagement's people"}. ` +
       `"job" (an external run, with "job": {"spec": {...}}) and "wait" (for a metric, with "wait": {"source": "..."}) only when the packet names a job runner or metric source; otherwise propose an action. ` +
       "Cite only what you read: a page you couldn't open is no source, and the packet is not a file.",

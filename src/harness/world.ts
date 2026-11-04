@@ -58,6 +58,9 @@ export type World = {
   metrics?: Record<string, MetricSource>;
   probe?: Probe;
   checkers?: Record<string, Checker>;
+  // Event sources by the id the engagement gives them, in place of the real one (a fake
+  // Jira in tests and simulations). events.ts.
+  events?: Record<string, import("./events.ts").EventSource>;
 };
 
 // ---------- simulation ----------

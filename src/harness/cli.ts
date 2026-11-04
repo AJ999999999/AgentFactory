@@ -7,6 +7,7 @@
 //   npm run harness -- status [--goal G] [--for partner]                      handoff packets and open questions
 //   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300] [--from-now-on]
 //   npm run harness -- standing [revoke <goal> <shape>]              standing answers ("from now on"), or take one back
+//   npm run harness -- trace <id> [--depth 4]                        why something happened and what it led to: a goal, todo, question, finding, turn or event
 //   npm run harness -- slack test                                    one card to your Slack workflow, to check it (docs/harness-slack.md)
 //   npm run harness -- events [config <file.json> | test <source>]  events from outside (Jira): what came in and where it went;
 //                                                                    set the sources and rules; fetch once from a source and print, writing nothing
@@ -360,6 +361,15 @@ async function main(): Promise<void> {
         ...(rest.includes("--from-now-on") ? { standing: true } : {}),
       });
       console.log(`answered ${rest[0]}: ${flag("choice")}${result ? ` (${result}${tests ? ` ${tests}` : ""})` : ""}`);
+      return;
+    }
+    case "trace": {
+      if (!rest[0] || rest[0].startsWith("--")) throw new Error("usage: trace <id>  (a goal, todo, question, finding, turn or event id)");
+      const eng = currentEngagement();
+      const h = await harness(eng);
+      const { buildGraph, traceText } = await import("./trace.ts");
+      const g = buildGraph(await h.events(), { turnsDir: path.join(home(eng), "turns") });
+      console.log(traceText(g, rest[0], Number(flag("depth", "4"))));
       return;
     }
     case "slack": {

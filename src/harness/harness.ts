@@ -132,6 +132,12 @@ export class Harness {
     return project(await readSynced(this.control, this.engagement, main), this.policy);
   }
 
+  // The log itself, as synced from main: what trace and other read-only views walk.
+  async events(): Promise<HEvent[]> {
+    const main = (await this.control.runAsync(["ls-remote", "origin", "refs/heads/main"])).split("\t")[0];
+    return readSynced(this.control, this.engagement, main);
+  }
+
   // Every ref the harness cares about, from one ls-remote.
   async remoteRefs(): Promise<Map<string, string>> {
     const out = await this.control.runAsync(["ls-remote", "origin", "refs/heads/main", `refs/claims/${this.engagement}/*`, `refs/pulse/${this.engagement}`]);

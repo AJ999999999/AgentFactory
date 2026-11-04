@@ -261,3 +261,19 @@ A kind of question is its rule or monitor, and its lane when it's about a todo. 
 - ends when the goal changes direction (a new version), after `standing.days` (30 by default), or when you take it back: `npm run harness -- standing` lists them with how many questions each settled, `standing revoke <goal> <shape>` takes one back, and the panel shows them under the engagement with × to be asked again.
 
 Agents' own questions keep the older rule: the same question with the same options, answered before with an approval or an acknowledgement, isn't asked again.
+
+## Looking back: why did this happen?
+
+`npm run harness -- trace <id>` starts from anything in the log (a goal, a todo, a question, a finding, a turn or an event) and shows two trees. Under **why**, it goes back to what this came from. Under **then**, it goes forward to what it led to. Each record is shown once. A bare id is tried as each kind; `--depth` (4) limits how far it walks.
+
+Each record carries the same envelope: what it is in one line, who wrote it, when, its grade if it's evidence, and where its full record lives when that's a file, such as a turn's log under `turns/` or a Jira ticket's address. The links come from the log itself:
+
+- a todo's source: an event, your answer, a monitor, or the finding, question or todo it names as its cause;
+- a question's origin: a turn, a todo, a monitor, or a rule, plus the evidence it cites;
+- an answer's effects, since their ids come from the answer;
+- a finding's turn and todo;
+- a workstream's parent goal.
+
+Nothing is stored for this: it's computed from the log on demand, like the rest of the state.
+
+So "why did we close this goal?" reads as follows. The goal was closed by your answer to a question. That question came from a rule. The rule fired on evidence, the evidence came from a job's measurement, and the job ran because of a todo that a Jira ticket created.

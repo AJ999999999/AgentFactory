@@ -137,6 +137,8 @@ export type State = {
   standing: Map<string, Standing>;
   // Events from outside by their event id, with the todo each became (events.ts).
   outside: Map<string, Received>;
+  // The base commit each shipping goal's copy is in step with (ship.ts).
+  shipSynced: Map<string, string>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -160,6 +162,7 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     capacity: new Map(),
     standing: new Map(),
     outside: new Map(),
+    shipSynced: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -296,6 +299,9 @@ export function apply(s: State, e: HEvent): void {
     case "standing_revoked":
       s.standing.delete(standingKey(e.goal, e.shape));
       break;
+    case "ship_synced":
+      if (e.applied) s.shipSynced.set(e.goal, e.sha);
+      break;
     case "events_configured":
       if (s.engagement) s.engagement = { ...s.engagement, events: e.events };
       break;
@@ -309,6 +315,10 @@ export function apply(s: State, e: HEvent): void {
     }
     case "finding":
       if (!s.findings.has(e.finding.id)) s.findings.set(e.finding.id, { ...e.finding, at: e.at });
+      if (e.finding.event) {
+        const r = s.outside.get(e.finding.event);
+        if (r) r.finding = e.finding.id;
+      }
       break;
     case "finding_discounted":
       s.discounted.set(e.finding, e.reason);

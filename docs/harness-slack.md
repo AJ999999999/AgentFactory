@@ -14,6 +14,7 @@ The loop sends each question that's yours to Slack as a card, and your tap comes
 - **Your tap.** You pick 1 to 4 on the card's form, with a note if you like. That's recorded as your answer, so any evidence in it is graded as yours.
   - An option that can't be undone, or that needs words from you (a new goal, a new budget, what you observed), is marked "answer on the panel". A tap on it changes nothing.
   - "Open the panel" does nothing either: you answer there.
+  - **Keep: from now on** makes a standing answer, the same as the box on the panel, for the options the card marks "can be kept from now on". On any other option it's refused, the question stays open, and the loop's log says why.
 - **What it led to.** Once the work your answer was about has had a turn, a result card says what you chose and how the turn went. A question settled without you is followed up the same way: one that went moot, or one your standing answer covered.
 - **Notices.** These need no answer:
   - a model service holding its seats for two hours or more;
@@ -25,10 +26,11 @@ A tap counts only when it carries the card's question id and the one-time code t
 
 1. In Slack, open **Workflow Builder** and create a workflow that starts **From a webhook**. Add these variables, all text: `kind`, `engagement`, `goal`, `headline`, `what`, `why`, `options`, `ask`, `nonce`.
 2. Add **Send a message to a person**, to yourself: `headline` in bold, then `goal`, `what`, `why` and `options`. Add a button to it, **Answer**. If your Workflow Builder can branch, show the button only when `kind` is `ask`; otherwise ignore it on notices and results.
-3. After the button, add **Collect info in a form**, sent to the person who clicked, with two questions:
+3. After the button, add **Collect info in a form**, sent to the person who clicked, with three questions:
    - **Answer**: a drop-down with exactly `1`, `2`, `3`, `4`, `Open the panel`;
+   - **Keep**: a drop-down with exactly `just this time`, `from now on`;
    - **Note**: short text, not required.
-4. Then add **Outlook: Send an email** to your own address. Subject: `af-harness {ask} {nonce} {Answer}`, each one the variable inserted from the menu. Body: the form's **Note**.
+4. Then add **Outlook: Send an email** to your own address. Subject: `af-harness {ask} {nonce} {Answer} {Keep}`, each one the variable inserted from the menu. Body: the form's **Note**.
 5. Publish, copy the webhook address, and write `%USERPROFILE%\.af\harness\slack.json`:
 
    ```json

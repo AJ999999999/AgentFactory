@@ -37,6 +37,11 @@ export type ShipDef = {
   lanes?: string[]; // only these lanes' work (default: every lane)
   maxFiles?: number; // more files than this: always asked (30)
   remote?: string; // where to push, if not the repository's own address (tests)
+  // How often the engagement's copy under `dir` takes in what changed on the base (60
+  // minutes; 0 never). The first look only notes where the base is.
+  syncMinutes?: number;
+  // After a merge: a probe target (World.probe) checked once, with what it found noted.
+  check?: string;
 };
 
 const API = "https://api.github.com";
@@ -86,6 +91,7 @@ export function shipRules(s: State, g: GoalState, now: number, emit: (e: HEvent)
       continue;
     }
     const approved = (a.status === "answered" || a.status === "auto_closed") && a.choice === "approve";
+    // (watching for the merge comes after the job: see below)
     if (!approved) continue;
     const draft: TodoDraft & { id: string } = {
       id: jobId, kind: "job", lane: "ship", priority: 1, because: t.id,
@@ -93,6 +99,17 @@ export function shipRules(s: State, g: GoalState, now: number, emit: (e: HEvent)
       job: { spec: { ship: t.id, turns: t.turns, repo: d.repo, dir: d.dir, base: d.base ?? "main", api: d.api ?? API, tokenEnv: d.tokenEnv ?? "AF_GITHUB_TOKEN", ...(d.remote ? { remote: d.remote } : {}), title: firstLine(t.text) }, ...(t.tests ? { informs: [{ assumption: t.tests, metric: "checks_failed" }] } : {}) },
     };
     emit({ id: `add-${jobId}`, at: now, by: "harness", type: "todo_added", todo: { ...draft, goal: g.id }, provenance: "rule:ship" });
+  }
+  // A pull request whose checks passed: watch for its merge (merging stays a person's act).
+  for (const t of s.todos.values()) {
+    if (t.goal !== g.id || t.status !== "done" || !t.job?.spec?.ship || !t.handle?.startsWith("gh|")) continue;
+    const id = eid("merge", t.id);
+    if (s.todos.has(id)) continue;
+    emit({ id: `add-${id}`, at: now, by: "harness", type: "todo_added", provenance: "rule:ship", todo: {
+      id, goal: g.id, kind: "job", lane: "ship", priority: 2, because: t.id,
+      text: `Watch ${t.handle.split("|")[2]}#${t.handle.split("|")[3]} for its merge${d.check ? `, then check ${d.check}` : ""}`,
+      job: { spec: { watch: t.handle, ...(d.check ? { check: d.check } : {}) } },
+    } });
   }
 }
 
@@ -132,25 +149,32 @@ export class GitHubShip {
   }
 
   // Git's own environment configuration carries the token as a header for this host only.
-  private gitEnv(spec: ShipSpec, token: string): NodeJS.ProcessEnv {
+  gitEnvFor(spec: ShipSpec, token: string): NodeJS.ProcessEnv {
     const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
     return { ...this.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `http.${host(spec.api)}/.extraheader`, GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}` };
   }
 
+  // The loop's own clone of the repository, made once.
+  async clone(spec: ShipSpec, token: string): Promise<string> {
+    const dir = path.join(this.root, spec.repo.replace(/[^\w.-]+/g, "_"));
+    if (!fs.existsSync(path.join(dir, ".git"))) {
+      fs.mkdirSync(this.root, { recursive: true });
+      await this.run(["clone", "-q", "-c", "core.autocrlf=false", "-c", "core.longpaths=true", spec.remote ?? `${host(spec.api)}/${spec.repo}.git`, dir], { cwd: this.root, env: this.gitEnvFor(spec, token) });
+    }
+    return dir;
+  }
+
   // Never throws: a step that fails becomes a handle the first poll reports as failed.
   async start(todo: TodoState, now: number): Promise<string> {
+    const watch = todo.job?.spec?.watch as string | undefined;
+    if (watch) return `watch${SEP}${watch}`;
     const spec = todo.job?.spec as unknown as ShipSpec;
     try {
       const token = this.env[spec.tokenEnv];
       if (!token) return failedHandle(`set ${spec.tokenEnv} to the token of the identity that opens pull requests`);
-      const env = this.gitEnv(spec, token);
-      const remote = spec.remote ?? `${host(spec.api)}/${spec.repo}.git`;
-      const dir = path.join(this.root, spec.repo.replace(/[^\w.-]+/g, "_"));
+      const env = this.gitEnvFor(spec, token);
+      const dir = await this.clone(spec, token);
       const git = (args: string[]) => this.run(["-c", "core.autocrlf=false", "-c", "core.longpaths=true", ...args], { cwd: dir, env });
-      if (!fs.existsSync(path.join(dir, ".git"))) {
-        fs.mkdirSync(this.root, { recursive: true });
-        await this.run(["clone", "-q", "-c", "core.autocrlf=false", "-c", "core.longpaths=true", remote, dir], { cwd: this.root, env });
-      }
       await git(["fetch", "-q", "origin", spec.base]);
       const branch = branchOf(spec.ship);
       await git(["checkout", "-q", "-B", branch, `origin/${spec.base}`]);
@@ -199,6 +223,18 @@ export class GitHubShip {
   async poll(handle: string, now: number): Promise<JobOutcome & { pr?: string }> {
     const [kind, ...rest] = handle.split(SEP);
     if (kind === "ghfail") return { status: "failed", metrics: {}, note: rest.join(SEP) };
+    if (kind === "watch") {
+      const [, api, repo, pr, , , tokenEnv] = rest;
+      const url = `${host(api)}/${repo}/pull/${pr}`;
+      const token = this.env[tokenEnv || "AF_GITHUB_TOKEN"];
+      if (!token) return { status: "running", eta: now + 30 * 60_000 };
+      const r = await this.api({ api, repo } as ShipSpec, token, `/repos/${repo}/pulls/${pr}`);
+      if (!r.ok) return { status: "running", eta: now + 30 * 60_000 };
+      const p = (await r.json()) as { state?: string; merged?: boolean; merged_at?: string | null; merged_by?: { login?: string } | null };
+      if (p.merged) return { status: "succeeded", metrics: { merged: 1 }, note: `${url} was merged${p.merged_by?.login ? ` by ${p.merged_by.login}` : ""}${p.merged_at ? ` at ${p.merged_at}` : ""}`, pr: url };
+      if (p.state === "closed") return { status: "failed", metrics: { merged: 0 }, note: `${url} was closed without merging`, pr: url };
+      return { status: "running", eta: now + 30 * 60_000 };
+    }
     const [api, repo, pr, sha, at, tokenEnv] = rest;
     const spec = { api, repo } as ShipSpec;
     const url = `${host(api)}/${repo}/pull/${pr}`;
@@ -247,4 +283,23 @@ export async function shipTest(d: ShipDef, opts: { env?: NodeJS.ProcessEnv; fetc
   else { ok = false; lines.push(`${d.base ?? "main"} has no rule requiring a pull request (or the identity can't read its rules). Add a ruleset: a pull request, an approval and the required checks, with the identity not on the bypass list.`); }
   if (ok) lines.push("Ready: approved work will open pull requests here.");
   return { ok, lines };
+}
+
+// Where the repository's base is now, and what changed on it since `since` under the
+// repository's root, as a patch for the engagement's copy under `dir` (keeping it in step).
+export async function upstream(ship: GitHubShip, d: ShipDef, since: string | undefined): Promise<{ sha: string; patch: string } | { error: string }> {
+  const spec = { repo: d.repo, base: d.base ?? "main", api: d.api ?? API, tokenEnv: d.tokenEnv ?? "AF_GITHUB_TOKEN", ...(d.remote ? { remote: d.remote } : {}) } as ShipSpec;
+  const token = ship.env[spec.tokenEnv];
+  if (!token) return { error: `set ${spec.tokenEnv} to keep ${d.dir} in step with ${d.repo}` };
+  try {
+    const dir = await ship.clone(spec, token);
+    const git = (args: string[]) => ship.run(args, { cwd: dir, env: ship.gitEnvFor(spec, token) });
+    await git(["fetch", "-q", "origin", spec.base]);
+    const sha = await git(["rev-parse", `origin/${spec.base}`]);
+    const patch = since && since !== sha ? await git(["diff", "--binary", since, sha]) : "";
+    return { sha, patch };
+  } catch (e) {
+    const err = e as Error & { stderr?: string };
+    return { error: (err.stderr || err.message).split("\n")[0].slice(0, 200) };
+  }
 }

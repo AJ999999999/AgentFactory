@@ -46,6 +46,7 @@ export type Finding = {
   metrics?: Record<string, number>;
   runs?: number;
   untrusted?: boolean; // came from outside content (web pages, client text)
+  event?: string; // the event from outside it records (events.ts)
   todo?: string;
   turn?: string;
 };
@@ -301,6 +302,9 @@ export type HEvent = Base &
     | { type: "event_received"; event: import("./events.ts").OutsideEvent; rule: string | null }
     // The engagement's event sources and rules, set or changed after it was opened.
     | { type: "events_configured"; events: import("./events.ts").EventsDef }
+    // The engagement's copy of a shipping goal's repository took in the base at this commit
+    // (applied), or couldn't (applied false, with why); the first look only notes the base.
+    | { type: "ship_synced"; goal: string; sha: string; applied: boolean; note?: string }
     | { type: "finding"; finding: Finding }
     | { type: "finding_discounted"; finding: string; reason: string }
     | { type: "assumption_reset"; goal: string; assumption: string; reason: string }

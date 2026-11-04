@@ -416,7 +416,7 @@ async function main(): Promise<void> {
         return;
       }
       if (!defs.length) console.log("no event sources: npm run harness -- events config <file.json>");
-      for (const r of eventSummary(s)) console.log(`${r.source.padEnd(16)} ${r.type.padEnd(14)} ${r.received} in, ${r.routed} became work, ${r.waiting} waiting for room, ${r.unmatched} matched no rule`);
+      for (const r of eventSummary(s)) console.log(`${r.source.padEnd(16)} ${r.type.padEnd(14)} ${r.received} in, ${r.routed} became work or evidence, ${r.waiting} waiting for room, ${r.unmatched} matched no rule`);
       return;
     }
     case "standing": {

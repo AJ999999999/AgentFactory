@@ -60,6 +60,10 @@ export function buildGraph(events: HEvent[], opts: { turnsDir?: string } = {}): 
   };
   const asks = new Set(events.filter((e) => e.type === "ask_opened").map((e) => (e as Extract<HEvent, { type: "ask_opened" }>).ask.id));
   const has = (key: string) => nodes.has(key);
+  // A workstream's goal comes from the answer that approved its spawn; its events' ids come
+  // from the spawn, so the link is found from the question's options and the answer's choice.
+  const spawnedBy = new Map<string, { ask: string; option: string }>();
+  const chose = new Map<string, string>();
   const ev = (e: HEvent, what: string) => node({ key: `event:${e.id}`, kind: "event", id: e.id, at: e.at, by: e.by, what });
   // The answer this event is an effect of, if any.
   const fromAnswer = (e: HEvent, key: string) => {
@@ -77,6 +81,10 @@ export function buildGraph(events: HEvent[], opts: { turnsDir?: string } = {}): 
       case "goal_opened":
         node({ key: `goal:${e.goal.id}`, kind: "goal", id: e.goal.id, at: e.at, by: e.by, what: `goal "${line(e.goal.title)}" opened` });
         if (e.goal.parent) link(`goal:${e.goal.id}`, `goal:${e.goal.parent}`, "a workstream of");
+        {
+          const by = spawnedBy.get(e.goal.id);
+          if (by && chose.get(by.ask) === by.option) link(`goal:${e.goal.id}`, `ask:${by.ask}`, "approved in the answer to");
+        }
         fromAnswer(e, `goal:${e.goal.id}`);
         break;
       case "goal_revised":
@@ -127,9 +135,11 @@ export function buildGraph(events: HEvent[], opts: { turnsDir?: string } = {}): 
           if (src) link(k, src.key, "asked because");
         } else if (kind === "rule") nodes.get(k)!.what += ` (the ${ref.replace(/_/g, " ")} rule)`;
         for (const f of a.evidence ?? []) cause(k, f, "on the evidence");
+        for (const o of a.options) if (o.effect?.type === "spawn") for (const sg of o.effect.goals) spawnedBy.set(sg.id, { ask: a.id, option: o.id });
         break;
       }
       case "ask_answered": {
+        chose.set(e.ask, e.choice);
         const k = ev(e, e.answeredBy === "harness" ? `question ${e.ask} closed: ${e.choice}${e.note ? `, ${line(e.note, 80)}` : ""}` : `${e.answeredBy} answered ${e.ask}: ${e.choice}${e.standing ? " (from now on)" : ""}${e.note ? `, "${line(e.note, 80)}"` : ""}`);
         link(k, `ask:${e.ask}`, "answers");
         break;
@@ -155,6 +165,7 @@ export function buildGraph(events: HEvent[], opts: { turnsDir?: string } = {}): 
         if (f.turn) link(k, `turn:${f.turn}`, "found in");
         else if (f.todo) link(k, `todo:${f.todo}`, "found by");
         if (f.source.startsWith("ask:")) link(k, `ask:${f.source.slice(4)}`, "reported in the answer to");
+        if (f.event) link(k, `event:${f.event}`, "recorded from");
         fromAnswer(e, k);
         break;
       }
@@ -221,4 +232,28 @@ export function traceText(g: Graph, id: string, depth = 4): string {
   walk("back", "why:");
   walk("forward", "then:");
   return out.join("\n");
+}
+
+// The same walk as data, for the panel: each step's link and record, and what came before it.
+export type TraceItem = { how: string; node: RecordNode; children: TraceItem[] };
+export function traceTree(g: Graph, id: string, depth = 4): { node: RecordNode; why: TraceItem[]; then: TraceItem[] } | undefined {
+  const start = resolve(g, id);
+  if (!start) return undefined;
+  const walk = (dir: "back" | "forward"): TraceItem[] => {
+    const seen = new Set([start]);
+    const go = (key: string, level: number): TraceItem[] => {
+      if (level > depth) return [];
+      const out: TraceItem[] = [];
+      for (const l of (dir === "back" ? g.back : g.forward).get(key) ?? []) {
+        const next = dir === "back" ? l.to : l.from;
+        const n = g.nodes.get(next);
+        if (!n || seen.has(next)) continue;
+        seen.add(next);
+        out.push({ how: dir === "back" ? l.how : l.how.replace(/^about$/, "then"), node: n, children: go(next, level + 1) });
+      }
+      return out.sort((a, b) => a.node.at - b.node.at);
+    };
+    return go(start, 1);
+  };
+  return { node: g.nodes.get(start)!, why: walk("back"), then: walk("forward") };
 }

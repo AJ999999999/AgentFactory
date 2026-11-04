@@ -20,6 +20,7 @@ import * as path from "node:path";
 import type { Answer } from "./answers.ts";
 import type { AskState, State } from "./project.ts";
 import { irreversibleEffect } from "./types.ts";
+import { cannotStand } from "./standing.ts";
 
 export type SlackConfig = { webhook: string; me?: string; replies?: "outlook"; digestHour?: number };
 
@@ -80,7 +81,8 @@ export function cardFor(s: State, engagement: string, a: AskState, nonce: string
   const rec = a.recommend ? a.options.find((o) => o.id === a.recommend!.option) : undefined;
   const options = a.options.slice(0, 4).map((o, i) => {
     const off = panelOnly(a, i);
-    return `${i + 1}. ${o.label}${rec === o ? " (recommended)" : ""}${off ? ` (${off}: answer on the panel)` : ""}`;
+    // Marked where "from now on" may be picked with it (standing.ts decides, as on the panel).
+    return `${i + 1}. ${o.label}${rec === o ? " (recommended)" : ""}${off ? ` (${off}: answer on the panel)` : !cannotStand(s, a, o.id) ? " (can be kept from now on)" : ""}`;
   });
   if (a.options.length > 4) options.push(`More options on the panel.`);
   return {
@@ -123,7 +125,7 @@ export type NotifyDeps = {
   send?: Post;
   read?: ReadMail;
 };
-export type NotifyResult = { sent: string[]; answered: Array<{ ask: string; choice: string }>; ignored: Array<{ subject: string; why: string }>; failed?: string };
+export type NotifyResult = { sent: string[]; answered: Array<{ ask: string; choice: string; standing?: true }>; ignored: Array<{ subject: string; why: string }>; failed?: string };
 
 // One pass, after each wake of the loop: post what's due, read your taps, and post what
 // your answers led to.
@@ -164,8 +166,12 @@ export async function notifyTick(d: NotifyDeps): Promise<NotifyResult> {
     const i = Number(/\d+/.exec(r.said)?.[0]) - 1;
     const off = panelOnly(a, i);
     if (off) return `option ${i + 1} ${off === "no such option" ? "doesn't exist" : `${off}: answer it on the panel`}`;
-    await d.answer(a.id, { by: "partner", choice: a.options[i].id, ...(r.note ? { note: r.note } : {}) });
-    out.answered.push({ ask: a.id, choice: a.options[i].id });
+    // The form's second choice, "from now on", rides in the subject after the number.
+    const standing = /from now on/.test(r.said);
+    const why = standing ? cannotStand(s, a, a.options[i].id) : undefined;
+    if (why) return `"from now on" can't apply to option ${i + 1} (${why}): answer it on the panel, or tap it again with "just this time"`;
+    await d.answer(a.id, { by: "partner", choice: a.options[i].id, ...(r.note ? { note: r.note } : {}), ...(standing ? { standing: true } : {}) });
+    out.answered.push({ ask: a.id, choice: a.options[i].id, ...(standing ? { standing: true } : {}) });
     return undefined;
   }
 
@@ -218,6 +224,17 @@ export async function notifyTick(d: NotifyDeps): Promise<NotifyResult> {
   for (const [id, r] of s.outside) {
     const rule = r.rule ? tell.get(r.rule) : undefined;
     if (rule && now - r.at < 24 * 3_600_000) await notice(`evt-${id}`, `${r.event.type} ${r.event.id}: ${r.event.title}`, `From ${r.event.source}${r.event.url ? ` (${r.event.url})` : ""}. It goes to ${rule.lane} in ${rule.goal}.`, rule.goal);
+  }
+
+  // Events nobody handles: when one source and type have matched no rule five times or more
+  // in the last week, once a week, so you can add a rule or let them be.
+  const week = Math.floor(now / (7 * 86_400_000));
+  const unmatched = new Map<string, number>();
+  for (const r of s.outside.values()) if (!r.rule && now - r.at < 7 * 86_400_000) unmatched.set(`${r.event.source}|${r.event.type}`, (unmatched.get(`${r.event.source}|${r.event.type}`) ?? 0) + 1);
+  for (const [k, n] of unmatched) {
+    if (n < 5) continue;
+    const [source, type] = k.split("|");
+    await notice(`unmatched-${source}-${type}-${week}`, `${n} ${type} events from ${source} matched no rule this week`, `They're recorded and nothing else. To route them, add a rule (npm run harness -- events config); npm run harness -- events shows them all.`);
   }
 
   // Forget what's long done.

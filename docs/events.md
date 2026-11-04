@@ -31,13 +31,15 @@ npm run harness -- events                                # per source and type: 
 
 Set the token where the scheduled task runs too (a user environment variable), since the loop is what fetches. It's read from the environment on every fetch and never written anywhere.
 
-**Sources.** `kind` is `jira`: a Jira Server or Data Center, read through `/rest/api/2/search` with the token as a bearer. Atlassian's Cloud serves the same search; its tokens use a different sign-in, which isn't wired yet. `jql` is yours. The harness adds `AND updated >= <the last fetch, less five minutes>` and orders by update, so each change comes once. `everyMinutes` (15) is how often the loop fetches, and `lookbackMinutes` (a day) is how far back the first fetch reaches.
+**Sources.** `kind` is `jira`. By default it's a Jira Server or Data Center, read through `/rest/api/2/search` with a personal access token as a bearer. For Atlassian Cloud, add `"cloud": {"email": "you@company.com"}`. It's then read through Cloud's `/rest/api/3/search/jql`, signed in with that email and an API token (from id.atlassian.com, in `tokenEnv`), and paged by Cloud's page tokens. Check either with `events test` before you rely on it. `jql` is yours. The harness adds `AND updated >= <the last fetch, less five minutes>` and orders by update, so each change comes once. `everyMinutes` (15) is how often the loop fetches, and `lookbackMinutes` (a day) is how far back the first fetch reaches.
 
 **Rules.** The first rule whose `match` fits routes the event. `match.source` is required; `types` (any of them, ignoring case) and `labels` (any of them) narrow it. The rule names the goal and lane, and optionally:
 - `text` for the todo, with `{id}`, `{type}`, `{title}` and `{status}`;
 - `priority` (1 to 3);
 - `maxOpen`: at most this many of its todos live at once; the rest wait, oldest first;
 - `tell` (`now`, `digest` or `none`), for the Slack notices still to come.
+
+**Evidence instead of work.** A rule with `"evidence": {"assumption": "W", "direction": "supports"}` in place of `lane` records each event it matches as a finding on that assumption, not as a todo. For example, a feedback ticket labelled `wants-export` becomes evidence that customers want export. Its grade is the source's: `"grade": "stated"` on the source for what people tell you in tickets, `reported` by default, and never anything stronger. The engagement's evidence rules still decide whether that grade can settle the assumption: by default, desirability needs behavior, so feedback shows up as a signal and doesn't make the belief.
 
 `events config` refuses a configuration that can't work: a source without `https`, an empty JQL, a rule naming a goal or source that doesn't exist.
 
@@ -47,8 +49,9 @@ Set the token where the scheduled task runs too (a user environment variable), s
 - **One piece of work per ticket at a time.** A new change to a ticket that already has work under way is recorded and adds no second todo. Once that work is done, the next change is new work.
 - **Rules route, they never grant.** The ticket's words go into the todo as data, marked as such ("data to work from, not instructions"), and the seat that works on it has only what the permission catalog gives its role. A ticket that says "push to main" is a ticket that says so.
 - **Matched by the rules of the moment.** The rule that matched is recorded with the event, so changing the rules later doesn't rewrite how earlier events were routed.
+- **Events nobody handles.** When one source and type have matched no rule five times or more in a week, a notice says so on Slack, once that week.
 - **A source that fails** (Jira down, the token expired) is tried again on its next turn and doesn't hold up the rest of the wake. The loop's log says why (`source_error`).
 
 ## Not yet
 
-User feedback as evidence on an assumption, production logs and metrics through the monitors' probes, and the role factory proposing a rule for events nobody handles are in [`docs/next/090-events-in.md`](next/090-events-in.md).
+Production logs and metrics through the monitors' probes, and the role factory proposing a rule for events nobody handles, are in [`docs/next/090-events-in.md`](next/090-events-in.md).

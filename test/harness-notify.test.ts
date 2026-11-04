@@ -120,3 +120,34 @@ test("without ~/.af/harness/slack.json nothing is posted or read", async () => {
   const r = await notifyTick(x.deps(at(4, 10)));
   assert.deepEqual([x.cards.length, r.sent.length], [0, 0]);
 });
+
+test("'from now on' from Slack makes a standing answer where the panel would allow one, and is refused where it wouldn't", async () => {
+  const x = setup();
+  x.ask("a1", at(4, 10), { urgent: false, options: [{ id: "retry", label: "Retry", effect: { type: "retry", todo: "t1" } }, { id: "drop", label: "Drop it", effect: { type: "supersede", todos: ["t1"] } }] });
+  await notifyTick(x.deps(at(5, 9)));
+  const card = x.cards.find((c) => c.ask === "a1")!;
+  assert.match(card.options, /1\. Retry \(recommended\) \(can be kept from now on\)/);
+  x.mail({ subject: `af-harness a1 ${card.nonce} 1 from now on`, body: "", from: "me@corp.com" });
+  const r = await notifyTick(x.deps(at(5, 9) + 60_000));
+  assert.deepEqual(r.answered, [{ ask: "a1", choice: "retry", standing: true }]);
+  assert.equal(x.s.standing.size, 1, "a standing answer, as if given on the panel");
+
+  // An urgent question can't stand: the tap is refused with why, and the question stays open.
+  x.ask("a2", at(5, 10), { urgent: true });
+  await notifyTick(x.deps(at(5, 10)));
+  const c2 = x.cards.find((c) => c.ask === "a2")!;
+  x.mail({ subject: `af-harness a2 ${c2.nonce} 1 from now on`, body: "", from: "me@corp.com" });
+  const r2 = await notifyTick(x.deps(at(5, 10) + 60_000));
+  assert.match(r2.ignored[0].why, /"from now on" can't apply to option 1 \(urgent questions are always yours\)/);
+  assert.equal(x.s.asks.get("a2")!.status, "open");
+});
+
+test("events nobody handles: a notice once a week when one source and type keep matching no rule", async () => {
+  const x = setup();
+  for (let i = 0; i < 6; i++) apply(x.s, { id: `evt-${i}`, at: at(4, 9) + i, by: "harness", type: "event_received", event: { source: "jira-pay", id: `PAY-${i}`, type: "story", updated: `u${i}`, title: "t" }, rule: null });
+  apply(x.s, { id: "evt-b", at: at(4, 9), by: "harness", type: "event_received", event: { source: "jira-pay", id: "PAY-b", type: "bug", updated: "u", title: "t" }, rule: null });
+  await notifyTick(x.deps(at(4, 10)));
+  await notifyTick(x.deps(at(4, 11)));
+  const n = x.cards.filter((c) => c.kind === "notice");
+  assert.deepEqual(n.map((c) => c.headline), ["6 story events from jira-pay matched no rule this week"], "once, and not for one stray bug");
+});

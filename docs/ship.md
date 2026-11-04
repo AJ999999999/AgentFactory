@@ -16,7 +16,11 @@ No turn can push, and that hasn't changed. The loop pushes, with an identity of 
    - **Passed**: the work's evidence records how many checks passed.
    - **Failed**: the work goes back to its lane with the failing checks' names. When it's done again, you're asked again, and the same pull request is updated.
    - **No checks after two hours**: it counts as passed with none.
-4. **The merge is watched.** Once the checks pass, the loop looks at the pull request every half hour. Merging stays a person's act.
+4. **Reviewed on another model.** Once the checks pass, the judge lane's seat reviews the change. That seat runs on a different model from the one that did the work, as every judge does. It reads the work's own commits (`git show <commit> -- <dir>`) and answers accept or reject, with why. The loop posts that on the pull request.
+   - **Always as a comment, never as an approval.** An approval from this identity would count toward the approval your rules require, and that approval is yours to give. The comment says so.
+   - **Rejected**: the work goes back with the review's reasons. When it's done again, you're asked again, the same pull request is updated, and it's reviewed again.
+   - `"review": false` in the goal's `ship` turns the review off.
+5. **The merge is watched.** Once the checks pass, the loop looks at the pull request every half hour. Merging stays a person's act.
    - **Merged**: noted with who merged it. If the goal's `ship.check` names a probe target, the loop checks it once and notes what it found (for example, an error rate after the release).
    - **Closed without merging**: noted, and the work stays as it is. That was a person's decision.
 
@@ -58,6 +62,4 @@ Set the token as a user environment variable for the scheduled task. It's read f
 
 ## Not yet
 
-These are in [`docs/next/120-ci-loop.md`](next/120-ci-loop.md):
-- the review on the other model posted on the pull request;
-- keeping the token in Windows Credential Manager.
+Keeping the token in Windows Credential Manager, and the rest, are in [`docs/next/120-ci-loop.md`](next/120-ci-loop.md).

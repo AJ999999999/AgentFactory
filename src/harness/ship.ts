@@ -42,6 +42,9 @@ export type ShipDef = {
   syncMinutes?: number;
   // After a merge: a probe target (World.probe) checked once, with what it found noted.
   check?: string;
+  // After the checks pass, the judge lane's seat reviews the change and its verdict is posted
+  // on the pull request as a comment (true by default).
+  review?: boolean;
 };
 
 const API = "https://api.github.com";
@@ -218,6 +221,19 @@ export class GitHubShip {
       const err = e as Error & { stderr?: string };
       return failedHandle(`${(err.stderr || err.message).split("\n")[0].slice(0, 200)}`);
     }
+  }
+
+  // A review on the pull request, always as a comment: an approval from this identity would
+  // count toward the rules' required approval, and that's a person's to give.
+  async postReview(handle: string, verdict: "accept" | "reject", body: string): Promise<{ url?: string; error?: string }> {
+    const [kind, api, repo, pr, sha, , tokenEnv] = handle.split(SEP);
+    if (kind !== "gh") return { error: "not a pull request" };
+    const token = this.env[tokenEnv || "AF_GITHUB_TOKEN"];
+    if (!token) return { error: `set ${tokenEnv || "AF_GITHUB_TOKEN"} to post the review` };
+    const text = `**${verdict === "accept" ? "Looks right" : "Changes asked for"}**, from the harness's independent reviewer (a different model from the one that did the work).\n\n${body}\n\n_This is a comment, not an approval: merging still needs yours._`;
+    const r = await this.api({ api, repo } as ShipSpec, token, `/repos/${repo}/pulls/${pr}/reviews`, { method: "POST", body: { commit_id: sha, event: "COMMENT", body: text } });
+    if (!r.ok) return { error: `GitHub answered ${r.status}: ${(await r.text()).slice(0, 160)}` };
+    return { url: ((await r.json()) as { html_url?: string }).html_url ?? `${host(api)}/${repo}/pull/${pr}` };
   }
 
   async poll(handle: string, now: number): Promise<JobOutcome & { pr?: string }> {

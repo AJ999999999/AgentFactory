@@ -15,9 +15,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { standingKey } from "./standing.ts";
 import { GitHubShip, upstream } from "./ship.ts";
+import { REVIEW_LANE } from "./team.ts";
 import { configProblems, type EventsDef, eventSources, everyMinutes, receiveEvent } from "./events.ts";
 import * as path from "node:path";
-import { Git } from "../git.ts";
+import { Git, log } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
 import { basisRef, currentBasis, readLockfile, writeBasis, writeLockfile, writeTask } from "../context.ts";
 import type { LogFn } from "../util.ts";
@@ -364,6 +365,17 @@ export class Harness {
       }
     }
 
+    // 2b'. reviews of pull requests not yet on GitHub: posted as comments.
+    const poster = this.ship as JobProvider & { postReview?: (h: string, v: "accept" | "reject", b: string) => Promise<{ url?: string; error?: string }> };
+    for (const [rid, rv] of s.prReviews) {
+      if (rv.posted || !poster.postReview) continue;
+      const handle = s.todos.get(rv.ship)?.handle;
+      if (!handle) continue;
+      const out = await poster.postReview(handle, rv.verdict, rv.note ?? "");
+      if (out.error) this.log("pr_review_error", { review: rid, error: out.error });
+      else add({ id: eid("prr-posted", rid), at: now, by: "harness", type: "pr_review_posted", review: rid, ...(out.url ? { url: out.url } : {}) });
+    }
+
     // 2c. shipping goals' copies of their repositories take in what changed on the base,
     // when it applies cleanly; a change that doesn't is noted and tried again with the next.
     for (const g of s.goals.values()) {
@@ -574,6 +586,19 @@ export class Harness {
         add({ id: eid("ship-back", t.id), at: now, by: "harness", type: "todo_reopened", todo: shipped, reason: r.note ?? "the pull request failed", resetFailures: false });
         add({ id: eid("ship-end", t.id), at: now, by: "harness", type: "todo_superseded", todo: t.id, reason: "its work went back to be fixed" });
         return;
+      }
+      // Checks passed: the judge lane's seat (another model) reviews the change, reading the
+      // work's own commits; its verdict is posted on the pull request.
+      const g = s.goals.get(t.goal);
+      if (g?.def.ship && g.def.ship.review !== false) {
+        const dir = g.def.ship.dir.replace(/\/+$/, "");
+        const shas = log(this.control, "HEAD").filter((c) => (c.trailers.Todo ?? []).includes(shipped)).reverse().map((c) => c.sha.slice(0, 12));
+        const what = s.todos.get(shipped)?.text.split("\n")[0].slice(0, 160) ?? shipped;
+        const rid = eid("prr", t.id);
+        add({ id: `add-${rid}`, at: now, by: "harness", type: "todo_added", provenance: "rule:ship", todo: {
+          id: rid, goal: t.goal, lane: REVIEW_LANE, kind: "task", priority: 1, prReview: t.id, because: t.id, maxTurns: 2, writeScope: [],
+          text: `Review the pull request ${r.note?.match(/https?:\/\/\S+/)?.[0] ?? ""} for "${what}". Read the change with ${shas.map((x) => `git show ${x} -- ${dir}`).join(", ") || `git log -- ${dir}`}. Does it do what the work asked, without breaking anything nearby, and is it tested? Reply with a verdict, "accept" or "reject", and say why in "note": your note is posted on the pull request.`,
+        } });
       }
     }
     if (r.status === "failed") return;

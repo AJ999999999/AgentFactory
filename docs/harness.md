@@ -179,7 +179,7 @@ The user's brief says what to achieve; it doesn't say who should work on it. The
 - **State lives only in git.** Every event is a file on main, never edited. Claims and the "last checked" times live in refs; losing the latter costs one extra check. A fresh clone projects exactly the same state, which a test checks.
 - **Rules can run anywhere.** Rule-generated events have ids derived from their cause, so two machines noticing the same thing write it once.
 - **The handoff packet.** It's generated from state, never written by a model, and stays under 16 lines and 1,800 characters however long the engagement has run. The full record is one command away.
-- **What the people it serves have told us arrives as defaults, never as permission.** An engagement that declares a principal and subjects gets that principal's current memory in its packets: the defaults that apply, and what to check first. Lapsed plans, other subjects and guesses we made ourselves never pass as preferences. See the README's memory section.
+- **What the people it serves have told us arrives as defaults, never as permission.** An engagement that declares a principal and subjects gets that principal's current memory in its packets: the defaults that apply, and what to check first. Lapsed plans, other subjects and guesses we made ourselves never pass as preferences. See [memory about the people you serve](memory.md).
 - **Time follows cause and effect.** The log is ordered by time, and machines' clocks disagree. A writer never stamps an event earlier than the latest event it has read: the stamp is the wall clock, nudged forward by a millisecond only when the clock would contradict what the writer saw.
 
 ## What the simulations caught
@@ -215,7 +215,7 @@ npm run panel                                        # all of the above, in a pa
 `open` also takes `--world <module>` (checkers and providers, saved with the engagement) and `--seed <dir>` (files committed into the engagement repo first, such as a brief). An answer is recorded as the role the question was addressed to unless you pass `--by`, because the grade of what you report depends on who you are. Agents see the answers their work depends on, directly or through earlier work, in their handoff packet.
 
 You can run it in two ways:
-- **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. The README's Windows section has the steps.
+- **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. [Running the harness on Windows](windows.md) has the steps.
 - **One wake per process.** `tick` for cron or a CI schedule. It keeps its quiet-wake memory on disk, so an unchanged engagement still costs one `git ls-remote`.
 
 `doctor` checks a machine end to end: node, git, Copilot CLI, the control repo and remote, the heartbeat and the scheduled task.

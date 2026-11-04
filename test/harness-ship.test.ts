@@ -315,3 +315,50 @@ test("the engagement's copy keeps in step: the first look notes the base, a late
     if (prev === undefined) delete process.env.AF_GITHUB_TOKEN; else process.env.AF_GITHUB_TOKEN = prev;
   }
 });
+
+test("a review on the pull request is posted as a comment, never an approval, on the commit it read", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const api = async (url: string, init: { method?: string; body?: string }) => {
+    calls.push({ url, body: JSON.parse(init.body ?? "{}") });
+    return { ok: true, status: 200, json: async () => ({ html_url: "https://github.com/acme/pay/pull/41#pullrequestreview-1" }), text: async () => "" };
+  };
+  const shipper = new GitHubShip({ control: new Git(tmp("rv")), root: tmp("rvr"), env: { AF_GITHUB_TOKEN: "t" }, fetch: api as never });
+  const out = await shipper.postReview("gh|https://api.github.com|acme/pay|41|abc123|0|AF_GITHUB_TOKEN", "reject", "No test covers a negative total.");
+  assert.equal(out.url, "https://github.com/acme/pay/pull/41#pullrequestreview-1");
+  assert.equal(new URL(calls[0].url).pathname, "/repos/acme/pay/pulls/41/reviews");
+  assert.equal(calls[0].body.event, "COMMENT", "an approval from this identity would count toward the required one");
+  assert.equal(calls[0].body.commit_id, "abc123");
+  assert.match(String(calls[0].body.body), /Changes asked for.*\n\nNo test covers a negative total\.\n\n_This is a comment, not an approval: merging still needs yours\._/s);
+});
+
+test("through the real harness: the reviewer on the other model asks for changes, the work goes back, and its next review is posted too", async () => {
+  const posted: Array<{ verdict: string; body: string }> = [];
+  let n = 0;
+  const fakeShip = {
+    async start(t: { job?: { spec?: Record<string, unknown> } }) { return t.job?.spec?.watch ? `watch|${t.job.spec.watch}` : `gh|https://api.github.com|acme/pay|41|sha${++n}|0|AF_GITHUB_TOKEN`; },
+    async poll(h: string): Promise<JobOutcome> { return h.startsWith("watch|") ? { status: "running", eta: Date.now() + 3_600_000 } : { status: "succeeded", metrics: { checks: 1, checks_failed: 0 }, note: "1 check passed on https://github.com/acme/pay/pull/41" }; },
+    async postReview(_h: string, verdict: string, body: string) { posted.push({ verdict, body }); return { url: "https://github.com/acme/pay/pull/41#review" }; },
+  };
+  let fixes = 0;
+  let reviews = 0;
+  const agent = new ScriptedTurnAgent([
+    { name: "fix", when: (c) => c.todo.lane === "fix", run: (c) => { fixes++; fs.mkdirSync(path.join(c.wtDir, "app"), { recursive: true }); fs.writeFileSync(path.join(c.wtDir, "app", "total.ts"), `export const v = ${fixes};\n`); return { done: true }; } },
+    { name: "review", when: (c) => c.todo.lane === "probation-review", run: (c) => {
+      reviews++;
+      assert.match(c.todo.text, /Review the pull request https:\/\/github\.com\/acme\/pay\/pull\/41 for "Round totals per invoice"\..*git show [0-9a-f]{12} -- app/);
+      return reviews === 1 ? { done: true, verdict: "reject", note: "No test covers a negative total." } : { done: true, verdict: "accept", note: "Tested, and nothing nearby changes." };
+    } },
+  ]);
+  const def = { id: "pay4", title: "Pay", principals: { partner: "you" }, goals: [{ id: "G", title: "Payments", objective: "o", owner: "partner", scope: ["app"], assumptions: [], budget: { turns: 30 }, perpetual: true, ship: { repo: "acme/pay", dir: "app", syncMinutes: 0 }, todos: [{ id: "fix-1", lane: "fix", text: "Round totals per invoice", writeScope: ["app"] }] }] };
+  const sim = await Sim.create({
+    dir: tmp("sim4"), def, policy, start: "2026-11-04T09:00:00Z", agent, runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], ship: fakeShip as never, world: {},
+    people: [{ role: "partner", answer: (a) => (a.origin === "rule:ship" ? { by: "partner", choice: "approve" } : null) }],
+  });
+  await sim.run({ until: "2026-11-05T09:00:00Z", maxIterations: 80 });
+  assert.equal(fixes, 2, "the review's request for changes sent the work back once");
+  assert.equal(reviews, 2);
+  assert.deepEqual(posted.map((p) => p.verdict), ["reject", "accept"]);
+  assert.equal(posted[0].body, "No test covers a negative total.");
+  const s = await sim.harness.state();
+  assert.ok([...s.prReviews.values()].every((r) => r.posted), "each posted once");
+});

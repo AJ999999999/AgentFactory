@@ -4,11 +4,11 @@
 
 ![One ticket through intake, routing, review, evidence, your one question and the pull request](film/agentfactory.en.gif)
 
-The full films are `film/agentfactory.en.mp4` and `film/agentfactory.zh.mp4`: 1080p with music, about 6 MB each. The GIFs are seven seconds from the middle.
+The full films are `film/agentfactory.en.mp4` and `film/agentfactory.zh.mp4`: 1080p with music, about 6 MB each. The GIFs are the seven seconds from your one question to the merge.
 
 ## What it shows, and what's real
 
-The ticket, its id, the code and the numbers are made up. It's a payments bug, `PAY-4127 · Checkout webhooks time out (EU)`, and `PAY-712` in the Chinese cut. Each step stands for something AgentFactory does today:
+The ticket, its id, the code and the numbers are made up. It's a P1 bug, `ORION-1427 · Checkout webhooks time out (EU)`, in Project Orion, a made-up payments platform. Each step stands for something AgentFactory does today:
 
 1. **Intake.** A ticket comes in from Jira, next to a support ticket and a production alert: [events from outside](events.md) and the probes in [harness design](harness.md).
 2. **Log.** Each one is written once to the engagement's event log, which lives in git.

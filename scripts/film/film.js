@@ -121,7 +121,7 @@ function engagement(t, fade) {
     for (let k = 1; k <= 5; k++) { const x = -800 + k * 140; if (x < xr) { X.fillStyle = '#fff'; rrect(x - 9, -9, 18, 18, 5); X.fill(); } }
     X.globalAlpha = 1; label('主线 · GIT 记录', -800, 50, BLUE, fade * sm(seg(t, 5, 5.8)), 16, 'left', F.sans, '700'); }
   // events written once
-  const evs = [[6.0, 0, 'PAY-712', ORANGE], [7.0, 170, '反馈 #88', CYAN], [8.0, 340, '告警 5xx', YELLOW]];
+  const evs = [[6.0, 0, 'ORION-1427', ORANGE], [7.0, 170, '反馈 #88', CYAN], [8.0, 340, '告警 5xx', YELLOW]];
   evs.forEach(([at, x, txt, rgb], i) => {
     if (!i) { if (t >= at) { const u = pulse(t, at, .7); if (u !== null) ring(x, 0, 20 + 80 * eo(u), ORANGE, (1 - u) * fade, 4); } return; } // ours is drawn by hero()
     let y = 0; if (t < at - .5) return; if (t < at) y = lerp(-620, 0, ei(seg(t, at - .5, at)));
@@ -180,7 +180,7 @@ function engagement(t, fade) {
   // ship: a green branch, checks, the merge
   const ba = seg(t, 25.9, 26.7);
   if (ba > 0) { X.globalAlpha = fade; shadow(true, 12, 5, .15); X.strokeStyle = `rgb(${GREEN})`; X.lineWidth = 14; X.lineCap = 'round'; X.lineJoin = 'round'; X.beginPath(); const n = Math.floor(60 * eio(ba)); for (let k = 0; k <= n; k++) { const p = branch(k / 60); k ? X.lineTo(p[0], p[1]) : X.moveTo(p[0], p[1]); } X.stroke(); shadow(false); X.lineCap = 'butt'; X.globalAlpha = 1;
-    X.save(); X.translate(3000, -290); pill('PR #41 · af/pay-712', 0, 0, NAVY, WHITE, fade * sm(seg(t, 26.4, 26.8)), 17, F.inter, '700'); X.restore();
+    X.save(); X.translate(3000, -290); pill('PR #41 · af/orion-1427', 0, 0, NAVY, WHITE, fade * sm(seg(t, 26.4, 26.8)), 17, F.inter, '700'); X.restore();
     CHECKS.forEach(({ t: at, n, p }) => { const a = sm(seg(t, 26.4, 26.8)) * fade, ok = t > at; const s = ok ? back(seg(t, at, at + .3)) : 1;
       X.save(); X.translate(p[0], p[1]); X.scale(s, s); X.globalAlpha = a; shadow(true, 10, 4, .2); X.fillStyle = ok ? `rgb(${GREEN})` : '#fff'; X.beginPath(); X.arc(0, 0, 22, 0, 7); X.fill(); shadow(false); if (!ok) { X.strokeStyle = rgba(GREEN, .6); X.lineWidth = 3; X.stroke(); } X.restore(); X.globalAlpha = 1;
       if (ok) check(p[0], p[1], 22 * cl(s, 0, 1.3), GREEN, a); label(n, p[0], p[1] + 54, ok ? GREEN : MUTE, a, 17, 'center', F.inter, '800'); const u = pulse(t, at, .6); if (u !== null) ring(p[0], p[1], 24 + 40 * eo(u), GREEN, (1 - u) * fade, 3); });
@@ -199,8 +199,8 @@ function engagement(t, fade) {
 function ticketCard(t) {
   if (t > 3.9) return; world(); const coll = eio(seg(t, 3.0, 3.7)); const sx = 1 - coll, sy = 1 - eio(seg(t, 3.15, 3.8)), a = sm(seg(t, .15, .5)), pop = back(seg(t, .1, .6));
   X.save(); X.translate(CARD0[0], CARD0[1]); X.scale(Math.max(.001, sx * pop), Math.max(.001, sy * pop));
-  card(0, 0, 620, 230, ORANGE, 'JIRA · BUG · P1', a, 1, 48);
-  X.globalAlpha = a; const txt = 'PAY-712', CH = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
+  card(0, 0, 620, 230, ORANGE, 'PROJECT ORION · BUG · P1', a, 1, 48);
+  X.globalAlpha = a; const txt = 'ORION-1427', CH = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
   for (let i = 0; i < txt.length; i++) { const x = -282 + i * 52, settle = .7 + i * .16; let ch = txt[i]; if (t < settle && ch !== '-') ch = CH[Math.floor(hash(i, Math.floor(t * 28)) * CH.length)];
     rrect(x, -56, 46, 64, 8); X.fillStyle = `rgb(${NAVY})`; X.fill(); X.fillStyle = 'rgba(255,255,255,.15)'; X.fillRect(x, -25, 46, 2); X.fillStyle = t < settle ? 'rgba(255,255,255,.75)' : '#fff'; font('800', 40, F.inter); X.textAlign = 'center'; X.fillText(ch, x + 23, -9); X.textAlign = 'left'; }
   X.globalAlpha = a * sm(seg(t, 1.9, 2.3)); X.fillStyle = `rgb(${NAVY})`; font('900', 36, F.sans); X.fillText('支付回调超时', -282, 70);
@@ -244,7 +244,7 @@ function hero(t) {
   for (let k = 10; k >= 1; k--) { const p = S(P(Math.max(3.3, t - k * .025))); if (t > 40) continue; X.globalAlpha = a * (1 - k / 11) * .35; X.fillStyle = `rgb(${ORANGE})`; X.beginPath(); X.arc(p[0], p[1] - 0, 10 * (1 - k / 12), 0, 7); X.fill(); }
   const wait = t > 22.3 && t < 23.5 ? 1 + .08 * Math.sin(t * 12) : 1, land = pulse(t, 6, .3) !== null ? 1 - .2 * Math.sin(Math.PI * seg(t, 6, 6.3)) : 1;
   X.globalAlpha = a; shadow(true, 22, 8, .28);
-  if (big > .02) { X.save(); X.translate(x, y - 34 * big * z); X.scale(z * wait * cl(big + .3, 0, 1), z * wait * land * cl(big + .3, 0, 1)); pill('PAY-712', 0, 0, ORANGE, WHITE, a, 19, F.inter, '800', 16, 40); X.restore(); }
+  if (big > .02) { X.save(); X.translate(x, y - 34 * big * z); X.scale(z * wait * cl(big + .3, 0, 1), z * wait * land * cl(big + .3, 0, 1)); pill('ORION-1427', 0, 0, ORANGE, WHITE, a, 19, F.inter, '800', 16, 40); X.restore(); }
   shadow(false); X.globalAlpha = a; X.fillStyle = `rgb(${ORANGE})`; X.beginPath(); X.arc(x, y, 9, 0, 7); X.fill(); X.strokeStyle = '#fff'; X.lineWidth = 3.5; X.stroke(); X.globalAlpha = 1;
 }
 

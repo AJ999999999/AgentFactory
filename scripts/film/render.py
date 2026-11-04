@@ -73,7 +73,7 @@ def main():
     os.makedirs(os.path.dirname(out), exist_ok=True); run('-f', 'concat', '-safe', '0', '-i', lst, '-c', 'copy', silent)
     # Kept small for the repository: flat graphics hold up well at this rate.
     run('-i', silent, '-i', wav, '-c:v', 'libx264', '-preset', 'slow', '-crf', '28', '-maxrate', '1400k', '-bufsize', '2800k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-shortest', out + '.mp4')
-    run('-ss', '20', '-t', '7', '-i', silent, '-vf', 'fps=8,scale=560:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer', out + '.gif')
+    run('-ss', '23.5', '-t', '7.5', '-i', silent, '-vf', 'fps=8,scale=560:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer', out + '.gif')
     print('done ->', out + '.mp4', out + '.gif')
 
 

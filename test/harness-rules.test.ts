@@ -401,6 +401,44 @@ test("the handoff packet stays within its budget however long the engagement run
   assert.ok(p.includes("Your todo t"));
 });
 
+test("a turn is told which checks it must pass, failures in code it didn't write included, and a retry is told what threw its last try away", () => {
+  const withRedLines: HEvent = { ...engagement, engagement: { ...(engagement as Extract<HEvent, { type: "engagement_opened" }>).engagement, redLines: ["kind-words", "no-trademarks"] } };
+  const evs: HEvent[] = [
+    withRedLines,
+    goal({ id: "G", assumptions: [A({ id: "D" })] }),
+    todo("G", { id: "session", lane: "build", text: "build the ending", tests: "D", check: "game-tests", writeScope: ["game"] }),
+    todo("G", { id: "levels", lane: "levels", text: "make levels", tests: "D", writeScope: ["game/levels"] }),
+    turn({ todo: "session", goal: "G", result: "validation_failed", granularity: "none", reasons: ["game-tests: game tests fail: expected 1, got 5"] }, T0 + 1),
+    turn({ todo: "levels", goal: "G", result: "validation_failed", granularity: "none", reasons: ["levels: level 2 is too long"] }, T0 + 2),
+  ];
+  let s = project(evs, policy);
+  const p = buildPacket(s, s.todos.get("session")!, "why");
+  assert.match(p, /Checked when you finish: game-tests; red lines kind-words, no-trademarks\. Any failure throws the whole turn away, even one in code you didn't write/);
+  assert.match(p, /Your last try was thrown away: game-tests: game tests fail: expected 1, got 5/);
+  assert.doesNotMatch(p, /level 2 is too long/, "another todo's failure isn't this one's");
+  assert.match(buildPacket(s, s.todos.get("levels")!, "why"), /Checked when you finish: red lines kind-words, no-trademarks\./, "red lines alone still count");
+
+  // Once a try gets through, the old failure is history, not news.
+  s = project([...evs, turn({ todo: "session", goal: "G", result: "progress", granularity: "substantive" }, T0 + 3)], policy);
+  assert.doesNotMatch(buildPacket(s, s.todos.get("session")!, "why"), /thrown away:/);
+  // Nothing to check, nothing said.
+  const plain = st(goal({ id: "G", assumptions: [A({ id: "D" })] }), todo("G", { id: "t", lane: "x", text: "x", tests: "D" }));
+  assert.doesNotMatch(buildPacket(plain, plain.todos.get("t")!, "why"), /Checked when you finish/);
+});
+
+test("validation: a proposed todo's Windows paths are the same paths, so a follow-up isn't dropped as out of scope", () => {
+  const s = st(goal({ id: "G", scope: ["game"], assumptions: [A({ id: "D" })] }), todo("G", { id: "levels", lane: "levels", text: "levels", tests: "D", writeScope: ["game/levels"] }));
+  const v = validate(s, "levels", { todos: [
+    { lane: "build", text: "make all five levels playable and update the tests", tests: "D", writeScope: ["game\\game.js", "game\\logic.test.cjs"], freeze: ["game\\levels"] },
+    { lane: "build", text: "reach outside", tests: "D", writeScope: ["other\\x.js"] },
+  ] });
+  const added = v.events.filter((e) => e.type === "todo_added").map((e) => (e as Extract<HEvent, { type: "todo_added" }>).todo);
+  assert.equal(added.length, 1);
+  assert.deepEqual(added[0].writeScope, ["game/game.js", "game/logic.test.cjs"]);
+  assert.deepEqual(added[0].freeze, ["game/levels"]);
+  assert.ok(v.reasons.some((r) => /todo 1: scope other\/x\.js is outside the goal's scope/.test(r)), v.reasons.join("; "));
+});
+
 test("a turn is told the goal's other open work, so it doesn't propose the planned next steps again", () => {
   const s = st(
     goal({ id: "G", assumptions: [A({ id: "D" })] }),

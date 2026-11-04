@@ -113,7 +113,11 @@ export function validateTurn(input: {
   const known = (id: string) => s.todos.has(id) || s.asks.has(id) || s.findings.has(id) || accepted.findings.some((f) => f.id === id);
   const goalScope = g.def.scope;
   const newIds = new Set<string>();
-  for (const [i, d] of (o.todos ?? []).entries()) {
+  // Agents on Windows write paths with backslashes ("game\\game.js"). Scopes, leases and
+  // git all use "/", and in a real run the right follow-up was dropped as out of scope.
+  const slashes = (ps: string[]) => ps.map((x) => (typeof x === "string" ? x.replace(/\\/g, "/") : x));
+  for (const [i, raw] of (o.todos ?? []).entries()) {
+    const d = { ...raw, ...(Array.isArray(raw.writeScope) && { writeScope: slashes(raw.writeScope) }), ...(Array.isArray(raw.freeze) && { freeze: slashes(raw.freeze) }) };
     if (i >= p.proposals.maxTodosPerTurn) { reasons.push(`todo ${i}: over the ${p.proposals.maxTodosPerTurn}-per-turn limit`); continue; }
     const id = d.id ?? eid(t.id, "p", t.turns + 1, i);
     const r = checkTodo(s, t.goal, d, id, goalScope, known, newIds, input.knownSources);

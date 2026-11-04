@@ -145,6 +145,7 @@ Each guide is its own file, so a change to one feature touches only its own page
 - [Events from outside](docs/events.md): Jira tickets fetched on a schedule and routed by your rules into work, or recorded when nothing handles them
 - [Memory about the people you serve](docs/memory.md): typed memory, what it may be used for, and how it expires
 - [A terminal animation of one engagement](docs/demo-animation.md): when the partner is called, and why, in 15 seconds
+- [A 47-second film](docs/film.md): one ticket through the firm today, then a thousand engagements and the one call left for you, in English and Chinese
 - [What testing found](docs/testing-findings.md)
 - [Not real yet](docs/not-real-yet.md)
 - [Harness design](docs/harness.md), against the six cases

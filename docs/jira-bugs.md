@@ -8,6 +8,8 @@ ticket ─► triage ─► logs ∥ code ─► diagnose ─┬─► user erro
                                              └─► bug ─► reply ("confirmed")
                                                      └► failing test ─► fix ─► pull request ─► merged ─► reply ("fixed")
         (triage can also say) duplicate ──────────────────────────────────────► reply
+
+        someone comments after our reply ─► follow-up ─► look again · answer · nothing
 ```
 
 Every reply goes to you as a draft first. The loop posts it on the ticket once you say send, then moves the ticket's status. Every pull request is asked about first, and merging stays yours. No turn touches Jira, GitHub or production.
@@ -44,6 +46,20 @@ A `bug` diagnosis is still only an opinion. It becomes a fix only once a test sh
 This needs the service's goal to ship to a repository (`ship` in the goal). Without that, a bug gets the "confirmed" reply and stops, with a note saying why.
 
 Between the failing test and the fix, the service's tests are red in the engagement's copy. That's deliberate: it's the proof. Other work in the same service goal sees that failure in its checks until the fix lands.
+
+### When someone answers on the ticket
+
+Jira's comments come in with each change to the ticket. A new comment from anyone but us starts a **follow-up round**, once the round before it has finished. The main agent reads the comment, next to our last reply and what's known so far, and chooses:
+- **`look`:** they gave something new (an order id, a time, steps), or say the advice or the fix didn't work. A new round of logs, code and diagnosis runs, searching for the new terms, and goes on from there as before.
+- **`answer`:** they asked something we can answer from what's known. A reply is drafted, and you're asked as usual.
+- **`none`:** a thank-you, or they say it's sorted.
+
+How it tells which comments count:
+- **Ours never count.** A comment is ours if it was written by the account in the source's `self`, or if it repeats a reply we sent.
+- **Old ones don't count.** Comments from before the ticket's first run are ignored.
+- **Each comment is read once.** Comments that come in while a round is under way wait for it to finish.
+
+After `maxFollowUps` rounds (5) on one ticket, its new comments are yours to read, and you're told once.
 
 ## What you set up, once
 
@@ -85,12 +101,13 @@ Everything below names your systems, so it goes in `engagement.json` in your pri
 ```json
 "events": {
   "sources": [{ "id": "jira-pay", "kind": "jira", "url": "https://jira.example.com", "jql": "project = PAY AND issuetype = Bug", "tokenEnv": "AF_JIRA_TOKEN",
-                "statuses": { "routed": "In Progress", "replied": "Waiting for customer", "resolved": "Resolved" } }],
+                "statuses": { "routed": "In Progress", "replied": "Waiting for customer", "resolved": "Resolved" },
+                "self": ["af-support-bot"] }],
   "rules": [{ "id": "bugs", "match": { "source": "jira-pay", "types": ["Bug"] }, "goal": "intake", "playbook": "jira-bug", "maxOpen": 3 }]
 }
 ```
 
-The token in `AF_JIRA_TOKEN` now also has to comment and change status. Give it an account that can do only that. Each status is matched by the transition's name or the status it leads to.
+The token in `AF_JIRA_TOKEN` now also has to comment and change status. Give it an account that can do only that. Each status is matched by the transition's name or the status it leads to. `self` names that account, by its user name, email or account id, so its comments are never taken for the reporter's.
 
 **4. Check it before it runs:**
 
@@ -114,6 +131,5 @@ npm run harness -- facts confirm payments logs.format
 
 ## What's not here yet
 
-- **The reporter's answer coming back in.** Today, a ticket that already has a run ignores its later changes, so our own comment doesn't start a new run. Answering `needs_info` means a person reads the reporter's reply.
 - **Log tools** other than files, such as Application Insights or Splunk.
 - **Learning across tickets:** the close step, lessons proposed to you, and numbers per playbook.

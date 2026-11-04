@@ -1,6 +1,6 @@
 {
   "id": "jira-bug",
-  "version": 2,
+  "version": 3,
   "title": "Jira bug",
   "start": "triage",
   "steps": {
@@ -187,7 +187,8 @@
     "bug": "Say it's confirmed as a problem on our side, what it affects, and that a fix is being worked on.",
     "needs_info": "Ask for exactly this, and say why it helps: {slots.missing}",
     "duplicate": "Say it's the same problem as {slots.duplicate_of}, where updates will be posted.",
-    "fixed": "Say the problem is fixed and the fix is merged, in a sentence on what changed for them, and thank them for reporting it."
+    "fixed": "Say the problem is fixed and the fix is merged, in a sentence on what changed for them, and thank them for reporting it.",
+    "answer": "Answer what they asked, from what's known: {slots.summary}"
   },
   "onboard": {
     "lane": "research",
@@ -199,5 +200,43 @@
       "Read the log sample {sample} ({logs.notes}): record how a line is laid out, the time zone, where a user or request id is, and how an error and its stack trace look, as logs.format.",
       "Find how it's built and tested (the service map says build \"{build}\", test \"{test}\"); record what you find as build.commands."
     ]
+  },
+  "maxFollowUps": 5,
+  "followUp": {
+    "lane": "ticket-triage",
+    "priority": 1,
+    "text": "Read what's new on {ticket.id}: {ticket.title}",
+    "brief": [
+      "Someone commented on {ticket.id} after our last reply. Read what they said, in your todo, against what's known: {slots.summary} (last outcome: {slots.previous}).",
+      "Choose what happens next. Don't answer or fix anything yourself.",
+      "If they gave new information (a time, an id, steps, a screenshot's text), or say the fix or the advice didn't work, choose look, with the new terms to search the logs for."
+    ],
+    "outcomes": {
+      "look": {
+        "next": [
+          "logs",
+          "code",
+          "diagnose"
+        ],
+        "needs": [
+          "terms",
+          "summary"
+        ],
+        "means": "look into it again with what they said: the logs, the code, a new diagnosis. \"terms\" are the words to search the logs for now, \"summary\" what's wrong as it stands."
+      },
+      "answer": {
+        "next": [
+          "reply"
+        ],
+        "needs": [
+          "summary"
+        ],
+        "means": "they asked something we can answer from what's already known. \"summary\" is the answer, in a sentence."
+      },
+      "none": {
+        "next": [],
+        "means": "nothing for us to do: a thank-you, or they say it's sorted."
+      }
+    }
   }
 }

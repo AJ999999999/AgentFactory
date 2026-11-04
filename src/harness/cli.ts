@@ -8,6 +8,7 @@
 //   npm run harness -- answer <ask> --choice <id> [--by partner] [--note ..] [--revision file.json] [--budget turns=300] [--from-now-on]
 //   npm run harness -- standing [revoke <goal> <shape>]              standing answers ("from now on"), or take one back
 //   npm run harness -- trace <id> [--depth 4]                        why something happened and what it led to: a goal, todo, question, finding, turn or event
+//   npm run harness -- ship test [<goal>]                            what the goal's GitHub identity can do on its repository (docs/ship.md)
 //   npm run harness -- slack test                                    one card to your Slack workflow, to check it (docs/harness-slack.md)
 //   npm run harness -- events [config <file.json> | test <source>]  events from outside (Jira): what came in and where it went;
 //                                                                    set the sources and rules; fetch once from a source and print, writing nothing
@@ -370,6 +371,19 @@ async function main(): Promise<void> {
       const { buildGraph, traceText } = await import("./trace.ts");
       const g = buildGraph(await h.events(), { turnsDir: path.join(home(eng), "turns") });
       console.log(traceText(g, rest[0], Number(flag("depth", "4"))));
+      return;
+    }
+    case "ship": {
+      if (rest[0] !== "test") throw new Error("usage: ship test [<goal>]   (setup: docs/ship.md)");
+      const s = await (await harness(currentEngagement())).state();
+      const goals = [...s.goals.values()].filter((g) => g.def.ship && (!rest[1] || g.id === rest[1]));
+      if (!goals.length) throw new Error(`no goal ${rest[1] ? `${rest[1]} ` : ""}has ship set (see docs/ship.md)`);
+      const { shipTest } = await import("./ship.ts");
+      for (const g of goals) {
+        const r = await shipTest(g.def.ship!);
+        console.log(`${g.id} -> ${g.def.ship!.repo}\n  ${r.lines.join("\n  ")}`);
+        if (!r.ok) process.exitCode = 1;
+      }
       return;
     }
     case "slack": {

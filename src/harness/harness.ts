@@ -13,6 +13,7 @@
 //   7. says when to wake next. Quiet ticks cost nothing and commit nothing.
 import * as fs from "node:fs";
 import { standingKey } from "./standing.ts";
+import { GitHubShip } from "./ship.ts";
 import { configProblems, type EventsDef, eventSources, everyMinutes, receiveEvent } from "./events.ts";
 import * as path from "node:path";
 import type { Git } from "../git.ts";
@@ -38,7 +39,7 @@ import { appendEvents, eid, readEvents, readSynced, safeId, writeEventFiles } fr
 import type { Budget, EngagementDef, Finding, HEvent, TodoDraft, TurnRecord } from "./types.ts";
 import type { TurnOutput } from "./validate.ts";
 import { budgetProblem, criteriaHash, validateTurn } from "./validate.ts";
-import type { Clock, World } from "./world.ts";
+import type { Clock, JobProvider, World } from "./world.ts";
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -71,7 +72,9 @@ export class Harness {
   // What memory says about the people the engagement serves, as packet lines.
   about: (s: State) => string[];
 
-  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string }) {
+  // Where done work goes as pull requests (ship.ts); tests pass one that plays GitHub.
+  ship: JobProvider;
+  constructor(opts: { control: Git; engagement: string; policy: HarnessPolicy; clock: Clock; world: World; agent: TurnAgent; worktreeRoot: string; slots?: number; log?: LogFn; about?: (s: State) => string[]; turnsDir?: string; ship?: JobProvider }) {
     if (opts.policy.claims.turnTimeoutMinutes >= opts.policy.claims.ttlMinutes) throw new Error("turn timeout must be shorter than the claim TTL, or a slow turn could outlive its claim");
     if (!safeId(opts.engagement)) throw new Error(`bad engagement id ${opts.engagement}`);
     this.control = opts.control;
@@ -79,6 +82,7 @@ export class Harness {
     this.policy = opts.policy;
     this.clock = opts.clock;
     this.world = opts.world;
+    this.ship = opts.ship ?? new GitHubShip({ control: opts.control, root: path.join(opts.worktreeRoot, "..", "ship") });
     this.agent = opts.agent;
     this.claims = new Claims(opts.control, opts.engagement);
     this.pulse = new Pulse(opts.control, opts.engagement);
@@ -383,14 +387,14 @@ export class Harness {
     // time, so it happens under a claim: two runners never launch the same job.
     const started: string[] = [];
     for (const t of readyTodos(s, now, runner, new Set(), ["job", "wait"])) {
-      if (t.kind === "job" && !this.world.jobs) continue;
+      if (t.kind === "job" && !this.jobsFor(t)) continue;
       if (t.kind === "wait" && !this.world.metrics?.[t.wait!.source]) continue;
       const claim = await this.claims.tryClaim(t.id, runner.id, eid("launch", t.id, sha256(`${runner.id}-${now}-${Math.random()}`).slice(0, 6)), now + this.policy.claims.ttlMinutes * MIN);
       if (!claim) continue;
       try {
         const fresh = (await this.state()).todos.get(t.id);
         if (!fresh || fresh.status !== "open") continue;
-        const handle = t.kind === "job" ? await this.world.jobs!.start(fresh, now) : `wait:${t.wait!.source}`;
+        const handle = t.kind === "job" ? await this.jobsFor(t)!.start(fresh, now) : `wait:${t.wait!.source}`;
         const ev: HEvent[] = [{ id: eid("start", t.id, fresh.failures, fresh.turns, handle), at: now, by: runner.id, type: "todo_started", todo: t.id, handle }];
         if (t.cost?.usd) ev.push({ id: eid("spend", t.id, handle), at: now, by: runner.id, type: "spend", goal: t.goal, todo: t.id, usd: t.cost.usd });
         await appendEvents(this.control, this.engagement, ev, `harness: start ${t.id}`);
@@ -485,10 +489,28 @@ export class Harness {
     return out;
   }
 
+  // Shipping jobs go to GitHub (ship.ts); every other job to the world's provider.
+  private jobsFor(t: TodoState): JobProvider | undefined {
+    return t.job?.spec?.ship ? this.ship : this.world.jobs;
+  }
+
   private async pollJob(s: State, t: TodoState, now: number, add: (e: HEvent) => void): Promise<number | undefined> {
-    const r = await this.world.jobs!.poll(t.handle!, now);
+    const jobs = this.jobsFor(t);
+    if (!jobs) return;
+    const r = await jobs.poll(t.handle!, now);
     if (r.status === "running") return r.eta;
     add({ id: eid("fin", t.id, t.failures, t.handle ?? ""), at: now, by: "harness", type: "job_finished", todo: t.id, status: r.status, metrics: r.metrics, gpuHours: r.gpuHours });
+    const shipped = t.job?.spec?.ship as string | undefined;
+    if (shipped) {
+      // What GitHub said, where you can see it; a failure goes back to the work it shipped,
+      // and this job is done with (the next try is a new job after the work is done again).
+      if (r.note) add({ id: eid("ship-note", t.id, r.status), at: now, by: "harness", type: "note", goal: t.goal, text: r.note.slice(0, this.policy.proposals.noteChars) });
+      if (r.status === "failed") {
+        add({ id: eid("ship-back", t.id), at: now, by: "harness", type: "todo_reopened", todo: shipped, reason: r.note ?? "the pull request failed", resetFailures: false });
+        add({ id: eid("ship-end", t.id), at: now, by: "harness", type: "todo_superseded", todo: t.id, reason: "its work went back to be fixed" });
+        return;
+      }
+    }
     if (r.status === "failed") return;
     for (const e of this.informFindings(s, t, r.metrics, "measured", t.job?.runs ?? 1, now)) add(e);
     add({ id: eid("done", t.id), at: now, by: "harness", type: "todo_done", todo: t.id });

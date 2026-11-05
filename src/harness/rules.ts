@@ -214,6 +214,24 @@ function rules(s: State, now: number, emitOut: Emit): void {
         emit({ id: eid("block-stopped", t.id, t.turns), at: now, by: H, type: "todo_blocked", todo: t.id, reason: "stopped by the partner", ask: id });
         continue;
       }
+      // Its last turn failed checks that fail on the commit it started from too. That's the
+      // setup's problem (a missing cache, a broken test on main), not the turn's: another try
+      // would fail the same way, so nothing retries until someone fixes it or drops the work.
+      // The failure isn't counted, and a fixed setup starts a fresh run of tries.
+      const last = s.turns.findLast((x) => x.todo === t.id);
+      const baseAsk = eid("ask-base", t.id, t.turns);
+      if (last?.result === "base_failed" && !s.asks.has(baseAsk)) {
+        emit(ask(now, {
+          id: baseAsk, goal: g.id, to: owner, kind: "decision", todo: t.id, origin: "rule:base_failed",
+          question: `The checks on "${t.text}" fail on the commit its turn started from too, so the turn wasn't to blame and another try would fail the same way: ${last.reasons.join("; ").slice(0, 400)}. Fix the setup and try again, or drop it?`,
+          options: [
+            { id: "retry", label: "Fixed: try again", effect: { type: "retry", todo: t.id } },
+            { id: "drop", label: "Drop it", effect: { type: "supersede", todos: [t.id] } },
+          ],
+        }));
+        emit({ id: eid("block-base", t.id, t.turns), at: now, by: H, type: "todo_blocked", todo: t.id, reason: "its checks fail on the starting commit too", ask: baseAsk });
+        continue;
+      }
       // Repeated failure stops retrying and asks.
       if (t.failures >= p.retries.maxFailures) {
         const id = eid("ask-fail", t.id, t.turns);

@@ -147,6 +147,7 @@ Each mechanism is here because at least one case needed it.
 ### Controlling the work
 
 - **Claims, then leases.** A claim on a todo (an atomic ref push) comes first, so two wakes never do the same work. Path leases then guard the files. A turn that outlives its claim is thrown away at writeback, and the turn is recorded once.
+- **Checks that fail before the turn started.** When a turn fails its checks, the harness runs the same checks on the commit the turn started from. If every check that failed fails there too, the setup is broken, not the turn (a test needs a cache the copy left out, or a test on main is already red). The turn counts as spent but not as a failure, and it isn't retried, because the next try would fail the same way. The goal's owner is asked to fix the setup and try again, or drop the work. A standing answer never settles that question.
 - **Gates are scoped by the dependency graph, not by agent.** A question blocks only the todos that depend on it, or the whole goal when it's about the goal. Agents are ephemeral here, so blocking by agent identity would block nothing or everything.
 - **Experiment freeze.** A running job or wait can freeze paths. No todo that writes there can run, and a turn that changes them is discarded. This keeps agents from "improving" the landing page halfway through the market test.
 - **Spin is measured by outcome, not activity.**

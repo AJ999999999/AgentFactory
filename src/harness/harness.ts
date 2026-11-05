@@ -18,7 +18,7 @@ import { GitHubShip, upstream } from "./ship.ts";
 import { REVIEW_LANE } from "./team.ts";
 import { configProblems, type EventsDef, eventSources, everyMinutes, receiveEvent } from "./events.ts";
 import * as path from "node:path";
-import { Git, log } from "../git.ts";
+import { Git, addDetachedWorktree, log, removeWorktree } from "../git.ts";
 import { Coordinator } from "../orchestrator.ts";
 import { basisRef, currentBasis, readLockfile, writeBasis, writeLockfile, writeTask } from "../context.ts";
 import type { LogFn } from "../util.ts";
@@ -827,6 +827,11 @@ export class Harness {
             const { failures, checked } = await this.runCheckers(wtDir, t, files, s);
             const v = validateTurn({ s, todo: t, agent: runner.id, turn: turnId, now, why, output, files, checkFailures: failures, checked, wtDir, knownSources: Object.keys(this.world.metrics ?? {}), seat: seatState });
             if (v.result !== "validation_failed") kept = files;
+            // Thrown away only by its checks, and they fail on the commit it started from too:
+            // not the turn's doing, and another try would fail the same way (docs/real-runs.md).
+            const base = v.result === "validation_failed" && failures.length && v.reasons.every((r) => failures.includes(r))
+              ? await this.failsOnBase(wt, t, files, failures, s)
+              : null;
             if (v.result === "validation_failed") await discard(wt);
             else if (t.artifact && t.pins?.length && v.result === "completed") {
               writeLockfile(wtDir, {
@@ -835,7 +840,9 @@ export class Harness {
                 inputs: [], builtAt: new Date(now).toISOString(),
               });
             }
-            events = v.events;
+            events = base
+              ? [turnEvent(turnId, t, runner.id, now, why, "base_failed", failures.map((f) => `${f} (fails on ${base.slice(0, 10)}, the commit this turn started from, too)`), files, seat?.key)]
+              : v.events;
           }
           // A turn that outlived its claim must not overwrite whoever took over.
           if (!capacity && !(await this.claims.holds(claim))) {
@@ -901,6 +908,34 @@ export class Harness {
       }
     }
     return { failures, checked };
+  }
+
+  // Runs the same checks on the commit the turn started from, in a checkout of its own, and
+  // returns that commit when every check the turn failed fails there too. A failure is
+  // matched by its check ("red line x", the todo's checker), not its text: test output
+  // differs from run to run.
+  private async failsOnBase(wt: Git, t: TodoState, files: string[], failures: string[], s: State): Promise<string | null> {
+    const which = (f: string) => f.split(":")[0];
+    // The playbook's tests-fail check already compares with the starting commit: the tests
+    // pass there by design, and its failure is about this turn's test (checks.ts).
+    if (failures.some((f) => which(f) === "tests-fail")) return null;
+    let rev: string;
+    try {
+      rev = wt.head();
+    } catch {
+      return null;
+    }
+    const dir = path.join(os.tmpdir(), `af-base-${this.engagement}-${rev.slice(0, 10)}-${process.pid}-${Date.now().toString(36)}`);
+    try {
+      await addDetachedWorktree(this.control, dir, rev);
+      const there = new Set((await this.runCheckers(dir, t, files, s)).failures.map(which));
+      return failures.every((f) => there.has(which(f))) ? rev : null;
+    } catch (e) {
+      this.log("base_check_failed", { todo: t.id, error: (e as Error).message.slice(0, 200) });
+      return null;
+    } finally {
+      await removeWorktree(this.control, dir).catch(() => fs.rmSync(dir, { recursive: true, force: true }));
+    }
   }
 
   private redLinesCache: string[] | null = null;

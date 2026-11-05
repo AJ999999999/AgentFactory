@@ -16,8 +16,9 @@ import { irreversibleEffect, type AskOption } from "./types.ts";
 export const MUST_ASK = new Set([
   "rule:money", "rule:success", "rule:kill_criterion", "rule:thrash", "rule:scope_vs_budget",
   "rule:budget_exhausted", "rule:budget_forecast", "rule:load_bearing_refuted", "rule:spin", "rule:contested", "rule:probation",
-  // The brakes on a standing "retry": the turn cap, and a turn you stopped yourself.
-  "rule:turn_cap", "rule:stopped",
+  // The brakes on a standing "retry": the turn cap, a turn you stopped yourself, and checks
+  // that fail before the turn starts (only a person can say the setup is fixed).
+  "rule:turn_cap", "rule:stopped", "rule:base_failed",
   // A pull request larger than the goal's ship.maxFiles: look at it every time.
   "rule:ship_large",
   // Telling a ticket's reporter the problem was their own doing (playbook.ts).

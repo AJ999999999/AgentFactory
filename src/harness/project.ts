@@ -381,7 +381,7 @@ export function apply(s: State, e: HEvent): void {
     case "turn": {
       s.turns.push({ ...e.turn, at: e.at });
       // A turn the model actually ran ends the streak of refusals.
-      if (["completed", "progress", "blocked", "validation_failed", "stopped"].includes(e.turn.result)) {
+      if (["completed", "progress", "blocked", "validation_failed", "stopped", "base_failed"].includes(e.turn.result)) {
         const m = e.turn.seat ? s.seats.get(e.turn.seat)?.model : undefined;
         for (const c of s.capacity.values()) if (covers(c, m)) c.streak = 0;
       }
@@ -614,7 +614,7 @@ export function thinStreak(s: State, goalId: string): TurnAt[] {
   for (let i = s.turns.length - 1; i >= 0; i--) {
     const t = s.turns[i];
     if (t.goal !== goalId) continue;
-    if (t.result === "host_failure" || t.result === "validation_failed" || t.result === "claim_lost" || t.result === "stopped") continue;
+    if (t.result === "host_failure" || t.result === "validation_failed" || t.result === "claim_lost" || t.result === "stopped" || t.result === "base_failed") continue;
     if (t.granularity === "substantive" || t.granularity === "milestone") break;
     streak.push(t);
   }

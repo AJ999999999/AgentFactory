@@ -286,7 +286,8 @@ export type TurnResult =
   | "validation_failed"
   | "host_failure"
   | "claim_lost"
-  | "stopped"; // the partner stopped it: counted as spent, never as a failure
+  | "stopped" // the partner stopped it: counted as spent, never as a failure
+  | "base_failed"; // its checks fail on the commit it started from too: spent, not a failure, and the owner is asked
 
 // Granularity is computed by the harness from what the turn changed, never claimed by
 // the agent. none < surface < substantive < milestone.

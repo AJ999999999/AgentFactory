@@ -144,19 +144,19 @@ function segFrame(t, i, termLines, termTitle, termHud, outcome, accent) {
   X.save(); X.translate(-dx, 0); outcome(ox, 270, lt, a); X.restore();
 }
 function card(x, y, w, h, a, head, headCol) { win(x, y, w, h, head, '', a, headCol); }
-function field(x, y, k, v, vcol, a, size = 30) { text(k, x, y, C.ink3, 22, '700', UI, 'left', a); text(v, x, y + 40, vcol, size, '800', UI, 'left', a); }
+function field(x, y, k, v, vcol, a, size = 32) { text(k, x, y, C.ink3, 26, '700', UI, 'left', a); text(v, x, y + 40, vcol, size, '800', UI, 'left', a); }
 
 function segTriage(t) {
   segFrame(t, 0, [
     ['turn 0141 · triage · claude:opus', C.violet, .1, false], ['> read ORION-1427', C.ink, .35, true], ['> outcome: route', C.ink, 1.0, true], ['  service   checkout-api', C.cyan, 1.5, false],
     ['  search    "webhook" "timeout" eu', C.cyan, 1.7, false], ['  window    07:40–08:15', C.cyan, 1.9, false], ['✓ done · the harness adds the next steps', C.green, 2.4, false],
   ], 'turn 0141.log', 'claude:opus', (x, y, lt, a) => {
-    card(x, y, 850, 580, a, 'jira · ORION-1427', C.orange); pill(COPY.jira.kind, x + 40 + 120, y + 100, C.orange, '#fff', a, 20, '900', F.ui, 16, 40);
+    card(x, y, 850, 580, a, 'jira · ORION-1427', C.orange); pill(COPY.jira.kind, x + 40 + 140, y + 100, C.orange, '#fff', a, 26, '900', F.ui, 18, 46);
     text(COPY.jira.title, x + 40, y + 180, C.ink, CJK ? 44 : 42, '900', UI, 'left', a);
     const st = lt > 2.6; field(x + 40, y + 260, COPY.jira.status, st ? COPY.jira.triaged : COPY.jira.open, st ? C.green : C.ink2, a);
     field(x + 420, y + 260, COPY.jira.comp, lt > 2.6 ? 'checkout-api' : COPY.jira.none, lt > 2.6 ? C.cyan : C.ink2, a);
     field(x + 40, y + 380, COPY.jira.reporter, COPY.jira.who, C.ink2, a);
-    const u = spring(lt, 2.6, 2.6, .5); if (u > 0) { X.save(); X.translate(x + 640, y + 470); X.scale(u, u); pill('playbook · jira-bug', 0, 0, null, C.violet, a, 22, '800', F.mono, 18, 46, C.violet); X.restore(); }
+    const u = spring(lt, 2.6, 2.6, .5); if (u > 0) { X.save(); X.translate(x + 640, y + 470); X.scale(u, u); pill('playbook · jira-bug', 0, 0, null, C.violet, a, 24, '800', F.mono, 18, 48, C.violet); X.restore(); }
   }, C.violet);
 }
 function segDiagnose(t) {
@@ -164,9 +164,9 @@ function segDiagnose(t) {
     ['job logs · checkout-api.log · 42 lines', C.cyan, .1, false], ['08:02:11 WARN  webhook POST eu-1 try=1', C.ink2, .4, false], ['08:02:41 ERROR webhook timeout 30000ms', C.red, .6, false],
     ['  at sendWebhook (retry.ts:88)', C.ink2, .8, false], ['  at retryLoop (retry.ts:61)', C.ink2, .95, false], ['08:03:11 ERROR webhook timeout 30000ms', C.red, 1.1, false], ['turn 0143 · diagnose → bug', C.blue, 1.6, false],
   ], 'logs/ORION-1427.txt', 'a job, not a turn', (x, y, lt, a) => {
-    card(x, y, 850, 580, a, 'diagnose · ORION-1427', C.blue); text(COPY.diag.head, x + 40, y + 110, C.blue, 24, '900', UI, 'left', a);
+    card(x, y, 850, 580, a, 'diagnose · ORION-1427', C.blue); text(COPY.diag.head, x + 40, y + 110, C.blue, 28, '900', UI, 'left', a);
     field(x + 40, y + 150, COPY.diag.verdict, lt > 1.6 ? COPY.diag.bug : '…', C.red, a, 48);
-    text(COPY.diag.evid, x + 40, y + 300, C.ink3, 22, '700', UI, 'left', a);
+    text(COPY.diag.evid, x + 40, y + 300, C.ink3, 26, '700', UI, 'left', a);
     text('· ' + COPY.diag.e1, x + 40, y + 345, C.ink, CJK ? 30 : 28, '700', UI, 'left', a * sm(seg(lt, 1.8, 2.1)));
     text('· ' + COPY.diag.e2, x + 40, y + 395, C.ink, CJK ? 30 : 28, '700', UI, 'left', a * sm(seg(lt, 2.0, 2.3)));
     const u = spring(lt, 2.6, 2.4, .45); if (u > 0) { X.save(); X.translate(x + 425, y + 490); X.rotate(-.05 * (1 - cl(u))); X.scale(u, u); pill('✓ ' + COPY.diag.cond, 0, 0, C.violet, '#fff', a, 28, '900', UI, 24, 60); X.restore(); }
@@ -214,7 +214,7 @@ function segShip(t) {
     text(merged ? '✓ ' + COPY.pr.merged : COPY.pr.merge, x + 230, y + 466, '#fff', 28, '900', UI, 'center', a);
     const cu = eio(seg(lt, 1.3, 1.9)); cursor(lerp(x + 760, x + 300, cu), lerp(y + 560, y + 460, cu), lt > 1.93 && lt < 2.05 ? .85 : 1, a * sm(seg(lt, 1.2, 1.4)) * (1 - sm(seg(lt, 2.4, 2.7))));
     if (merged) for (let k = 0; k < 60; k++) { const v = seg(lt, 2.0, 3.4); if (v >= 1) break; const ang = hash(k, 3) * Math.PI * 2, d = (200 + hash(k, 4) * 400) * eo(v); X.save(); X.translate(x + 230 + Math.cos(ang) * d, y + 455 + Math.sin(ang) * d + 300 * v * v); X.rotate(v * 9 * hash(k, 5)); X.globalAlpha = a * (1 - v); X.fillStyle = [C.orange, C.blue, C.green, C.violet, C.pink, C.cyan, C.yellow][k % 7]; X.fillRect(-8, -4, 16, 8); X.restore(); }
-    const rs = spring(lt, 2.8, 2.4, .55); if (rs > 0) { X.save(); X.translate(x + 425, y + 540); X.scale(rs, rs); pill(COPY.pr.reply, 0, 0, null, C.green, a, 24, '800', UI, 20, 48, C.green); X.restore(); }
+    const rs = spring(lt, 2.8, 2.4, .55); if (rs > 0) { X.save(); X.translate(x + 425, y + 540); X.scale(rs, rs); pill(COPY.pr.reply, 0, 0, null, C.green, a, 28, '800', UI, 22, 54, C.green); X.restore(); }
   }, C.green);
 }
 
@@ -252,7 +252,7 @@ function endCard(t) {
 function hud(t) {
   const a = sm(seg(t, 4, 4.5)) * (1 - sm(seg(t, 31.7, 32.1))); if (a <= 0) return;
   font('800', 22, F.ui); X.globalAlpha = a; rr(60, 52, 40, 40, 10); X.fillStyle = C.blue; X.fill(); X.fillStyle = '#fff'; X.textAlign = 'center'; font('900', 17, F.ui); X.fillText('AF', 80, 78); X.textAlign = 'left'; X.fillStyle = C.orange; X.beginPath(); X.arc(94, 58, 5, 0, 7); X.fill();
-  text('AgentFactory', 114, 80, C.ink, 24, '800', F.ui, 'left', a);
+  text('AgentFactory', 114, 80, C.ink, 26, '800', F.ui, 'left', a);
   const mins = 8 * 60 + 15 + Math.floor(cl((t - 12) / 20) * 167); text(t < 12 ? '' : `ORION-1427 · ${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`, W - 60, 80, C.ink2, 22, '700', F.mono, 'right', a);
   X.globalAlpha = a; X.fillStyle = 'rgba(255,255,255,.08)'; X.fillRect(60, H - 50, W - 120, 3); const g = X.createLinearGradient(60, 0, W - 60, 0); g.addColorStop(0, C.blue); g.addColorStop(.6, C.violet); g.addColorStop(1, C.pink); X.fillStyle = g; X.fillRect(60, H - 50, (W - 120) * t / TOTAL, 3); X.globalAlpha = 1;
 }

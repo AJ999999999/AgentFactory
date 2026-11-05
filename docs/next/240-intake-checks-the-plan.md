@@ -25,10 +25,10 @@ So intake's job is to break the plan into the assumptions it rests on and settle
 
 ## How we know intake is working
 
-Count what intake missed: decisions that come up after the build has started. These are the conductor's send-backs, the partner's corrections, changes of direction, and failures of the job that runs the result. Each one names a check intake could have run or a question it could have asked. As in 140, each miss becomes a new intake check, not only a note. `escalation` reports the count per engagement, and it should fall over time.
+Count what intake missed: decisions that come up after the build has started. These are the conductor's send-backs, the partner's corrections, changes of direction, and failures of the job that runs the result. Each one names a check intake could have run or a question it could have asked. As with the checks `open` runs, each miss becomes a new intake check, not only a note. `escalation` reports the count per engagement, and it should fall over time.
 
 ## Open questions
 
-- **Whether this belongs in the foundation.** The foundation's challenge process already decides what to build and the assumptions it rests on. If the trading engagement skipped it and was opened straight into building, then part of this is a gap in how engagements are opened, and `open` (140) should warn about a build goal with no intake.
+- **Whether this belongs in the foundation.** The foundation's challenge process already decides what to build and the assumptions it rests on. If the trading engagement skipped it and was opened straight into building, then part of this is a gap in how engagements are opened, and `open` should warn about a build goal with no intake.
 - **As a playbook or inside `open`.** The Jira bug playbook gives a ready-made shape: intake becomes the playbook's head (gather, draft, check, ask), and its fork is "build", "needs data" or "stop".
 - **Whether several drafting models are worth the tokens.** Add an eval arm: one model drafts the spec, against three models drafting and a judge merging. Compare scores and how many decisions still come up late.

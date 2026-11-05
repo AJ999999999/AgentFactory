@@ -217,6 +217,14 @@ npm run panel                                        # all of the above, in a pa
 
 `open` also takes `--world <module>` (checkers and providers, saved with the engagement) and `--seed <dir>` (files committed into the engagement repo first, such as a brief). An answer is recorded as the role the question was addressed to unless you pass `--by`, because the grade of what you report depends on who you are. Agents see the answers their work depends on, directly or through earlier work, in their handoff packet: the first 320 characters of each note. A note with no words in it, such as `...` left over from an example, is refused. `correct` replaces what an answer's note says, and the agents get the new text from then on. The choice stands, and so does what it already did.
 
+Before anything is written, `open` checks the setup, so a turn isn't spent finding a problem in it. These checks came from the second private engagement, where five of about eight times the operator stepped in, the cause was the setup:
+- **The harness's own files must be tracked.** If the seeded repo's `.gitignore` would hide `.agents/` or `policy/` (that app ignored every `*.json`, which is where the event log lives), `open` stops and says which lines to add.
+- **Seats need a test command they're allowed to run.** Seats may test only with `npm test` or `npm run build`. If the engagement has code work and the repo's `package.json` has neither script, you're warned (for Python, `"test": "python -m pytest"`).
+- **The checks run on the starting commit.** A red line that already fails would throw away every turn. A todo's checker that fails may just be waiting for the todo's output, or it may be a broken setup, so you're told which and left to judge.
+- **Todo text must stand on its own.** A turn sees only its own todo, so text like "the build steps below" is flagged.
+
+The rule behind them: each time the operator has to step in during a run, the fix is a new check here or a new rule, not only a note.
+
 You can run it in two ways:
 - **Long-running (the default on Windows).** `scripts/windows/install-harness-task.ps1` registers a Task Scheduler task that keeps `loop` alive: it starts at logon and is retried every 15 minutes (ignored while the loop runs). The loop sleeps by the wall clock, rechecks every `--poll` minutes so answers get noticed, backs off on network errors, and writes a log and a heartbeat. [Running the harness on Windows](windows.md) has the steps.
 - **One wake per process.** `tick` for cron or a CI schedule. It keeps its quiet-wake memory on disk, so an unchanged engagement still costs one `git ls-remote`.

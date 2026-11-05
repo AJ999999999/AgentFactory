@@ -48,6 +48,7 @@ import type { World } from "./world.ts";
 import { SystemClock } from "./world.ts";
 import { notifyTick, slackTest } from "./notify.ts";
 import { rememberFolder } from "../panel/folders.ts";
+import { openProblems } from "./opencheck.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
@@ -211,7 +212,14 @@ async function main(): Promise<void> {
       if (world && !world.startsWith("case:")) await importFile(world); // fail now, not in the scheduled task
       const mem = flag("memory") ? path.resolve(flag("memory")!) : undefined;
       fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ repo, remote, ...(world ? { world } : {}), ...(mem ? { memory: mem } : {}) }, null, 2));
-      await (await harness(def.id)).open(def);
+      const h = await harness(def.id);
+      // The setup checked before any turn is spent on it (opencheck.ts). The seats' test
+      // commands are the ones Copilot's grant gives them.
+      const testCommands = (agentsConfig().tools?.["shell:test"] ?? []).flatMap((f: string) => /^shell\((.*)\)$/.exec(f)?.[1] ?? []);
+      const problems = await openProblems({ repo: new Git(repo), def, world: h.world, testCommands });
+      for (const w of problems.warn) console.error(`warning: ${w}`);
+      if (problems.stop.length) throw new Error(problems.stop.join("\n"));
+      await h.open(def);
       // So `npm run panel` from anywhere shows it next to the other projects' work.
       rememberFolder(process.cwd());
       console.log(`opened ${def.id}: ${def.goals.length} goal(s), state in ${remote}`);

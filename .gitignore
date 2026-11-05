@@ -16,3 +16,4 @@ challenges/out/
 
 # Film render cache (fonts, frames, music)
 scripts/film/.cache/
+__pycache__/

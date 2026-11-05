@@ -9,6 +9,7 @@ import { eventsDir } from "./store.ts";
 import type { EngagementDef, TodoDraft } from "./types.ts";
 import type { World } from "./world.ts";
 import type { TodoState } from "./project.ts";
+import { BUILTIN_CHECKS } from "./checks.ts";
 
 export type OpenProblems = { stop: string[]; warn: string[] };
 
@@ -80,7 +81,9 @@ export async function checksAtStart(repoDir: string, def: EngagementDef, world: 
   }
   const seen = new Set<string>();
   for (const g of def.goals) for (const t of g.todos ?? []) {
-    if (!t.check || seen.has(t.check)) continue;
+    // The harness's own checks (a playbook's tests-fail and tests-pass) run a service's tests
+    // at the turn; they aren't the world's, and there's nothing to run before a ticket.
+    if (!t.check || seen.has(t.check) || BUILTIN_CHECKS.includes(t.check)) continue;
     seen.add(t.check);
     const fn = checkers[t.check];
     if (!fn) {

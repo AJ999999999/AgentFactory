@@ -88,3 +88,7 @@ test("open stops on a seed whose .gitignore hides the event log, and warns about
   assert.match(ok.stderr, /warning: g\/core: "the steps below"/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("the harness's own built-in checks aren't reported as missing from the world", async () => {
+  assert.deepEqual(await checksAtStart(tmp("builtin"), def([{ id: "fix", lane: "build", text: "Fix it", check: "tests-pass" }]), {}), []);
+});

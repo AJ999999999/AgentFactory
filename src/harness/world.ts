@@ -32,7 +32,8 @@ export class SimClock implements Clock {
 }
 
 // A running job may say when it expects to finish; the harness doesn't poll before then.
-export type JobOutcome = { status: "running"; eta?: number } | { status: "succeeded" | "failed"; metrics: Record<string, number>; gpuHours?: number; note?: string };
+// files: text to save in the engagement's repo under the harness's own path (a log excerpt).
+export type JobOutcome = { status: "running"; eta?: number } | { status: "succeeded" | "failed"; metrics: Record<string, number>; gpuHours?: number; note?: string; files?: Record<string, string> };
 
 export interface JobProvider {
   start(todo: TodoState, now: number): Promise<string>; // returns a handle

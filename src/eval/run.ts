@@ -40,11 +40,12 @@ import type { EvalCase } from "./cases.ts";
 import { buildSeed, grade, loadCases } from "./cases.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
-export const ARMS: Record<string, { label: string; worker: boolean; sessions: "none" | "todo" | "goal" }> = {
+export const ARMS: Record<string, { label: string; worker: boolean; sessions: "none" | "todo" | "goal"; conductor?: boolean }> = {
   A: { label: "a role per lane, fresh session each turn (today)", worker: false, sessions: "none" },
   B: { label: "one worker with the lane's skill, fresh session each turn", worker: true, sessions: "none" },
   C: { label: "one worker, session carried across a todo's turns", worker: true, sessions: "todo" },
   D: { label: "one worker, one session across the goal", worker: true, sessions: "goal" },
+  E: { label: "one worker, as B, with the conductor reading finished work (docs/conductor.md)", worker: true, sessions: "none", conductor: true },
 };
 
 export type Result = {
@@ -117,8 +118,10 @@ export async function runCase(c: EvalCase, arm: string, run: number, o: { out: s
   fs.rmSync(seed.cwd, { recursive: true, force: true, maxRetries: 5 });
   const control = cloneControl(origin, path.join(dir, "control"));
 
-  const policy = loadPolicy(path.join(ROOT, "policy", "harness.json"));
   const a = ARMS[arm];
+  const loaded = loadPolicy(path.join(ROOT, "policy", "harness.json"));
+  // E differs from B only in the conductor, whatever the policy file says.
+  const policy = { ...loaded, conductor: a.conductor ? loaded.conductor ?? { maxRedirects: 1 } : undefined };
   const agent = buildTurnAgent(loadAgentsConfig(ROOT, o.models), {
     root: ROOT, timeoutMs: policy.claims.turnTimeoutMinutes * 60_000, bins: o.bins,
     judgeLanes: [...(policy.team?.library.judgeLanes ?? []), "review"],
@@ -250,6 +253,12 @@ async function main(): Promise<void> {
   for (const a of arms) if (!ARMS[a]) throw new Error(`no arm ${a} (there are: ${Object.keys(ARMS).join(", ")})`);
   if (arms.some((a) => ARMS[a].worker) && !fs.existsSync(path.join(userAgentsDir(), "af-worker.agent.md"))) {
     throw new Error(`the worker's Copilot profile isn't installed in ${userAgentsDir()}: npm run harness -- agents install`);
+  }
+  // Only Copilot needs the profile installed; the other CLIs read it from this repo.
+  const lib = loadPolicy(path.join(ROOT, "policy", "harness.json")).team?.library;
+  const conductorModel = loadAgentsConfig(ROOT, flag("models")).models?.[lib?.roles.conductor?.model ?? "model-b"];
+  if (arms.some((a) => ARMS[a].conductor) && vendorOfModel(conductorModel) === "copilot" && !fs.existsSync(path.join(userAgentsDir(), "af-conductor.agent.md"))) {
+    throw new Error(`the conductor's Copilot profile isn't installed in ${userAgentsDir()}: npm run harness -- agents install`);
   }
   const runs = Number(flag("runs", "1"));
   const runId = flag("run-id") ?? new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);

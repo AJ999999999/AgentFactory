@@ -1,0 +1,107 @@
+{
+  "id": "jira-draft",
+  "version": 1,
+  "title": "Jira ticket, plan drafted",
+  "start": "plan",
+  "promoteAfter": 3,
+  "closeAfterDays": 3,
+  "maxFollowUps": 5,
+  "steps": {
+    "plan": {
+      "lane": "ticket-triage",
+      "priority": 1,
+      "conduct": true,
+      "plans": true,
+      "text": "Plan {ticket.id}: {ticket.title}",
+      "brief": [
+        "No playbook covers this kind of ticket yet. Read it, give its kind a short name, and plan the steps it needs. Don't do any of them.",
+        "The services we support: {services}. If it's about one, put its id in \"service\".",
+        "Each step is one bounded piece of work in a lane: research (read code or docs and report), build (change code: set \"writes\": true), support (draft the reply to the reporter: set \"reply\": true), or another short lane name if none fits. \"after\" lists the earlier steps it waits for.",
+        "End with a support step that replies to the reporter. At most eight steps; fewer is better.",
+        "The conductor reads your plan before it runs, and every step of it after. If this kind keeps going well, the partner is asked to make it a playbook."
+      ],
+      "outcomes": {
+        "planned": {
+          "next": [],
+          "needs": [
+            "kind",
+            "summary"
+          ],
+          "means": "you planned it. \"kind\" is the kind's short name (like access-request), \"summary\" what's asked, in a sentence, and \"plan\" the steps: [{\"id\": \"look\", \"lane\": \"research\", \"text\": \"...\"}, {\"id\": \"answer\", \"lane\": \"support\", \"text\": \"...\", \"after\": [\"look\"], \"reply\": true}]."
+        },
+        "needs_info": {
+          "next": [
+            "reply"
+          ],
+          "needs": [
+            "missing",
+            "summary"
+          ],
+          "means": "nobody could tell what's asked. \"missing\" is exactly what to ask the reporter for."
+        },
+        "duplicate": {
+          "next": [
+            "reply"
+          ],
+          "needs": [
+            "duplicate_of",
+            "summary"
+          ],
+          "means": "it's the same as another ticket you can name in \"duplicate_of\"."
+        }
+      }
+    },
+    "reply": {
+      "lane": "support",
+      "priority": 1,
+      "reply": true,
+      "text": "Draft the reply on {ticket.id} ({outcome})",
+      "brief": [
+        "Write the reply to the person who filed {ticket.id}. {replyGuide}",
+        "What was found: {slots.summary} {slots.how} {slots.where} {slots.missing} {slots.duplicate_of}",
+        "Plain, friendly words, under 120 words. No internal file names, no blame, no promised dates. Sign off as the support team.",
+        "Follow the team's procedure if it says more about replies: {sop}"
+      ]
+    }
+  },
+  "replies": {
+    "needs_info": "Ask for exactly this, and say why it helps: {slots.missing}",
+    "duplicate": "Say it's the same problem as {slots.duplicate_of}, where updates will be posted.",
+    "answer": "Answer what they asked, from what's known: {slots.summary}"
+  },
+  "followUp": {
+    "lane": "ticket-triage",
+    "priority": 1,
+    "text": "Read what's new on {ticket.id}: {ticket.title}",
+    "brief": [
+      "Someone commented on {ticket.id} after our last reply. Read what they said, in your todo, against what's known: {slots.summary} (last outcome: {slots.previous}).",
+      "Choose what happens next. Don't answer anything yourself. If it needs more than an answer, choose none and say so in \"note\": the partner reads it."
+    ],
+    "outcomes": {
+      "answer": {
+        "next": [
+          "reply"
+        ],
+        "needs": [
+          "summary"
+        ],
+        "means": "they asked something we can answer from what's already known. \"summary\" is the answer, in a sentence."
+      },
+      "none": {
+        "next": [],
+        "means": "nothing for us to do: a thank-you, or they say it's sorted."
+      }
+    }
+  },
+  "close": {
+    "lane": "retro",
+    "priority": 3,
+    "text": "Look back at {ticket.id}: {ticket.title}",
+    "brief": [
+      "{ticket.id} has been quiet for a few days. Look back at what happened, listed in your todo, and at the notes and files it names.",
+      "Propose at most three lessons that would have made this ticket quicker or the reply better, and that hold for the next {service} ticket too. Each is a fact with a subject starting lesson., such as lesson.refund-tickets.",
+      "Only what this ticket showed and what held to the end. Not guesses, not hypotheses that were dropped along the way, not general advice. If there's nothing worth keeping, record none: that's a fine answer.",
+      "The partner decides which to keep; nothing you propose is used before that."
+    ]
+  }
+}

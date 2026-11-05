@@ -5,6 +5,8 @@
 import { standingEvents } from "./answers.ts";
 import { standingFor } from "./standing.ts";
 import { routeEvents } from "./events.ts";
+import { playRules } from "./playbook.ts";
+import { lessonRules, retroRules } from "./retro.ts";
 import { shipRules } from "./ship.ts";
 import { sha256 } from "../util.ts";
 import type { Ask, AskOption, HEvent, TodoDraft } from "./types.ts";
@@ -129,9 +131,13 @@ function rules(s: State, now: number, emitOut: Emit): void {
     }
     // Work waiting on a probation review that was dropped goes with it: dropping the
     // review must never let unreviewed work through.
+    // The conductor is different: it only advises, and the work already passed its checks,
+    // so losing its read lets the work count.
     for (const t of live.filter((x) => x.status === "review" && x.reviewTodo)) {
       const r = s.todos.get(t.reviewTodo!);
-      if (r?.status === "superseded") emit(supersede(now, t, `its review was dropped (${r.reason})`));
+      if (r?.status !== "superseded") continue;
+      if (r.conducts === t.id) emit({ id: eid("done", t.id, "conduct-dropped", r.id), at: now, by: H, type: "todo_done", todo: t.id });
+      else emit(supersede(now, t, `its review was dropped (${r.reason})`));
     }
 
     for (const t of live.filter((x) => x.status === "open")) {
@@ -343,6 +349,17 @@ function rules(s: State, now: number, emitOut: Emit): void {
 
   // Events from outside that a rule routed: each becomes a todo in its goal, as room allows.
   routeEvents(s, now, emit);
+  // Playbook runs: forks taken, replies asked about and sent, services' first looks.
+  let played = 0;
+  playRules(s, now, (e) => {
+    played++;
+    emit(e);
+  });
+  // After a ticket: its close and the lessons it proposes, and drift in the playbooks. Only
+  // once the runs have nothing left to add in this pass (settle runs the rules again until
+  // they're quiet), so a close never sees a ticket halfway through a step.
+  if (!played) retroRules(s, now, emit);
+  lessonRules(s, now, emit);
 }
 
 function budgetRules(s: State, g: GoalState, now: number, emit: Emit): void {

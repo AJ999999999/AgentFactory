@@ -18,8 +18,9 @@ npm run eval -- --cases multi-currency --arms A,C --models model-a=pi:   # a sli
 | B | one worker, given the lane's skill (the role-specific part of that role's profile) | fresh every turn |
 | C | one worker, as B | carried across the turns of a todo |
 | D | one worker, as B | one across the whole goal |
+| E | one worker, as B, and the [conductor](../docs/conductor.md) reads each finished todo before it counts | fresh every turn |
 
-In every arm, judges keep their roles and start fresh, and each seat's permissions come from the catalog the same way. B differs from A only in who the agent is. C and D differ from B only in what it remembers. So the gaps between arms are the effect of each.
+In every arm, judges keep their roles and start fresh, and each seat's permissions come from the catalog the same way. B differs from A only in who the agent is. C and D differ from B only in what it remembers. E differs from B only in the conductor. So the gaps between arms are the effect of each.
 
 Sessions carry over in Copilot and pi, which can resume a session by id from a new worktree. Claude Code, Codex and omp start fresh and say so in the turn log.
 

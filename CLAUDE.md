@@ -8,6 +8,10 @@ AgentFactory mass-produces agents for a problem and runs them like a consulting 
 
 The owner codes on Windows and uses GitHub Copilot CLI daily. The harness runs every agent turn through Copilot CLI.
 
+## The constitution
+
+Every turn reads `policy/constitution.md` before its role: think critically, and reflect ([docs/constitution.md](docs/constitution.md)). It holds for you as the operator too. Before changing the harness, name what your fix assumes and what would show it wrong. After a run, compare what you expected with what the turns did, and record what you learned in `docs/real-runs.md`, not just in the fix.
+
 ## How you and Copilot split the work
 
 - **You (Claude Code) are the developer and the operator.** You change this codebase, run the harness, read what Copilot turns did, and fix the harness, prompts and agent profiles when a turn goes wrong.

@@ -101,8 +101,18 @@ export function grantedCommands(allowed: string[], denied: string[], tool: "shel
   return { list: [...new Set(allowed.map(inner).filter((x): x is string => !!x))] };
 }
 
-// What every agent is told, whichever CLI runs it: the handoff packet, the role, what it
-// may run, and the one JSON object to end with.
+// The firm's constitution (docs/constitution.md): critical thinking and reflection, read once
+// from policy/ and put ahead of the role in every turn. Every CLI gets this same prompt, so
+// one file reaches every model; the 14 profiles each repeating it would drift apart.
+const CONSTITUTION_FILE = path.resolve(import.meta.dirname, "..", "..", "policy", "constitution.md");
+let constitutionText: string | undefined;
+export function constitution(): string {
+  constitutionText ??= fs.readFileSync(CONSTITUTION_FILE, "utf8").trim();
+  return constitutionText;
+}
+
+// What every agent is told, whichever CLI runs it: the handoff packet, the constitution, the
+// role, what it may run, and the one JSON object to end with.
 export function turnPrompt(ctx: TurnContext, commands?: TurnCommands): string {
   const seat = ctx.seat;
   const probation = seat?.probation ? ["You're on probation: an independent reviewer checks your finished work before it counts."] : [];
@@ -129,6 +139,10 @@ export function turnPrompt(ctx: TurnContext, commands?: TurnCommands): string {
   const play = ctx.state && ctx.todo.play ? ["", ...playPrompt(ctx.state, ctx.todo)] : [];
   return [
     ctx.packet,
+    "",
+    "The firm's constitution:",
+    ...constitution().split("\n"),
+    "",
     ...role,
     ...continuing,
     ...play,

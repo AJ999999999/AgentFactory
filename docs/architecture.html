@@ -1,22 +1,25 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>AgentFactory architecture</title>
 <style>
-html, body { margin: 0; background: #f6f4ee; }
-svg { display: block; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
-.box { fill: #ffffff; stroke: #c9cec6; stroke-width: 1.2; }
-.t { font-size: 14px; font-weight: 650; fill: #1c2226; }
-.s { font-size: 11.5px; fill: #5b636a; }
-.mono { font-family: "Cascadia Code", Consolas, monospace; font-size: 10.6px; white-space: pre; }
-.edge { fill: none; stroke: #c3c9c0; stroke-width: 1.6; }
-.cap { font-size: 16px; font-weight: 600; fill: #1c2226; }
+html, body { margin: 0; background: #f2f5fb; }
+svg { display: block; font-family: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+.box { fill: #ffffff; stroke: #d5dcea; stroke-width: 1.2; }
+.t { font-size: 14px; font-weight: 700; fill: #0e1b3d; }
+.s { font-size: 11.5px; fill: #5d6b88; }
+.h { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; fill: #5d6b88; }
+.mono { font-family: "Cascadia Code", "DejaVu Sans Mono", Consolas, monospace; font-size: 10.6px; white-space: pre; }
+.edge { fill: none; stroke: #c9d2e3; stroke-width: 1.6; }
 </style></head>
 <body>
-<svg id="s" width="1200" height="645" viewBox="0 0 1200 645"></svg>
+<svg id="s" width="1440" height="770" viewBox="0 0 1440 770"></svg>
 <script>
 "use strict";
+// One picture of how work moves through AgentFactory: where it comes from, the turn loop that does it,
+// and where it goes. It plays a numbered story by itself; ?capture stops the clock so a GIF maker can
+// step window.render(t).
 const NS = "http://www.w3.org/2000/svg";
 const S = document.getElementById("s");
-const C = { ink: "#1c2226", ink2: "#5b636a", ink3: "#8a9296", rule: "#c9cec6", accent: "#2b5c8f", amber: "#c27c0e", green: "#2c7a55", red: "#b8392b", paper: "#ffffff", hi: "#eef3f9" };
+const C = { ink: "#0e1b3d", ink2: "#5d6b88", ink3: "#93a0b8", rule: "#d5dcea", blue: "#2f6bff", orange: "#ff7a1a", green: "#12bf78", violet: "#7c4dff", pink: "#ff3377", red: "#e0452f", cyan: "#00b8d9", paper: "#ffffff" };
 function el(tag, attrs = {}, parent = S, text) {
   const e = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -27,305 +30,264 @@ function el(tag, attrs = {}, parent = S, text) {
 
 // ---------- layout ----------
 const CLI = [
-  { id: "copilot", name: "Copilot CLI", how: ["--allow-tool / --deny-tool", "per catalog permission"], color: "#6e40c9" },
-  { id: "claude", name: "Claude Code", how: ["allowed tools, dontAsk", "no settings, no MCP"], color: "#c8643b" },
-  { id: "codex", name: "Codex CLI", how: ["OS sandbox: worktree only", ".git read-only, no network"], color: "#10a37f" },
-  { id: "pi", name: "pi", how: ["turn gate extension", "commands one at a time"], color: "#2b6cb0" },
-  { id: "omp", name: "omp", how: ["turn gate extension", "the gate is the approval"], color: "#b83280" },
+  { id: "copilot", name: "Copilot CLI", how: ["tool flags from", "the catalog"], color: "#6e40c9" },
+  { id: "claude", name: "Claude Code", how: ["allowed tools,", "dontAsk"], color: "#c8643b" },
+  { id: "codex", name: "Codex CLI", how: ["OS sandbox,", "worktree only"], color: "#10a37f" },
+  { id: "pi", name: "pi", how: ["turn gate,", "writes in scope"], color: "#2b6cb0" },
+  { id: "omp", name: "omp", how: ["turn gate,", "writes in scope"], color: "#b83280" },
 ];
-CLI.forEach((c, i) => { c.x = 270 + i * 182; c.cx = c.x + 85; });
+CLI.forEach((c, i) => { c.x = 570 + i * 118; c.cx = c.x + 54; });
 
 const layers = { edges: el("g"), boxes: el("g"), over: el("g"), dots: el("g") };
 const edges = {};
-function edge(id, d, dash) {
-  edges[id] = el("path", { d, class: "edge", ...(dash ? { "stroke-dasharray": "5 4" } : {}) }, layers.edges);
-}
+function edge(id, d, dash) { edges[id] = el("path", { d, class: "edge", ...(dash ? { "stroke-dasharray": "5 4" } : {}) }, layers.edges); }
 const boxes = {};
 function box(id, x, y, w, h, title, sub = [], opts = {}) {
   const g = el("g", {}, layers.boxes);
-  const r = el("rect", { x, y, width: w, height: h, rx: 6, class: "box" }, g);
-  let bar = null;
-  if (opts.color) bar = el("rect", { x, y, width: 5, height: h, rx: 2, fill: opts.color }, g);
-  const tx = x + (opts.color ? 16 : 12);
-  const tt = el("text", { x: tx, y: y + 22, class: "t" }, g, title);
-  const ss = sub.map((s, i) => el("text", { x: tx, y: y + 40 + i * 15, class: "s" }, g, s));
-  boxes[id] = { g, r, tt, ss, x, y, w, h, color: opts.color };
+  const r = el("rect", { x, y, width: w, height: h, rx: 9, class: "box" }, g);
+  if (opts.color) el("rect", { x, y: y + 8, width: 4, height: h - 16, rx: 2, fill: opts.color }, g);
+  const tx = x + (opts.color ? 16 : 13);
+  const tt = el("text", { x: tx, y: y + 23, class: "t" }, g, title);
+  const ss = sub.map((s, i) => el("text", { x: tx, y: y + 41 + i * 15, class: "s" }, g, s));
+  boxes[id] = { g, r, tt, ss, x, y, w, h, sub: sub.slice() };
   return boxes[id];
 }
 
 // Title
-el("text", { x: 20, y: 34, style: "font-size:20px;font-weight:700;fill:#1c2226" }, S, "AgentFactory");
-el("text", { x: 152, y: 34, style: "font-size:15px;fill:#5b636a" }, S, "how one turn moves through the harness");
+const mark = el("rect", { x: 20, y: 16, width: 30, height: 30, rx: 8, fill: C.blue });
+el("text", { x: 35, y: 36, "text-anchor": "middle", style: "font-size:13px;font-weight:900;fill:#fff" }, S, "AF");
+el("circle", { cx: 45, cy: 22, r: 4, fill: C.orange });
+const ttl = el("text", { x: 62, y: 38, style: "font-size:21px;font-weight:800;fill:#0e1b3d" }, S, "AgentFactory");
+el("text", { x: 62 + ttl.getComputedTextLength() + 14, y: 38, style: "font-size:15px;fill:#5d6b88" }, S, "how work comes in, gets done, is checked, and goes out");
 
-// Partner
-el("text", { x: 20, y: 64, style: "font-size:12px;font-weight:700;letter-spacing:.06em;fill:#5b636a" }, S, "YOU, THE PARTNER");
-box("p1", 20, 74, 210, 54, "Panel · 127.0.0.1", ["questions · live turns · Stop"]);
-box("p2", 20, 138, 210, 54, "Partner MCP tools", ["from your Claude Code / Copilot"]);
-box("p3", 20, 202, 210, 54, "Command line", ["answer · pause · budget"]);
+// Work comes in
+el("text", { x: 20, y: 76, class: "h" }, S, "WORK COMES IN");
+box("jira", 20, 86, 220, 54, "Jira tickets", ["your rules, or a playbook per kind"], { color: C.orange });
+box("probe", 20, 148, 220, 54, "Production probes", ["logs and metrics, on a timer"], { color: C.orange });
+box("feedback", 20, 210, 220, 54, "Feedback and support", ["arrives as evidence, not orders"], { color: C.orange });
 
-// Event log
-box("log", 270, 50, 250, 230, "Event log in git", ["append-only · state = project(log)"]);
+// You, the partner
+el("text", { x: 20, y: 312, class: "h" }, S, "YOU, THE PARTNER");
+box("p1", 20, 322, 220, 54, "Slack card · the panel", ["questions, answered with one tap"], { color: C.pink });
+box("p2", 20, 384, 220, 54, "Your own session", ["Claude Code or Copilot, over MCP"], { color: C.pink });
+box("p3", 20, 446, 220, 54, "Command line", ["answer · drop · pause · budget"], { color: C.pink });
+
+// Event log and live turn log
+box("log", 280, 86, 250, 300, "Event log in git", ["append-only · state = project(log)"]);
 const chipLayer = el("g", {}, layers.over);
-
-// Tick pipeline
-box("wake", 560, 60, 130, 90, "Loop wakes", ["Task Scheduler loop", "sleeps to next timer"]);
-box("rules", 712, 60, 130, 90, "Rules", ["asks · blocks · budgets", "spin · kill criteria"]);
-box("select", 864, 60, 130, 90, "Select", ["ready, riskiest first", "limits, people wait"]);
-box("router", 1016, 60, 164, 90, "Router", ["by the seat's model:", "claude: codex: pi: omp:", "anything else → Copilot"]);
-box("seat", 560, 172, 434, 70, "Seats", []);
-
-// CLIs
-for (const c of CLI) box(c.id, c.x, 320, 170, 90, c.name, c.how, { color: c.color });
-const badge = el("g", { opacity: 0 }, layers.over);
-el("rect", { x: CLI[1].x + 14, y: 386, width: 146, height: 20, rx: 10, fill: "#fbefd9", stroke: C.amber }, badge);
-el("text", { x: CLI[1].x + 87, y: 400, "text-anchor": "middle", style: "font-size:11px;font-weight:650;fill:#8a5a06" }, badge, "usage limit · back at 06:00");
-
-// Worktree, validate, merge
-box("wt", 270, 436, 910, 40, "Worktree, one per turn", []);
-el("text", { x: 452, y: 461, class: "s" }, layers.boxes, "lease on its write scope · AF_TURN set · git push goes nowhere · log in turns/<turn>.log");
-box("validate", 870, 492, 145, 54, "Validate", ["scope, grades, red lines"]);
-box("merge", 1035, 492, 145, 54, "Merge", ["commit + turn event"]);
-
-// Legend under the worktree
-const lg = el("g", {}, layers.boxes);
-const lgt = el("text", { x: 270, y: 519, class: "s" }, lg, "Each seat's CLI comes from its model:");
-let lx = 270 + lgt.getComputedTextLength() + 16;
-for (const c of CLI) {
-  el("circle", { cx: lx, cy: 515, r: 5, fill: c.color }, lg);
-  const t = el("text", { x: lx + 9, y: 519, class: "s" }, lg, c.name);
-  lx += 9 + t.getComputedTextLength() + 18;
-}
-
-// Live log console
-box("console", 20, 300, 210, 238, "Live turn log", []);
+box("console", 280, 404, 250, 216, "Live turn log", []);
 const stopG = el("g", {}, layers.over);
-const stopR = el("rect", { x: 170, y: 306, width: 52, height: 22, rx: 3, fill: "none", stroke: C.red }, stopG);
-const stopT = el("text", { x: 196, y: 321, "text-anchor": "middle", style: "font-size:12px;font-weight:650", fill: C.red }, stopG, "Stop");
+const stopR = el("rect", { x: 466, y: 411, width: 54, height: 22, rx: 11, fill: "none", stroke: C.red }, stopG);
+const stopT = el("text", { x: 493, y: 426, "text-anchor": "middle", style: "font-size:12px;font-weight:700", fill: C.red }, stopG, "Stop");
 const conLines = el("g", {}, layers.over);
 
+// The turn loop
+el("text", { x: 570, y: 76, class: "h" }, S, "THE TURN LOOP");
+box("wake", 570, 86, 130, 90, "Loop wakes", ["on a timer;", "a quiet wake is", "one git ls-remote"]);
+box("rules", 714, 86, 140, 90, "Rules, playbooks", ["asks, blocks, budgets;", "a playbook adds", "the next steps"]);
+box("select", 868, 86, 130, 90, "Select", ["ready, riskiest first;", "waits cost nothing"]);
+box("router", 1012, 86, 138, 90, "Router", ["by the seat's model:", "claude: codex: pi:", "omp:, else Copilot"]);
+box("seat", 570, 192, 580, 62, "Seats", []);
+for (const c of CLI) box(c.id, c.x, 290, 108, 84, c.name, c.how, { color: c.color });
+const badge = el("g", { opacity: 0 }, layers.over);
+el("rect", { x: CLI[1].x + 4, y: 378, width: 100, height: 20, rx: 10, fill: "#fff1e5", stroke: C.orange }, badge);
+el("text", { x: CLI[1].x + 54, y: 392, "text-anchor": "middle", style: "font-size:10.5px;font-weight:700;fill:#b4540a" }, badge, "limit · back 06:00");
+box("wt", 570, 404, 580, 42, "Worktree, one per turn", []);
+el("text", { x: 762, y: 430, class: "s" }, layers.boxes, "lease on its write scope · AF_TURN set · git push goes nowhere");
+box("validate", 570, 470, 180, 66, "Validate", ["scope, evidence grades,", "the service's own tests"], { color: C.green });
+box("merge", 770, 470, 170, 66, "Merge", ["commit + the turn's", "event in the log"], { color: C.green });
+box("conductor", 960, 470, 190, 66, "Conductor", ["a strong model reads it:", "accept, or send it back"], { color: C.violet });
+const lg = el("g", {}, layers.boxes);
+let lx = 570;
+const lgt = el("text", { x: lx, y: 562, class: "s" }, lg, "Each seat's CLI comes from its model:");
+lx += lgt.getComputedTextLength() + 14;
+for (const c of CLI) { el("circle", { cx: lx, cy: 558, r: 5, fill: c.color }, lg); const t = el("text", { x: lx + 9, y: 562, class: "s" }, lg, c.name); lx += 9 + t.getComputedTextLength() + 16; }
+
+// Work goes out
+el("text", { x: 1190, y: 76, class: "h" }, S, "WORK GOES OUT");
+box("pr", 1190, 86, 230, 72, "A pull request on GitHub", ["its checks, and a review on", "another model · merging is yours"], { color: C.green });
+box("reply", 1190, 170, 230, 72, "A reply on the ticket", ["drafted for you; posted once", "you say send, status moved"], { color: C.green });
+box("prod", 1190, 254, 230, 58, "A production check", ["once, after each merge"], { color: C.green });
+
 // Edges
-edge("log_wake", "M520,105 L560,105");
-edge("wake_rules", "M690,105 L712,105");
-edge("rules_select", "M842,105 L864,105");
-edge("select_router", "M994,105 L1016,105");
-edge("rules_log", "M777,60 C777,26 528,26 506,50");
-edge("p1_log", "M230,101 L270,101");
-edge("p2_log", "M230,165 L270,165");
-edge("p3_log", "M230,229 L270,229");
-for (const c of CLI) edge(`route_${c.id}`, `M1098,150 C1098,292 ${c.cx},268 ${c.cx},320`);
-for (const c of CLI) edge(`down_${c.id}`, `M${c.cx},410 L${c.cx},436`);
-edge("wt_console", "M270,456 L230,456", true);
-edge("wt_validate", "M942,476 L942,492");
-edge("validate_merge", "M1015,519 L1035,519");
-edge("merge_log", "M1107,546 L1107,556 Q1107,563 1099,563 L258,563 Q250,563 250,555 L250,268 Q250,260 258,260 L270,260");
+edge("jira_log", "M240,113 L280,113");
+edge("probe_log", "M240,175 L280,175");
+edge("feedback_log", "M240,237 L280,237");
+edge("p1_log", "M240,349 L262,349 Q270,349 270,341 L270,320 Q270,312 278,312 L280,312");
+edge("p2_log", "M240,411 L256,411 Q264,411 264,403 L264,342 Q264,334 272,334 L280,334");
+edge("p3_log", "M240,473 L250,473 Q258,473 258,465 L258,364 Q258,356 266,356 L280,356");
+edge("log_wake", "M530,131 L570,131");
+edge("wake_rules", "M700,131 L714,131");
+edge("rules_select", "M854,131 L868,131");
+edge("select_router", "M998,131 L1012,131");
+edge("rules_log", "M784,86 C784,44 540,44 518,86");
+for (const c of CLI) edge(`route_${c.id}`, `M1081,176 C1081,272 ${c.cx},262 ${c.cx},290`);
+for (const c of CLI) edge(`down_${c.id}`, `M${c.cx},374 L${c.cx},404`);
+edge("wt_console", "M570,425 L530,425", true);
+edge("wt_validate", "M660,446 L660,470");
+edge("validate_merge", "M750,503 L770,503");
+edge("merge_conductor", "M940,503 L960,503");
+edge("conductor_log", "M1140,536 L1140,590 Q1140,600 1130,600 L556,600 Q546,600 546,590 L546,250 Q546,240 538,240 L530,240");
+edge("out_pr", "M1150,503 L1170,503 Q1178,503 1178,495 L1178,130 Q1178,122 1186,122 L1190,122");
+edge("out_reply", "M1178,214 Q1178,206 1186,206 L1190,206");
+edge("out_prod", "M1178,291 Q1178,283 1186,283 L1190,283");
 
 // Caption
-const capBox = el("rect", { x: 20, y: 580, width: 1160, height: 50, rx: 8, fill: "#1c2226" }, S);
-const capNum = el("text", { x: 44, y: 611, style: "font-size:15px;font-weight:700", fill: "#f3d27a" }, S, "");
-const capText = el("text", { x: 76, y: 611, style: "font-size:15.5px;font-weight:500", fill: "#f6f4ee" }, S, "");
+el("rect", { x: 20, y: 650, width: 1400, height: 56, rx: 12, fill: "#0e1b3d" }, S);
+const capNum = el("text", { x: 46, y: 684, style: "font-size:16px;font-weight:800", fill: "#ffbe00" }, S, "");
+const capText = el("text", { x: 82, y: 684, style: "font-size:16.5px;font-weight:600", fill: "#ffffff" }, S, "");
 const pips = [];
-for (let i = 0; i < 9; i++) pips.push(el("circle", { cx: 1060 + i * 13, cy: 605, r: 4, fill: "#5b636a" }, S));
+const NP = 11;
+for (let i = 0; i < NP; i++) pips.push(el("circle", { cx: 1260 + i * 14, cy: 678, r: 4.2, fill: "#5d6b88" }, S));
+el("text", { x: 20, y: 740, class: "s" }, S, "The ticket is made up. Every step is in the code today; the playbook for Jira bugs and the conductor are in docs/jira-bugs.md and docs/conductor.md.");
 
 // ---------- the story ----------
-const PHASE = 2.2;
+const PHASE = 2.3;
 const PHASES = [
-  "The loop wakes on a timer, reads the event log and rebuilds the state",
+  "A Jira ticket comes in; a playbook takes it: triage, then the logs and the code, then a diagnosis",
+  "Each change is written once to the event log in git; the loop wakes and rebuilds the state from it",
   "Rules decide only what a rule may; the rest becomes a question for you",
-  "You answer: from the panel, your own Claude Code or Copilot session, or the CLI",
-  "Select the riskiest ready work; work waiting on a person, a job or a limit waits",
-  "The router sends each seat to the CLI its model names",
-  "The turn runs in its own worktree, held to its grant; its log streams to you",
-  "The harness checks the work, merges it and records the turn in the log",
-  "A usage limit is a wait, not a failure: only that vendor's seats wait",
-  "Stop from the panel: the agent is killed, its changes discarded, and you're asked",
+  "You answer once, from Slack, the panel or your own session; “from now on” makes it a standing rule",
+  "Select picks the riskiest ready work; the router sends its seat to the CLI its model names",
+  "The turn runs in its own worktree, held to its grant, and its log streams to you",
+  "The harness checks the work, including the service's own tests, then merges it into the log",
+  "The conductor, a strong model, reads the finished work and sends it back if it went the wrong way",
+  "Done work goes out as a pull request, with its checks and a review on another model; merging is yours",
+  "The reply to the reporter is drafted for you; once you say send, the loop posts it and moves the ticket",
+  "A usage limit is a wait, not a failure; Stop discards a turn, and you're asked what next",
 ];
-
 const CHIPS = [
-  { p: -1, text: "engagement opened · 3 goals", kind: "base" },
-  { p: -1, text: "seat staffed · build → builder", kind: "base" },
-  { p: -1, text: "turn research · completed", kind: "ok" },
-  { p: 1, at: 0.15, text: "ask · keep going, or drop it?", kind: "ask" },
-  { p: 2, at: 0.35, text: "answer · keep going (partner)", kind: "ans" },
-  { p: 6, at: 0.55, text: "turn build · completed, substantive", kind: "ok" },
-  { p: 7, at: 0.3, text: "capacity · claude until 06:00", kind: "ask" },
-  { p: 8, at: 0.45, text: "turn spike · stopped", kind: "stop" },
-  { p: 8, at: 0.7, text: "ask · try it again, or drop it?", kind: "ask" },
+  { p: -1, text: "engagement opened · checkout-api", kind: "base" },
+  { p: -1, text: "goal staffed · jira-bug playbook", kind: "base" },
+  { p: 0, at: 0.3, text: "event · ORION-1427 · jira", kind: "in" },
+  { p: 0, at: 0.7, text: "triage · route → checkout-api", kind: "base" },
+  { p: 1, at: 0.4, text: "job logs · 42 lines saved", kind: "ok" },
+  { p: 2, at: 0.3, text: "ask · confirmed bug: send this reply?", kind: "ask" },
+  { p: 3, at: 0.5, text: "answer · send, from now on (you)", kind: "ans" },
+  { p: 6, at: 0.6, text: "turn failing-test · completed", kind: "ok" },
+  { p: 7, at: 0.75, text: "conduct · accept", kind: "cond" },
+  { p: 8, at: 0.6, text: "ship · PR #2318 · checks passed", kind: "ok" },
+  { p: 9, at: 0.65, text: "reply posted · ticket resolved", kind: "ok" },
+  { p: 10, at: 0.2, text: "capacity · claude until 06:00", kind: "ask" },
+  { p: 10, at: 0.65, text: "turn spike · stopped by you", kind: "stop" },
 ];
-const CHIP_STYLE = { base: ["#f1efe8", "#5b636a"], ok: ["#e4f1ea", "#2c7a55"], ask: ["#fbefd9", "#8a5a06"], ans: ["#e6eef7", "#2b5c8f"], stop: ["#eeeeee", "#5b636a"] };
-
+const CHIP_STYLE = { base: ["#eef1f7", "#5d6b88"], in: ["#fff1e5", "#b4540a"], ok: ["#e3f7ee", "#0d8a57"], ask: ["#ffe8ef", "#c2185b"], ans: ["#e8eeff", "#2f6bff"], cond: ["#efe9ff", "#5b34d6"], stop: ["#eeeeee", "#5d6b88"] };
 const ROUTES = [
-  ["builder", "model-a = (empty) → Copilot's default model", "repo:write:lease · shell:test"],
-  ["strategist (judge)", "model-b = claude:opus", "repo:read only: no edits"],
+  ["triager (judge lane)", "model-b = claude:opus", "repo:read only"],
+  ["builder", "model-a = (empty) → Copilot", "repo:write:lease · shell:test"],
   ["experimenter", "model-c = codex:", "repo:write:lease · shell:test"],
   ["builder", "model-a = pi:anthropic/claude-sonnet", "repo:write:lease · shell:test"],
-  ["researcher", "model-a = omp:opus", "repo:write:lease · web:read"],
+  ["researcher", "model-a = omp:opus", "repo:read · web:read"],
 ];
-
-const PI_LOG = [
-  "pi (turn gate on)",
-  "tools: read grep find ls write",
-  "      edit bash",
-  "model: anthropic/claude-sonnet",
-  "→ read: README.md",
-  "→ bash: git status | head",
-  "  ✗ only these commands, one",
-  "    at a time",
-  "→ write: work/launch.md",
-  "→ bash: git status",
-  "result: done",
+const TURN_LOG = [
+  "copilot --agent af-builder", "todo: failing test · ORION-1427", "→ read: src/webhooks/retry.ts", "→ write: test/retry.eu.test.ts",
+  "→ npm test", "  ✗ 1 failing (the new test)", "harness: base commit, npm test", "  ✓ passes without it", "result: done",
 ];
-const COPILOT_LOG = ["copilot --agent af-builder", "model: gpt-6-luna", "→ Applying patch:", "    app/launch/Screen.tsx", "→ Running: npm test", "  exit 0", "→ Applying patch:", "    app/launch/countdown.ts"];
-const STOP_LOG = ["codex exec --sandbox", "     workspace-write", "→ npm test", "→ npm run build", "stop requested by the partner", "--- stopped by the partner"];
+const CONDUCT_LOG = ["claude -p (conductor, read-only)", "→ read: test/retry.eu.test.ts", "→ git show <commit> -- checkout-api", "verdict: accept", "  the test shows the bug;", "  nothing fixed yet, as asked"];
+const STOP_LOG = ["codex exec --sandbox", "     workspace-write", "→ npm test", "→ npm run build", "stop requested by you", "--- stopped"];
 
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
-// A very light wash of a colour, for an active box.
-function tint(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  const mix = (c) => Math.round(c + (255 - c) * 0.9);
-  return `rgb(${mix(n >> 16)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
-}
 const ease = (x) => x * x * (3 - 2 * x);
-
-function setOn(id, on, color) {
-  const b = boxes[id];
-  b.r.style.stroke = on ? (color || C.ink) : C.rule;
-  b.r.style.strokeWidth = on ? "2.6" : "1.2";
-  b.r.style.fill = on ? (color ? tint(color) : C.hi) : C.paper;
+function tint(hex) { const n = parseInt(hex.slice(1), 16), m = (c) => Math.round(c + (255 - c) * 0.9); return `rgb(${m(n >> 16)},${m((n >> 8) & 255)},${m(n & 255)})`; }
+function setOn(id, on, color) { const b = boxes[id]; b.r.style.stroke = on ? (color || C.blue) : C.rule; b.r.style.strokeWidth = on ? "2.6" : "1.2"; b.r.style.fill = on ? tint(color || C.blue) : C.paper; }
+function edgeOn(id, on, color) { edges[id].style.stroke = on ? (color || C.blue) : "#c9d2e3"; edges[id].style.strokeWidth = on ? "2.4" : "1.6"; }
+function flow(id, u, color = C.blue, reverse = false, n = 3) {
+  const p = edges[id], L = p.getTotalLength(); edgeOn(id, true, color);
+  for (let k = 0; k < n; k++) { const v = u * 1.5 - k * 0.22; if (v <= 0 || v >= 1) continue; const pt = p.getPointAtLength((reverse ? 1 - v : v) * L); el("circle", { cx: pt.x, cy: pt.y, r: 4.6, fill: color, stroke: "#fff", "stroke-width": 1.5 }, layers.dots); }
 }
-function edgeOn(id, on, color) {
-  edges[id].style.stroke = on ? (color || C.ink) : "#c3c9c0";
-  edges[id].style.strokeWidth = on ? "2.4" : "1.6";
-}
-// Dots travelling along an edge: u in [0,1] is the phase, a few dots spaced behind each other.
-function flow(id, u, color = C.accent, reverse = false, n = 3) {
-  const p = edges[id];
-  const L = p.getTotalLength();
-  edgeOn(id, true, color);
-  for (let k = 0; k < n; k++) {
-    const v = u * 1.5 - k * 0.22;
-    if (v <= 0 || v >= 1) continue;
-    const pt = p.getPointAtLength((reverse ? 1 - v : v) * L);
-    el("circle", { cx: pt.x, cy: pt.y, r: 4.6, fill: color, stroke: "#fff", "stroke-width": 1.5 }, layers.dots);
-  }
-}
-function seatText(lines, colors = []) {
-  const b = boxes.seat;
-  for (const t of b.ss) t.remove();
-  b.ss = lines.map((s, i) => el("text", { x: b.x + 12, y: b.y + 40 + i * 15, class: "s", ...(colors[i] ? { style: `fill:${colors[i]};font-weight:600` } : {}) }, b.g, s));
-}
-function consoleText(lines, color = C.ink2, highlight = {}) {
-  conLines.replaceChildren();
-  lines.slice(-12).forEach((l, i) => el("text", { x: 30, y: 352 + i * 14.5, class: "mono", fill: highlight[l] || color }, conLines, l));
-}
+function sub(id, lines, color) { const b = boxes[id]; b.ss.forEach((t, i) => { t.textContent = lines ? (lines[i] ?? "") : b.sub[i]; t.setAttribute("style", lines && color ? `fill:${color};font-weight:700` : ""); }); }
+function seatText(lines, colors = []) { const b = boxes.seat; for (const t of b.ss) t.remove(); b.ss = lines.map((s, i) => el("text", { x: b.x + 13, y: b.y + 41 + i * 15, class: "s", ...(colors[i] ? { style: `fill:${colors[i]};font-weight:600` } : {}) }, b.g, s)); }
+function consoleText(lines, color = C.ink2, hl = {}) { conLines.replaceChildren(); lines.slice(-12).forEach((l, i) => el("text", { x: 292, y: 452 + i * 14.5, class: "mono", fill: hl[l] || color }, conLines, l)); }
 function chips(p, u) {
-  chipLayer.replaceChildren();
-  const now = p + u;
-  const shown = CHIPS.filter((c) => c.p < 0 || now >= c.p + (c.at ?? 0));
-  const last = shown.slice(-6);
+  chipLayer.replaceChildren(); const now = p + u;
+  const shown = CHIPS.filter((c) => c.p < 0 || now >= c.p + (c.at ?? 0)), last = shown.slice(-8);
   last.forEach((c, i) => {
-    const age = c.p < 0 ? 9 : now - (c.p + (c.at ?? 0));
-    const a = clamp(age / 0.18);
-    const y = 272 - (last.length - i) * 25;
-    const [bg, fg] = CHIP_STYLE[c.kind];
+    const age = c.p < 0 ? 9 : now - (c.p + (c.at ?? 0)), a = clamp(age / 0.18), y = 378 - (last.length - i) * 28, [bg, fg] = CHIP_STYLE[c.kind];
     const g = el("g", { transform: `translate(${(1 - ease(a)) * 24},0)`, opacity: a }, chipLayer);
-    el("rect", { x: 282, y, width: 226, height: 20, rx: 4, fill: bg, ...(a < 1 ? { stroke: fg } : {}) }, g);
-    el("text", { x: 291, y: y + 14, style: `font-size:11px;fill:${fg};font-weight:${c.kind === "base" ? 400 : 600}` }, g, c.text);
+    el("rect", { x: 292, y, width: 226, height: 22, rx: 11, fill: bg, ...(a < 1 ? { stroke: fg } : {}) }, g);
+    el("text", { x: 303, y: y + 15, style: `font-size:11px;fill:${fg};font-weight:${c.kind === "base" ? 500 : 700}` }, g, c.text);
   });
 }
+const ASK = (on) => { if (on) { setOn("p1", true, C.pink); sub("p1", ["1 question waiting on you"], C.pink); } };
 
 window.render = function render(t) {
-  const total = PHASE * PHASES.length;
-  t = ((t % total) + total) % total;
-  const p = Math.floor(t / PHASE);
-  const u = (t - p * PHASE) / PHASE;
+  const total = PHASE * PHASES.length; t = ((t % total) + total) % total;
+  const p = Math.floor(t / PHASE), u = (t - p * PHASE) / PHASE;
   layers.dots.replaceChildren();
-  for (const id of Object.keys(boxes)) setOn(id, false);
+  for (const id of Object.keys(boxes)) { setOn(id, false); if (id !== "seat") sub(id, null); }
   for (const id of Object.keys(edges)) edgeOn(id, false);
-  badge.setAttribute("opacity", 0);
-  stopR.setAttribute("fill", "none");
-  stopT.setAttribute("fill", C.red);
-  stopT.textContent = "Stop";
-  boxes.p1.ss[0].textContent = "questions · live turns · Stop";
-  boxes.p1.ss[0].setAttribute("style", "");
-  seatText(["one per lane, staffed from the role library;", "grants come only from the permission catalog"]);
+  badge.setAttribute("opacity", 0); stopR.setAttribute("fill", "none"); stopT.setAttribute("fill", C.red);
+  seatText(["one per lane, staffed from the role library; grants come only from the permission catalog;", "judges, reviewers and the conductor never share a model with the work they judge"]);
   consoleText(["(no turn running on this PC)"], C.ink3);
-
   switch (p) {
     case 0:
-      setOn("wake", true); setOn("log", true);
-      flow("log_wake", u);
+      setOn("jira", true, C.orange); sub("jira", ["ORION-1427 · P1 bug · EU checkout"], C.orange);
+      flow("jira_log", u, C.orange); if (u > 0.45) { setOn("rules", true, C.orange); sub("rules", ["playbook jira-bug:", "triage, logs ∥ code,", "diagnose, reply"], C.orange); }
       break;
     case 1:
-      setOn("rules", true); setOn("log", true);
-      flow("wake_rules", clamp(u * 2.2));
-      if (u > 0.05) flow("rules_log", clamp((u - 0.05) * 1.6), C.amber);
-      if (u > 0.55) { setOn("p1", true, C.amber); flow("p1_log", clamp((u - 0.55) * 2.4), C.amber, true); boxes.p1.ss[0].textContent = "1 question waiting on you"; boxes.p1.ss[0].setAttribute("style", `fill:${C.amber};font-weight:650`); }
+      setOn("log", true); setOn("wake", true); flow("log_wake", u); if (u > 0.3) { setOn("probe", true, C.orange); flow("probe_log", clamp((u - 0.3) * 1.6), C.orange); }
       break;
     case 2:
-      setOn("log", true);
-      ["p1", "p2", "p3"].forEach((id, i) => {
-        const v = clamp(u * 1.4 - i * 0.12);
-        if (v > 0) { setOn(id, true, C.accent); flow(`${id}_log`, v, C.accent); }
-      });
+      setOn("rules", true); setOn("log", true); flow("wake_rules", clamp(u * 2.2));
+      if (u > 0.08) flow("rules_log", clamp((u - 0.08) * 1.6), C.pink);
+      if (u > 0.5) { ASK(true); flow("p1_log", clamp((u - 0.5) * 2.2), C.pink, true); }
       break;
     case 3:
-      setOn("select", true); setOn("rules", true);
-      flow("rules_select", u);
-      seatText(["picked: build · “launch screen” (P1, tests A2)", "waiting: playtest (on a person) · deploy (after build)"], [C.ink, C.ink2]);
+      setOn("log", true);
+      ["p1", "p2", "p3"].forEach((id, i) => { const v = clamp(u * 1.4 - i * 0.12); if (v > 0) { setOn(id, true, C.pink); flow(`${id}_log`, v, C.pink); } });
+      sub("p1", ["Send · from now on"], C.pink);
       break;
     case 4: {
-      setOn("router", true); setOn("seat", true);
-      const k = Math.min(4, Math.floor(u * 5));
-      const v = u * 5 - k;
-      const c = CLI[k];
-      setOn(c.id, true, c.color);
-      flow(`route_${c.id}`, clamp(v * 1.3), c.color);
+      setOn("select", true); setOn("router", true); setOn("seat", true); flow("rules_select", clamp(u * 3)); flow("select_router", clamp(u * 3 - 0.4));
+      const k = Math.min(4, Math.floor(u * 5)), v = u * 5 - k, c = CLI[k];
+      setOn(c.id, true, c.color); flow(`route_${c.id}`, clamp(v * 1.3), c.color);
       seatText([`seat: ${ROUTES[k][0]} · ${ROUTES[k][1]}`, `grant: ${ROUTES[k][2]}`], [C.ink, C.ink2]);
       break;
     }
     case 5: {
-      setOn("pi", true, CLI[3].color); setOn("wt", true, CLI[3].color); setOn("console", true, CLI[3].color);
-      flow("down_pi", clamp(u * 2), CLI[3].color);
-      if (u > 0.15) flow("wt_console", ((u - 0.15) * 3) % 1, CLI[3].color, false, 2);
-      seatText(["handoff packet: goal · beliefs · the todo · write scope", "· what memory says about the people it serves"]);
-      const n = Math.max(1, Math.floor(u * (PI_LOG.length + 2)));
-      consoleText(PI_LOG.slice(0, n), C.ink, { "  ✗ only these commands, one": C.red, "    at a time": C.red, "result: done": C.green });
+      const c = CLI[0]; setOn(c.id, true, c.color); setOn("wt", true, c.color); setOn("console", true, c.color);
+      flow("down_copilot", clamp(u * 2), c.color); if (u > 0.15) flow("wt_console", ((u - 0.15) * 3) % 1, c.color, false, 2);
+      seatText(["the packet: the goal, what's believed, the todo, its write scope, the checks it must pass,", "the commands its seat may run, and the logs excerpt the job saved"]);
+      consoleText(TURN_LOG.slice(0, Math.max(1, Math.floor(u * (TURN_LOG.length + 2)))), C.ink, { "  ✗ 1 failing (the new test)": C.red, "  ✓ passes without it": C.green, "result: done": C.green });
       break;
     }
     case 6:
       setOn("wt", true); setOn("validate", true, C.green); setOn("merge", true, C.green); setOn("log", true);
-      flow("wt_validate", clamp(u * 3), C.green);
-      if (u > 0.2) flow("validate_merge", clamp((u - 0.2) * 3), C.green);
-      if (u > 0.3) flow("merge_log", clamp((u - 0.3) * 1.5), C.green, false, 4);
-      consoleText([...PI_LOG.slice(-3), "--- completed (substantive)"], C.ink3, { "--- completed (substantive)": C.green });
+      flow("wt_validate", clamp(u * 3), C.green); if (u > 0.25) flow("validate_merge", clamp((u - 0.25) * 3), C.green);
+      consoleText([...TURN_LOG.slice(-3), "--- completed (substantive)"], C.ink3, { "--- completed (substantive)": C.green });
       break;
     case 7:
-      setOn("claude", true, C.amber); setOn("select", true); setOn("router", true); setOn("log", true);
-      badge.setAttribute("opacity", clamp(u * 4));
-      setOn("copilot", true, CLI[0].color); setOn("wt", true, CLI[0].color); setOn("console", true, CLI[0].color);
-      flow("route_copilot", (u * 1.6) % 1, CLI[0].color, false, 2);
-      seatText(["judge seats on model-b (Claude) wait until 06:00;", "builders on Copilot carry on · no failure, no budget spent"], [C.amber, C.ink2]);
-      consoleText(COPILOT_LOG.slice(0, Math.max(1, Math.floor(u * (COPILOT_LOG.length + 1)))), C.ink);
+      setOn("conductor", true, C.violet); setOn("claude", true, CLI[1].color); setOn("console", true, C.violet);
+      flow("merge_conductor", clamp(u * 3), C.violet); if (u > 0.5) { setOn("log", true); flow("conductor_log", clamp((u - 0.5) * 2), C.violet, false, 4); }
+      seatText(["the work waits in review; what depends on it doesn't start until the conductor accepts", "it reads a fresh checkout, with read access only; one redirect per todo by default"], [C.violet, C.ink2]);
+      consoleText(CONDUCT_LOG.slice(0, Math.max(1, Math.floor(u * (CONDUCT_LOG.length + 1)))), C.ink, { "verdict: accept": C.violet });
       break;
-    case 8: {
-      setOn("codex", true, CLI[2].color); setOn("console", true, C.red); setOn("log", true);
-      const pressed = u > 0.2;
-      setOn("wt", true, pressed ? C.red : CLI[2].color);
-      if (pressed) { stopR.setAttribute("fill", C.red); stopT.setAttribute("fill", "#fff"); flow("wt_console", clamp((u - 0.2) * 3), C.red, true, 2); }
-      const n = pressed ? STOP_LOG.length - (u > 0.45 ? 0 : 1) - (u > 0.3 ? 0 : 1) : 4;
-      consoleText(STOP_LOG.slice(0, n), C.ink, { "stop requested by the partner": C.red, "--- stopped by the partner": C.red });
-      if (u > 0.7) { setOn("p1", true, C.amber); flow("p1_log", clamp((u - 0.7) * 3.5), C.amber, true); boxes.p1.ss[0].textContent = "1 question waiting on you"; boxes.p1.ss[0].setAttribute("style", `fill:${C.amber};font-weight:650`); }
+    case 8:
+      setOn("pr", true, C.green); setOn("conductor", true, C.violet); flow("out_pr", u, C.green, false, 4);
+      sub("pr", ["PR #2318 · unit ✓ e2e ✓ review ✓", "waiting for your approval"], C.green);
+      if (u > 0.55) { ASK(true); sub("p1", ["Approve PR #2318?"], C.pink); }
+      break;
+    case 9:
+      setOn("reply", true, C.green); flow("out_reply", clamp(u * 1.6), C.green, false, 2);
+      sub("reply", ["“Fixed in today's release.", "Sorry for the trouble.” · sent"], C.green);
+      if (u > 0.4) { setOn("prod", true, C.green); flow("out_prod", clamp((u - 0.4) * 2), C.green, false, 2); sub("prod", ["checkout-api · 5xx back to normal"], C.green); }
+      break;
+    case 10: {
+      setOn("claude", true, C.orange); badge.setAttribute("opacity", clamp(u * 4));
+      const pressed = u > 0.45; setOn("codex", true, CLI[2].color); setOn("console", true, pressed ? C.red : CLI[2].color); setOn("wt", true, pressed ? C.red : CLI[2].color);
+      seatText(["seats on Claude wait until 06:00; seats on other vendors carry on", "no failure, no budget spent · a stopped turn counts as spent, never as a failure"], [C.orange, C.ink2]);
+      if (pressed) { stopR.setAttribute("fill", C.red); stopT.setAttribute("fill", "#fff"); flow("wt_console", clamp((u - 0.45) * 3), C.red, true, 2); }
+      consoleText(STOP_LOG.slice(0, pressed ? STOP_LOG.length : 4), C.ink, { "stop requested by you": C.red, "--- stopped": C.red });
+      if (u > 0.75) { ASK(true); sub("p1", ["Try it again, or drop it?"], C.pink); }
       break;
     }
   }
   chips(p, u);
-  capNum.textContent = `${p + 1}`;
-  capText.textContent = PHASES[p];
-  pips.forEach((c, i) => c.setAttribute("fill", i === p ? "#f3d27a" : "#5b636a"));
+  capNum.textContent = `${p + 1}`; capText.textContent = PHASES[p];
+  pips.forEach((c, i) => c.setAttribute("fill", i === p ? "#ffbe00" : "#5d6b88"));
 };
 window.TOTAL = PHASE * PHASES.length;
 render(0);
-// Opened in a browser it plays by itself; the GIF maker opens it with ?capture and steps it.
 if (!new URLSearchParams(location.search).has("capture")) {
   const t0 = performance.now();
   const tick = (now) => { render((now - t0) / 1000); requestAnimationFrame(tick); };

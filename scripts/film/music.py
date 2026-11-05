@@ -82,6 +82,7 @@ for i, at in enumerate([27.2, 28.0, 28.8]): add(tone([79, 83, 86][i], .35, 9, .1
 add(riser(2.0, .32), 28.0)
 for k in range(16): add(clap(), 29.0 + 1.0 * (1 - (1 - k / 16) ** 1.6), g=.08 + .18 * k / 16)
 add(BIG, 30.0); add(CRASH * .25, 30.0); add(clap(), 30.0, g=.6); add(kick(1.1), 30.0)
+add(tone(84, .4, 8, .07), 30.85); add(tone(88, .4, 8, .05), 30.95)  # the 'fixed' reply goes out
 add(whoosh(1.6, .3), 31.8); add(shimmer(.9), 33.0); add(shimmer(.8), 36.4)
 for s in SPARKS: add(tone(int(88 + rng.integers(0, 6)), .15, 22, .035), s, pan=float(rng.uniform(-.7, .7)))
 

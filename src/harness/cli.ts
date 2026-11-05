@@ -38,7 +38,7 @@ import { VENDOR_DEFAULTS } from "./vendors.ts";
 import type { Problem } from "./preflight.ts";
 import { holds, modelsOf, preflight } from "./preflight.ts";
 import { Harness } from "./harness.ts";
-import { escalationReport, worthAsking } from "./escalation.ts";
+import { conductorReport, escalationReport, worthAsking } from "./escalation.ts";
 import { buildPacket } from "./packet.ts";
 import { beliefs, loadPolicy, seatPermissions } from "./project.ts";
 import { blockers, phase } from "./select.ts";
@@ -447,6 +447,59 @@ async function main(): Promise<void> {
       for (const r of eventSummary(s)) console.log(`${r.source.padEnd(16)} ${r.type.padEnd(14)} ${r.received} in, ${r.routed} became work or evidence, ${r.waiting} waiting for room, ${r.unmatched} matched no rule`);
       return;
     }
+    case "playbooks": {
+      // The numbers per playbook and service, from the log alone.
+      const h = await harness(currentEngagement());
+      const { draftPlaybook, planRuns, playbookStats } = await import("./retro.ts");
+      if (rest[0] === "draft") {
+        if (!rest[1]) throw new Error("usage: playbooks draft <kind>");
+        const pb = draftPlaybook(await h.state(), rest[1]);
+        if (!pb) throw new Error(`no drafted plan of kind ${rest[1]}`);
+        console.log(JSON.stringify(pb, null, 2));
+        return;
+      }
+      const st = await h.state();
+      for (const [kind, r] of planRuns(st)) console.log(`plan on probation: ${kind}, ${r.runs.filter((x) => x.finished).length} finished, ${r.runs.filter((x) => x.finished && x.clean).length} clean`);
+      const rows = playbookStats(st);
+      if (!rows.length) console.log("no playbook runs yet (docs/jira-bugs.md)");
+      for (const r of rows) {
+        console.log(`## ${r.playbook} · ${r.service}: ${r.tickets} ticket(s), ${r.followUps} follow-up round(s), ${r.closed} looked back on`);
+        console.log(`outcomes: ${Object.entries(r.outcomes).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ") || "-"}`);
+        console.log(`replies: ${r.replies.sent} sent, ${r.replies.rewritten} rewritten by you, ${r.replies.held} held · lessons: ${r.lessons.kept} kept of ${r.lessons.proposed} proposed`);
+        for (const x of r.steps) console.log(`  ${x.step.padEnd(14)} done ${String(x.done).padStart(3)} · median ${x.medianMinutes === null ? "-" : `${x.medianMinutes} min`}${x.conducted ? ` · conductor sent back ${x.sentBack} of ${x.conducted}` : ""}`);
+      }
+      return;
+    }
+    case "facts": {
+      // What the playbooks have learned about each service, and confirming it.
+      const h = await harness(currentEngagement());
+      if (rest[0] === "confirm") {
+        if (!rest[1] || !rest[2]) throw new Error("usage: facts confirm <service> <subject>");
+        console.log((await h.confirmFact(rest[1], rest[2], flag("by", "partner"))) ? `confirmed: ${rest[1]} ${rest[2]}` : `${rest[1]} ${rest[2]} was already confirmed`);
+        return;
+      }
+      const s = await h.state();
+      const only = rest[0];
+      if (!s.facts.size) console.log("nothing learned yet: facts come from playbook turns (docs/jira-bugs.md)");
+      for (const [svc, m] of s.facts) {
+        if (only && svc !== only) continue;
+        for (const f of m.values()) console.log(`${svc.padEnd(16)} ${f.subject.padEnd(24)} ${f.confirmed ? "confirmed  " : "unconfirmed"} ${f.text}${f.source ? `  (${f.source})` : ""}`);
+      }
+      return;
+    }
+    case "logs": {
+      // For setting up a service: what the log job would fetch for these terms. Writes nothing.
+      if (rest[0] !== "test" || !rest[1]) throw new Error("usage: logs test <service> --terms a,b [--from <iso>] [--to <iso>]");
+      const h = await harness(currentEngagement());
+      const s = await h.state();
+      const svc = (s.engagement?.services ?? []).find((x) => x.id === rest[1]);
+      if (!svc?.logs) throw new Error(`no service ${rest[1]} with logs in the engagement (services: ${(s.engagement?.services ?? []).map((x) => x.id).join(", ") || "none"})`);
+      const { readLogs } = await import("./logs.ts");
+      const r = readLogs({ service: svc.id, ...svc.logs, terms: (flag("terms") ?? "").split(",").map((x) => x.trim()).filter(Boolean), from: flag("from"), to: flag("to") });
+      console.log(r.text);
+      console.log(`${r.matches} matching line(s) in ${r.files} file(s); ${r.lines} lines in the excerpt; nothing was written`);
+      return;
+    }
     case "standing": {
       const h = await harness(currentEngagement());
       if (rest[0] === "revoke") {
@@ -485,7 +538,8 @@ async function main(): Promise<void> {
       // How well the harness chooses when to ask you, from the log so far.
       const eng = currentEngagement();
       const h = await harness(eng);
-      const r = escalationReport(readEvents(h.control.cwd, eng), h.policy);
+      const all = readEvents(h.control.cwd, eng);
+      const r = escalationReport(all, h.policy);
       const k = h.policy.escalation?.missCostRatio ?? 10;
       const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
       const rate = (b: { n: number; followed: number }) => (b.n ? `${b.followed}/${b.n}` : "-");
@@ -497,10 +551,16 @@ async function main(): Promise<void> {
       console.log(`closed by the harness itself: ${r.autoClosed}`);
       const v = r.audits.verdicts;
       console.log(`\n## Spot checks of decisions made without asking\n${r.audits.asked} asked, ${r.audits.answered} answered: same ${v.same} · would differ ${v.would_differ} · wanted to be asked ${v.wanted_to_be_asked} · estimated miss rate ${pct(r.audits.missRate)}`);
+      const c = conductorReport(all);
+      if (c.read || h.policy.conductor) {
+        console.log(`\n## The conductor (docs/conductor.md)\nread ${c.read} finished todos, sent back ${c.sentBack} (${pct(c.read ? c.sentBack / c.read : null)})`);
+        for (const l of c.byLane) console.log(`${l.lane.padEnd(28)} read ${l.read} · sent back ${l.sentBack}`);
+        for (const b of c.recent) console.log(`- ${b.todo} (${b.lane}): ${b.note.slice(0, 200)}`);
+      }
       return;
     }
     default:
-      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | doctor | agents [install]");
+      console.log("usage: npm run harness -- open <engagement.json> | tick | loop | status | escalation | answer <ask> --choice <id> | pause | resume | budget <goal> turns=N | events | playbooks [draft <kind>] | facts | logs test <service> | doctor | agents [install]");
   }
 }
 

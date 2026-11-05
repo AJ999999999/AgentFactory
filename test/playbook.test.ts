@@ -1,0 +1,763 @@
+// Playbooks (docs/jira-bugs.md): a ticket runs as steps with a fork in the middle; the
+// harness takes the branch, asks before a reply goes out, and keeps what it learns about
+// each service as facts.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
+import { apply, loadPolicy, project } from "../src/harness/project.ts";
+import type { HarnessPolicy, State } from "../src/harness/project.ts";
+import { settle } from "../src/harness/rules.ts";
+import { validateTurn } from "../src/harness/validate.ts";
+import type { TurnOutput } from "../src/harness/validate.ts";
+import { criteriaHash } from "../src/harness/validate.ts";
+import { buildPacket } from "../src/harness/packet.ts";
+import { ScriptedTurnAgent, turnPrompt } from "../src/harness/agents.ts";
+import type { Behavior } from "../src/harness/agents.ts";
+import { cannotStand } from "../src/harness/standing.ts";
+import { factLines, playbookProblems } from "../src/harness/playbook.ts";
+import { playbookStats } from "../src/harness/retro.ts";
+import type { Playbook } from "../src/harness/playbook.ts";
+import { readLogs } from "../src/harness/logs.ts";
+import { JiraWriter, adf } from "../src/harness/jira.ts";
+import { jiraIssueToEvent, receiveEvent } from "../src/harness/events.ts";
+import type { OutsideEvent } from "../src/harness/events.ts";
+import { Sim } from "../src/harness/sim.ts";
+import { builtinCheck, splitCommand } from "../src/harness/checks.ts";
+import type { RunTests } from "../src/harness/checks.ts";
+import type { JobProvider } from "../src/harness/world.ts";
+import type { EngagementDef, GoalDef, HEvent, ServiceDef } from "../src/harness/types.ts";
+
+const full = loadPolicy(path.join(import.meta.dirname, "..", "policy", "harness.json"));
+const policy: HarnessPolicy = { ...full, team: undefined };
+const T0 = Date.parse("2026-11-04T09:00:00Z");
+const DAY = 86_400_000;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-"));
+let seq = 0;
+
+const services: ServiceDef[] = [
+  { id: "payments", names: ["PayAPI"], dir: "payments", logs: { kind: "files", where: path.join(tmp, "logs", "pay-*.log"), notes: "UTC" }, sample: "samples/pay.log", build: "dotnet build", test: "dotnet test" },
+  { id: "orders", dir: "orders" },
+];
+const source = { id: "jira", kind: "jira" as const, url: "https://jira.example.com", jql: "project = PAY", tokenEnv: "AF_JIRA_TOKEN", statuses: { routed: "In Progress", replied: "Waiting for customer" } };
+const goalDef = (g: Partial<GoalDef> & { id: string }): GoalDef => ({ title: g.id, objective: "answer tickets", owner: "partner", scope: [g.id], assumptions: [], budget: { turnsPerWeek: 50, turns: 500 }, perpetual: true, ...g });
+const goalEvent = (g: GoalDef): HEvent => ({ id: `goal-${g.id}`, at: T0, by: "partner", type: "goal_opened", goal: g, criteriaHash: criteriaHash(g) });
+const engagement: HEvent = {
+  id: "open", at: T0, by: "partner", type: "engagement_opened",
+  engagement: { id: "e", title: "Support", principals: { partner: "you" }, services, events: { sources: [source], rules: [{ id: "bugs", match: { source: "jira", types: ["bug"] }, goal: "intake", playbook: "jira-bug" }] } },
+};
+const ticket = (id = "PAY-1", updated = "2026-11-04T08:00:00Z"): OutsideEvent => ({ source: "jira", id, type: "bug", updated, title: "Refund button does nothing", status: "Open", url: `https://jira.example.com/browse/${id}`, text: "User u-4417 clicked refund on order 9001 at 10:02 and nothing happened." });
+
+function st(p: HarnessPolicy = policy, ...extra: HEvent[]): State {
+  const s = project([engagement, goalEvent(goalDef({ id: "intake", scope: ["intake"] })), goalEvent(goalDef({ id: "pay", service: "payments", scope: ["payments"] })), ...extra], p);
+  for (const e of settle(s, T0)) apply(s, e);
+  return s;
+}
+function receive(s: State, e: OutsideEvent, at = T0 + 1000) {
+  for (const x of receiveEvent(s, e, at)) apply(s, x);
+  for (const x of settle(s, at)) apply(s, x);
+}
+function finish(s: State, todoId: string, output: TurnOutput, files: string[] = []): HEvent[] {
+  const turn = `turn-${++seq}`;
+  const at = T0 + 10_000 + seq * 1000;
+  const v = validateTurn({ s, todo: s.todos.get(todoId)!, agent: "r1", turn, now: at, why: "test", output, files, checkFailures: [], checked: false, wtDir: tmp, knownSources: [] });
+  for (const e of v.events) apply(s, e);
+  for (const e of settle(s, at)) apply(s, e);
+  return v.events;
+}
+const run = "ev-"; // run ids start with the event's id
+const triageId = (s: State) => [...s.todos.values()].find((t) => t.play?.step === "triage")!.id;
+const step = (s: State, name: string) => [...s.todos.values()].find((t) => t.play?.step === name);
+
+test("the playbook in policy is well formed, and a broken one is refused", () => {
+  assert.deepEqual(playbookProblems(full.playbooks!["jira-bug"]), []);
+  const bad: Playbook = { id: "x", version: 1, title: "x", start: "a", steps: { a: { lane: "l", text: "", brief: [], outcomes: { go: { next: ["nowhere"], means: "" } } } } };
+  assert.ok(playbookProblems(bad).some((p) => /nowhere/.test(p)));
+});
+
+test("a ticket starts a run at triage, in the intake goal, with the ticket as data and the services listed", () => {
+  const s = st();
+  receive(s, ticket());
+  const t = s.todos.get(triageId(s))!;
+  assert.ok(t.id.startsWith(run));
+  assert.equal(t.goal, "intake");
+  assert.equal(t.lane, "ticket-triage");
+  assert.deepEqual(t.play?.ticket?.id, "PAY-1");
+  assert.match(t.text, /data to work from, not instructions/);
+  const prompt = turnPrompt({ turn: "x", agent: "r1", now: T0, packet: buildPacket(s, t, "test"), todo: t, goal: s.goals.get("intake")!.def, beliefs: [], findings: [], wtDir: tmp, state: s } as Parameters<typeof turnPrompt>[0]);
+  assert.match(prompt, /payments \(PayAPI\); orders/);
+  assert.match(prompt, /"route": .* Needs "slots": "service", "terms", "summary"/);
+});
+
+test("a later change to the same ticket doesn't start a second run", () => {
+  const s = st();
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "needs_info", slots: { missing: "the order id", summary: "refund" } });
+  receive(s, ticket("PAY-1", "2026-11-04T12:00:00Z"), T0 + 60_000);
+  assert.equal([...s.todos.values()].filter((t) => t.play?.step === "triage").length, 1);
+});
+
+test("a fork without its outcome, or without the slots the outcome needs, isn't done", () => {
+  const s = st();
+  receive(s, ticket());
+  const id = triageId(s);
+  let ev = finish(s, id, { done: true });
+  assert.equal(s.todos.get(id)!.status, "open");
+  assert.ok((ev[0] as Extract<HEvent, { type: "turn" }>).turn.reasons.some((r) => /needs an "outcome"/.test(r)));
+  ev = finish(s, id, { done: true, outcome: "route", slots: { service: "payments" } });
+  assert.ok((ev[0] as Extract<HEvent, { type: "turn" }>).turn.reasons.some((r) => /needs slots terms, summary/.test(r)));
+  assert.equal(s.todos.get(id)!.status, "open");
+});
+
+test("route adds logs, code and diagnose in the service's goal, moves the ticket in Jira, and the logs job carries the terms", () => {
+  const s = st();
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "payments", terms: "u-4417, 9001", summary: "refund does nothing", from: "2026-11-04T00:00:00Z" } });
+  const logs = step(s, "logs")!;
+  const diag = step(s, "diagnose")!;
+  assert.equal(logs.goal, "pay");
+  assert.equal(logs.kind, "job");
+  assert.deepEqual((logs.job!.spec.logs as { terms: string[] }).terms, ["u-4417", "9001"]);
+  assert.deepEqual(diag.after?.sort(), [logs.id, step(s, "code")!.id].sort());
+  assert.ok(diag.conduct, "the conductor reads the diagnosis");
+  const moved = [...s.todos.values()].find((t) => t.job?.spec?.jira)!;
+  assert.equal((moved.job!.spec.jira as { transition: string }).transition, "In Progress");
+});
+
+test("a service triage can't place becomes a question; the partner's choice routes it", () => {
+  const s = st();
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "billing", terms: "x", summary: "s" } });
+  const a = [...s.asks.values()].find((x) => x.origin === "rule:play_service")!;
+  assert.ok(a.options.some((o) => o.id === "payments"));
+  assert.equal(step(s, "logs"), undefined);
+  apply(s, { id: "ans", at: T0 + 90_000, by: "partner", type: "ask_answered", ask: a.id, answeredBy: "partner", choice: "payments" });
+  for (const e of settle(s, T0 + 90_000)) apply(s, e);
+  assert.equal(step(s, "logs")!.goal, "pay");
+});
+
+test("the diagnosis's branch waits for the conductor; a user_error reply is always the partner's, and is sent once they say so", () => {
+  const s = st();
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } });
+  const diag = step(s, "diagnose")!;
+  finish(s, diag.id, { done: true, outcome: "user_error", slots: { summary: "the order was already refunded", how: "check the order's history first" } });
+  assert.equal(s.todos.get(diag.id)!.status, "review");
+  assert.equal(step(s, "reply"), undefined, "no branch before the conductor accepts");
+  const c = [...s.todos.values()].find((t) => t.conducts === diag.id)!;
+  finish(s, c.id, { done: true, verdict: "accept" });
+  const reply = step(s, "reply")!;
+  assert.match(turnPrompt({ turn: "x", agent: "r1", now: T0, packet: "", todo: reply, goal: s.goals.get("pay")!.def, beliefs: [], findings: [], wtDir: tmp, state: s } as Parameters<typeof turnPrompt>[0]), /already refunded.*check the order's history/s);
+  finish(s, reply.id, { done: true, reply: { text: "Hi! That order was refunded on the 2nd; you'll find it under History." } });
+  const ask = [...s.asks.values()].find((x) => x.origin === "rule:jira_reply_user_error")!;
+  assert.match(ask.question, /refunded on the 2nd/);
+  assert.match(cannotStand(s, ask, "send") ?? "", /always yours/);
+  assert.equal([...s.todos.values()].filter((t) => t.job?.spec?.jira && (t.job.spec.jira as { comment?: string }).comment).length, 0);
+  apply(s, { id: "ans-send", at: T0 + 200_000, by: "partner", type: "ask_answered", ask: ask.id, answeredBy: "partner", choice: "edit", note: "Hi! Your refund went through on the 2nd: see History." });
+  for (const e of settle(s, T0 + 200_000)) apply(s, e);
+  const send = [...s.todos.values()].find((t) => (t.job?.spec?.jira as { comment?: string } | undefined)?.comment)!;
+  assert.deepEqual(send.job!.spec.jira, { source: "jira", url: source.url, tokenEnv: "AF_JIRA_TOKEN", ticket: "PAY-1", comment: "Hi! Your refund went through on the 2nd: see History.", transition: "Waiting for customer" });
+});
+
+test("a duplicate's reply may go out by a standing answer; facts are kept by subject, newest first, and rechecked after the playbook changes", () => {
+  const s = st();
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "duplicate", slots: { duplicate_of: "PAY-0", summary: "same" } });
+  finish(s, step(s, "reply")!.id, { done: true, reply: { text: "Same as PAY-0." } });
+  const ask = [...s.asks.values()].find((x) => x.origin === "rule:jira_reply")!;
+  assert.equal(cannotStand(s, ask, "send"), undefined);
+
+  const pay = st();
+  receive(pay, ticket());
+  finish(pay, triageId(pay), { done: true, outcome: "route", slots: { service: "payments", terms: "u", summary: "s" } });
+  const code = step(pay, "code")!;
+  finish(pay, code.id, { done: false, facts: [{ subject: "code.refunds", text: "RefundService.cs" }] });
+  finish(pay, code.id, { done: true, facts: [{ subject: "code.refunds", text: "Refunds/RefundService.cs, method Issue" }] });
+  assert.deepEqual(factLines(pay, "payments"), ["Known about payments (unconfirmed): code.refunds: Refunds/RefundService.cs, method Issue"]);
+  assert.match(buildPacket(pay, step(pay, "diagnose")!, "test"), /Known about payments/);
+  const bumped = { ...pay, policy: { ...pay.policy, playbooks: { "jira-bug": { ...pay.policy.playbooks!["jira-bug"], version: pay.policy.playbooks!["jira-bug"].version + 1 } } } };
+  assert.match(factLines(bumped, "payments")[0], /older playbook: recheck/);
+  // Facts are about a service: a turn in a goal with none can't record one.
+  const ev = finish(pay, triageId(pay), { done: false, facts: [{ subject: "x.y", text: "z" }] });
+  assert.ok((ev[0] as Extract<HEvent, { type: "turn" }>).turn.reasons.some((r) => /facts are about a service/.test(r)));
+});
+
+test("each service goal gets one first look, and none once it has facts", () => {
+  const s = st();
+  const onboard = [...s.todos.values()].filter((t) => t.play?.step === "onboard");
+  assert.deepEqual(onboard.map((t) => t.goal), ["pay"]);
+  assert.match(onboard[0].text, /First look at payments/);
+});
+
+test("the log excerpt is the lines around the ticket's terms, cut to fit; without terms, the newest file's end", () => {
+  const dir = path.join(tmp, "logs-read");
+  fs.mkdirSync(dir, { recursive: true });
+  const lines = Array.from({ length: 400 }, (_, i) => (i === 200 ? "2026-11-04 10:02:11Z ERROR refund failed user=u-4417 order=9001" : i > 200 && i < 204 ? `   at Refunds.Issue() line ${i}` : `2026-11-04 info line ${i}`));
+  fs.writeFileSync(path.join(dir, "pay-2026-11-04.log"), lines.join("\n"));
+  fs.writeFileSync(path.join(dir, "other.txt"), "u-4417 not a log");
+  const r = readLogs({ service: "payments", where: path.join(dir, "pay-*.log"), terms: ["U-4417"] });
+  assert.equal(r.matches, 1);
+  assert.match(r.text, /201: 2026-11-04 10:02:11Z ERROR refund failed/);
+  assert.match(r.text, /at Refunds\.Issue\(\) line 203/, "the stack trace after it");
+  assert.doesNotMatch(r.text, /not a log/);
+  const tail = readLogs({ service: "payments", where: path.join(dir, "pay-*.log") }, { maxLines: 20 });
+  assert.equal(tail.lines, 20);
+  assert.throws(() => readLogs({ service: "x", where: path.join(tmp, "nope", "*.log") }), /no folder/);
+});
+
+test("Jira write-back: a comment then a move; a status Jira doesn't offer is noted, and the comment isn't sent twice", async () => {
+  const calls: Array<{ url: string; method?: string; body?: string; auth: string }> = [];
+  const offers = [{ id: "21", name: "Wait", to: { name: "Waiting for customer" } }];
+  const fake = async (url: string, init: { method?: string; headers: Record<string, string>; body?: string }) => {
+    calls.push({ url, method: init.method, body: init.body, auth: init.headers.Authorization });
+    const json = url.endsWith("/transitions") && init.method === "GET" ? { transitions: offers } : {};
+    return { ok: true, status: 200, json: async () => json, text: async () => "" };
+  };
+  const w = new JiraWriter({ env: { AF_JIRA_TOKEN: "tok" }, fetch: fake });
+  const todo = (jira: Record<string, unknown>) => ({ id: "j", job: { spec: { jira: { source: "jira", url: "https://jira.example.com", tokenEnv: "AF_JIRA_TOKEN", ticket: "PAY-1", ...jira } } } }) as never;
+  let out = await w.poll(await w.start(todo({ comment: "Hi", transition: "Waiting for customer" }), T0), T0);
+  assert.equal(out.status, "succeeded");
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url.replace("https://jira.example.com", "")}`), ["POST /rest/api/2/issue/PAY-1/comment", "GET /rest/api/2/issue/PAY-1/transitions", "POST /rest/api/2/issue/PAY-1/transitions"]);
+  assert.equal(calls[0].auth, "Bearer tok");
+  assert.deepEqual(JSON.parse(calls[2].body!), { transition: { id: "21" } });
+  calls.length = 0;
+  out = await w.poll(await w.start(todo({ comment: "Hi", transition: "Resolved" }), T0), T0);
+  assert.equal(out.status, "succeeded", "the comment went out: never send it twice");
+  assert.match((out as { note: string }).note, /no transition to "Resolved" \(Jira offers: Waiting for customer\)/);
+  calls.length = 0;
+  const cloud = new JiraWriter({ env: { AF_JIRA_TOKEN: "tok" }, fetch: fake });
+  await cloud.poll(await cloud.start(todo({ cloud: { email: "bot@x.com" }, comment: "One.\n\nTwo." }), T0), T0);
+  assert.match(calls[0].url, /\/rest\/api\/3\/issue\/PAY-1\/comment$/);
+  assert.match(calls[0].auth, /^Basic /);
+  assert.deepEqual(JSON.parse(calls[0].body!).body, adf("One.\n\nTwo."));
+  const none = new JiraWriter({ env: {}, fetch: fake });
+  assert.equal((await none.poll(await none.start(todo({ comment: "Hi" }), T0), T0)).status, "failed");
+});
+
+// ---------- through real git and real ticks ----------
+
+test("end to end: a ticket is triaged, its logs fetched and read, diagnosed as the user's mistake, and the reply you approve is posted on it", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-e2e-"));
+  // Apart from the sim's own folder, which it clears when it starts.
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-logs-"));
+  fs.writeFileSync(path.join(logDir, "pay-2026-11-04.log"), ["10:01 info start", "10:02 WARN refund skipped: already refunded order=9001 user=u-4417", "10:03 info done"].join("\n"));
+  const posted: Array<{ url: string; method?: string; body?: string }> = [];
+  const jira = new JiraWriter({ env: { AF_JIRA_TOKEN: "tok" }, fetch: async (url, init) => {
+    posted.push({ url, method: init.method, body: init.body });
+    return { ok: true, status: 200, json: async () => ({ transitions: [{ id: "5", name: "Start", to: { name: "In Progress" } }, { id: "7", name: "Wait", to: { name: "Waiting for customer" } }] }), text: async () => "" };
+  } });
+  let delivered = false;
+  const def: EngagementDef = {
+    id: "support", title: "Support", principals: { partner: "you" },
+    services: [{ id: "payments", names: ["PayAPI"], dir: "payments", logs: { kind: "files", where: path.join(logDir, "pay-*.log"), notes: "times are UTC" }, sample: "samples/pay.log" }],
+    events: { sources: [source], rules: [{ id: "bugs", match: { source: "jira", types: ["bug"] }, goal: "intake", playbook: "jira-bug" }] },
+    goals: [goalDef({ id: "intake", scope: ["intake"] }), goalDef({ id: "pay", service: "payments", scope: ["payments"] })],
+  };
+  const read: Record<string, string> = {};
+  const lane = (l: string, run: Behavior["run"]): Behavior => ({ name: l, when: (c) => c.todo.lane === l, run });
+  const agent = new ScriptedTurnAgent([
+    { name: "onboard", when: (c) => c.todo.play?.step === "onboard", run: () => ({ done: true, facts: [{ subject: "logs.format", text: "HH:MM LEVEL message key=value", source: "repo:samples/pay.log" }] }) },
+    lane("ticket-triage", () => ({ done: true, outcome: "route", slots: { service: "payments", terms: "u-4417,9001", summary: "refund button does nothing" } })),
+    lane("research", () => ({ done: true, note: "Refunds are issued in payments/Refunds.cs; a second refund is skipped on purpose." })),
+    lane("diagnose", (c) => {
+      read.logs = fs.readFileSync(path.join(c.wtDir, ".agents", "harness", "support", "logs", `${c.todo.play!.run}.log`), "utf8");
+      read.packet = c.packet;
+      return { done: true, outcome: "user_error", slots: { summary: "order 9001 was already refunded", how: "look under History: the refund is there" } };
+    }),
+    lane("conduct", () => ({ done: true, verdict: "accept" })),
+    lane("support", () => ({ done: true, reply: { text: "Hi! Order 9001 was already refunded; you'll see it under History." } })),
+  ]);
+  const sim = await Sim.create({
+    dir, def, policy: full, start: "2026-11-04T09:00:00Z", agent, runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], jira,
+    people: [{ role: "partner", answer: (a) => (a.origin === "rule:jira_reply_user_error" ? { by: "partner", choice: "send" } : a.origin === "rule:staffing" ? { by: "partner", choice: "without" } : null) }],
+    world: { events: { jira: { id: "jira", fetch: async () => (delivered ? [] : ((delivered = true), [ticket()])) } } },
+  });
+  await sim.run({ until: "2026-11-05T09:00:00Z" });
+  const s = await sim.harness.state();
+  const steps = agent.calls.map((c) => s.todos.get(c.todo)?.play?.step ?? c.lane);
+  assert.deepEqual(steps.filter((x) => x !== "onboard"), ["triage", "code", "diagnose", "conduct", "reply"]);
+  assert.match(read.logs, /2: 10:02 WARN refund skipped: already refunded order=9001/, "the diagnosis read the fetched lines");
+  assert.match(read.packet, /Known about payments \(unconfirmed\): logs.format/);
+  const comment = posted.find((p) => p.method === "POST" && p.url.endsWith("/comment"))!;
+  assert.deepEqual(JSON.parse(comment.body!), { body: "Hi! Order 9001 was already refunded; you'll see it under History." });
+  const moves = posted.filter((p) => p.method === "POST" && p.url.endsWith("/transitions")).map((p) => JSON.parse(p.body!).transition.id);
+  assert.deepEqual(moves, ["5", "7"], "In Progress when routed, Waiting for customer after the reply");
+  assert.equal(s.conducted.length, 1);
+  assert.ok([...s.todos.values()].filter((t) => t.play && t.play.step !== "close").every((t) => t.status === "done"));
+  // The look back waits until the ticket has been quiet for closeAfterDays.
+  const closes = [...s.todos.values()].filter((t) => t.play?.step === "close");
+  assert.equal(closes.length, 1, "made once the ticket was quiet, not while a reply was on its way");
+  const close = closes[0];
+  assert.equal(close.status, "open");
+  assert.ok(Date.parse(close.notBefore!) >= Date.parse("2026-11-07T09:00:00Z"));
+});
+
+// ---------- the bug branch: a failing test, the fix, its pull request, the reply ----------
+
+const shipping = (p: HarnessPolicy = policy) => {
+  const s = project([engagement, goalEvent(goalDef({ id: "intake", scope: ["intake"] })), goalEvent(goalDef({ id: "pay", service: "payments", scope: ["payments"], ship: { repo: "o/pay", dir: "payments", syncMinutes: 0 } }))], p);
+  for (const e of settle(s, T0)) apply(s, e);
+  return s;
+};
+const toBug = (s: State) => {
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } });
+  const diag = step(s, "diagnose")!;
+  finish(s, diag.id, { done: true, outcome: "bug", slots: { summary: "refunds over 100 are dropped", where: "Refunds.cs Issue()" } });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === diag.id)!.id, { done: true, verdict: "accept" });
+};
+
+test("a bug, where the service ships, gets a failing test then the fix, in the service's code; where it can't ship, only the reply", () => {
+  const s = shipping();
+  toBug(s);
+  const repro = step(s, "repro")!;
+  const fix = step(s, "fix")!;
+  assert.ok(step(s, "reply"), "the reporter hears it's confirmed");
+  assert.deepEqual(repro.writeScope, ["payments"]);
+  assert.equal(repro.check, "tests-fail");
+  assert.ok(repro.conduct, "the conductor reads the test before the fix starts");
+  assert.deepEqual(fix.after, [repro.id]);
+  assert.equal(fix.check, "tests-pass");
+
+  const plain = st();
+  toBug(plain);
+  assert.ok(step(plain, "reply"));
+  assert.equal(step(plain, "repro"), undefined);
+  assert.ok(plain.goals.get("pay")!.notes.some((n) => /no repository to ship to/.test(n.text)));
+});
+
+test("the failing test ships only with its fix: one question, one pull request carrying both, linked to the ticket", () => {
+  const s = shipping();
+  toBug(s);
+  const repro = step(s, "repro")!;
+  finish(s, repro.id, { done: true }, ["payments/tests/refund.test"]);
+  finish(s, [...s.todos.values()].find((t) => t.conducts === repro.id)!.id, { done: true, verdict: "accept" });
+  assert.equal([...s.asks.values()].filter((a) => a.origin === "rule:ship").length, 0, "the test alone isn't shipped");
+  const fix = step(s, "fix")!;
+  finish(s, fix.id, { done: true }, ["payments/Refunds.cs"]);
+  const ask = [...s.asks.values()].find((a) => a.origin === "rule:ship")!;
+  assert.equal(ask.todo, fix.id);
+  apply(s, { id: "ship-yes", at: T0 + 300_000, by: "partner", type: "ask_answered", ask: ask.id, answeredBy: "partner", choice: "approve" });
+  for (const e of settle(s, T0 + 300_000)) apply(s, e);
+  const job = [...s.todos.values()].find((t) => t.job?.spec?.ship === fix.id)!;
+  assert.deepEqual(job.job!.spec.with, [repro.id]);
+  assert.match(job.job!.spec.body as string, /For PAY-1 \(https:\/\/jira.example.com\/browse\/PAY-1\): refunds over 100 are dropped/);
+});
+
+test("tests-fail holds only when the new test fails and the starting commit passes; tests-pass runs the service's tests", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "af-check-"));
+  const g = (args: string[], cwd = repo) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  g(["init", "-q"]);
+  fs.mkdirSync(path.join(repo, "svc"));
+  fs.writeFileSync(path.join(repo, "svc", "a.txt"), "base");
+  g(["add", "-A"]);
+  g(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+  fs.writeFileSync(path.join(repo, "svc", "new.test"), "shows the bug");
+  const svc: ServiceDef = { id: "x", dir: "svc", test: "run tests" };
+  const git = async (args: string[], cwd: string) => g(args, cwd);
+  // Fails wherever the new test is, unless the base is broken too.
+  const runner = (baseBroken: boolean): RunTests => async (cwd) => ({ ok: !fs.existsSync(path.join(cwd, "new.test")) && !baseBroken, tail: "1 failed" });
+  assert.deepEqual(await builtinCheck("tests-fail", repo, svc, { timeoutMs: 1000, run: runner(false), git }), []);
+  assert.match((await builtinCheck("tests-fail", repo, svc, { timeoutMs: 1000, run: runner(true), git }))[0], /already fails on the commit you started from/);
+  assert.match((await builtinCheck("tests-fail", repo, svc, { timeoutMs: 1000, run: async () => ({ ok: true, tail: "" }), git }))[0], /doesn't show the bug/);
+  assert.match((await builtinCheck("tests-pass", repo, svc, { timeoutMs: 1000, run: runner(false), git }))[0], /run tests fails:\n1 failed/);
+  assert.match((await builtinCheck("tests-pass", repo, { id: "y" }, { timeoutMs: 1000, git }))[0], /needs the service's test command/);
+  assert.equal(g(["worktree", "list"]).trim().split("\n").length, 1, "the base checkout is gone again");
+  assert.deepEqual(splitCommand(`dotnet test "My Tests.csproj" --no-restore`), ["dotnet", "test", "My Tests.csproj", "--no-restore"]);
+});
+
+test("end to end: a bug gets its failing test, its fix and a pull request you approve; once merged, the reporter hears it's fixed and the ticket is resolved", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-fix-"));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-fixlogs-"));
+  fs.writeFileSync(path.join(logDir, "pay-1.log"), "10:02 ERROR refund dropped amount=150 user=u-4417\n");
+  const posted: Array<{ url: string; method?: string; body?: string }> = [];
+  const jira = new JiraWriter({ env: { AF_JIRA_TOKEN: "tok" }, fetch: async (url, init) => {
+    posted.push({ url, method: init.method, body: init.body });
+    return { ok: true, status: 200, json: async () => ({ transitions: [{ id: "5", to: { name: "In Progress" } }, { id: "7", to: { name: "Waiting for customer" } }, { id: "9", to: { name: "Resolved" } }] }), text: async () => "" };
+  } });
+  // GitHub, played: each pull request opens, its checks pass, and it's merged.
+  const shipped: Array<Record<string, unknown>> = [];
+  const ship: JobProvider = {
+    async start(t) { shipped.push(t.job!.spec); return t.job!.spec.watch ? "watch|x" : "gh|https://api.github.com|o/pay|7|abc|0|AF_GITHUB_TOKEN"; },
+    async poll() { return { status: "succeeded", metrics: {}, note: "pull request https://github.com/o/pay/pull/7" }; },
+  };
+  // The service's tests: they fail while the new test is there without the fix.
+  const runTests: RunTests = async (cwd) => ({ ok: !fs.existsSync(path.join(cwd, "tests", "refund.test")) || fs.existsSync(path.join(cwd, "Refunds.fixed")), tail: "Refund_over_100 failed" });
+  let delivered = false;
+  const src = { ...source, statuses: { ...source.statuses, resolved: "Resolved" } };
+  const def: EngagementDef = {
+    id: "support", title: "Support", principals: { partner: "you" },
+    services: [{ id: "payments", dir: "payments", test: "dotnet test", logs: { kind: "files", where: path.join(logDir, "pay-*.log") } }],
+    events: { sources: [src], rules: [{ id: "bugs", match: { source: "jira", types: ["bug"] }, goal: "intake", playbook: "jira-bug" }] },
+    goals: [goalDef({ id: "intake", scope: ["intake"] }), goalDef({ id: "pay", service: "payments", scope: ["payments"], ship: { repo: "o/pay", dir: "payments", syncMinutes: 0 } })],
+  };
+  const lane = (l: string, run: Behavior["run"]): Behavior => ({ name: l, when: (c) => c.todo.lane === l, run });
+  const write = (wt: string, rel: string) => { fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true }); fs.writeFileSync(path.join(wt, rel), "x"); };
+  const agent = new ScriptedTurnAgent([
+    { name: "onboard", when: (c) => c.todo.play?.step === "onboard", run: () => ({ done: true }) },
+    lane("ticket-triage", () => ({ done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } })),
+    lane("research", () => ({ done: true, note: "Refunds.cs Issue() drops amounts over 100." })),
+    lane("diagnose", () => ({ done: true, outcome: "bug", slots: { summary: "refunds over 100 are dropped", where: "Refunds.cs Issue()" } })),
+    lane("conduct", () => ({ done: true, verdict: "accept" })),
+    lane("test-design", (c) => { write(c.wtDir, "payments/tests/refund.test"); return { done: true }; }),
+    lane("build", (c) => { write(c.wtDir, "payments/Refunds.fixed"); return { done: true }; }),
+    lane("probation-review", () => ({ done: true, verdict: "accept", note: "the fix and its test match the diagnosis" })),
+    lane("support", (c) => ({ done: true, reply: { text: c.todo.id.endsWith("fixed-reply") ? "It's fixed: refunds over 100 go through now." : "Confirmed: refunds over 100 are dropped. We're fixing it." } })),
+  ]);
+  const sim = await Sim.create({
+    dir, def, policy: full, start: "2026-11-04T09:00:00Z", agent, runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], jira, ship, runTests,
+    seed: async (repo) => {
+      fs.mkdirSync(path.join(repo.cwd, "payments"), { recursive: true });
+      fs.writeFileSync(path.join(repo.cwd, "payments", "Refunds.cs"), "// refunds");
+      await repo.runAsync(["add", "-A"]);
+      await repo.commitAll("the service's code", {});
+      await repo.runAsync(["push", "-q", "origin", "HEAD:main"]);
+    },
+    people: [{ role: "partner", answer: (a) => (["rule:jira_reply", "rule:ship"].includes(a.origin) ? { by: "partner", choice: a.origin === "rule:ship" ? "approve" : "send" } : a.origin === "rule:staffing" ? { by: "partner", choice: "without" } : null) }],
+    world: { events: { jira: { id: "jira", fetch: async () => (delivered ? [] : ((delivered = true), [ticket()])) } } },
+  });
+  await sim.run({ until: "2026-11-06T09:00:00Z" });
+  const s = await sim.harness.state();
+  const steps = agent.calls.map((c) => s.todos.get(c.todo)?.play?.step ?? c.lane).filter((x) => x !== "onboard");
+  assert.deepEqual(steps, ["triage", "code", "diagnose", "conduct", "reply", "repro", "conduct", "fix", "probation-review", "fixed-reply"]);
+  const pr = shipped.find((x) => x.ship)!;
+  assert.deepEqual(pr.with, [`${triageId(s)}-repro`], "the pull request carries the failing test");
+  const comments = posted.filter((p) => p.method === "POST" && p.url.endsWith("/comment")).map((p) => JSON.parse(p.body!).body);
+  assert.deepEqual(comments, ["Confirmed: refunds over 100 are dropped. We're fixing it.", "It's fixed: refunds over 100 go through now."]);
+  const moves = posted.filter((p) => p.method === "POST" && p.url.endsWith("/transitions")).map((p) => JSON.parse(p.body!).transition.id);
+  assert.deepEqual(moves, ["5", "7", "9"], "In Progress, Waiting for customer, then Resolved after the fix merged");
+});
+
+// ---------- the reporter answers on the ticket ----------
+
+// A ticket triaged as short of information, its reply drafted, approved and sent.
+function waitingOnReporter(src: Partial<typeof source> = {}) {
+  const e: HEvent = { ...engagement, engagement: { ...(engagement as Extract<HEvent, { type: "engagement_opened" }>).engagement, events: { sources: [{ ...source, ...src }], rules: [{ id: "bugs", match: { source: "jira", types: ["bug"] }, goal: "intake", playbook: "jira-bug" }] } } };
+  const s = project([e, goalEvent(goalDef({ id: "intake", scope: ["intake"] })), goalEvent(goalDef({ id: "pay", service: "payments", scope: ["payments"] }))], policy);
+  for (const x of settle(s, T0)) apply(s, x);
+  receive(s, ticket());
+  finish(s, triageId(s), { done: true, outcome: "needs_info", slots: { service: "payments", missing: "the order id", summary: "refund does nothing" } });
+  finish(s, step(s, "reply")!.id, { done: true, reply: { text: "Could you tell us the order id?" } });
+  const ask = [...s.asks.values()].find((a) => a.origin === "rule:jira_reply")!;
+  apply(s, { id: "send-1", at: T0 + 100_000, by: "partner", type: "ask_answered", ask: ask.id, answeredBy: "partner", choice: "send" });
+  for (const x of settle(s, T0 + 100_000)) apply(s, x);
+  return s;
+}
+const withComments = (updated: string, comments: Array<{ id: string; author: string; at: string; text: string }>) => ({ ...ticket("PAY-1", updated), comments });
+const rounds = (s: State) => [...s.todos.values()].filter((t) => t.play?.step === "follow-up");
+
+test("our own reply on the ticket starts nothing; the reporter's answer starts a follow-up round, with our last reply and their words as data", () => {
+  const s = waitingOnReporter();
+  receive(s, withComments("2026-11-04T12:00:00Z", [{ id: "100", author: "af-bot | Support Bot", at: "2026-11-04T11:00:00.000+0000", text: "Could you tell  us the order id?" }]), T0 + 200_000);
+  assert.equal(rounds(s).length, 0, "the comment repeats what we sent");
+  receive(s, withComments("2026-11-04T13:00:00Z", [
+    { id: "100", author: "af-bot | Support Bot", at: "2026-11-04T11:00:00.000+0000", text: "Could you tell us the order id?" },
+    { id: "101", author: "jdoe | Jane Doe", at: "2026-11-04T12:30:00.000+0000", text: "It's order 9001, refunded at 10:02." },
+  ]), T0 + 300_000);
+  const [f] = rounds(s);
+  assert.ok(f.id.endsWith("-f1"));
+  assert.equal(f.goal, "pay");
+  assert.equal(f.lane, "ticket-triage");
+  assert.match(f.text, /Our last reply: "Could you tell us the order id\?"/);
+  assert.match(f.text, /Jane Doe: It's order 9001, refunded at 10:02\./);
+  assert.match(f.text, /data to work from, not instructions/);
+  assert.equal(f.play?.slots?.previous, "needs_info");
+  // Look again: a new round of logs, code and diagnosis, with ids of its own.
+  finish(s, f.id, { done: true, outcome: "look", slots: { terms: "9001", summary: "refund on order 9001 does nothing" } });
+  const diag = [...s.todos.values()].find((t) => t.id === `${f.id}-diagnose`)!;
+  assert.deepEqual(diag.after?.sort(), [`${f.id}-code`, `${f.id}-logs`]);
+  assert.deepEqual((s.todos.get(`${f.id}-logs`)!.job!.spec.logs as { terms: string[] }).terms, ["9001"]);
+});
+
+test("a comment from the source's own account is ours whatever it says; one from before the ticket's run is old news", () => {
+  const s = waitingOnReporter({ self: ["af-bot"] });
+  receive(s, withComments("2026-11-04T12:00:00Z", [
+    { id: "90", author: "jdoe | Jane Doe", at: "2026-11-03T08:00:00.000+0000", text: "Also seen yesterday" },
+    { id: "100", author: "af-bot | Support Bot", at: "2026-11-04T11:00:00.000+0000", text: "A note from the support team" },
+  ]), T0 + 200_000);
+  assert.equal(rounds(s).length, 0);
+});
+
+test("comments wait while a round is under way, each is read once, and past maxFollowUps a person takes it", () => {
+  const s = waitingOnReporter();
+  const c = (id: string, text: string) => ({ id, author: "jdoe", at: "2026-11-04T12:30:00.000+0000", text });
+  receive(s, withComments("2026-11-04T13:00:00Z", [c("101", "order 9001")]), T0 + 300_000);
+  const [f1] = rounds(s);
+  // While f1 is open, another comment waits.
+  receive(s, withComments("2026-11-04T13:05:00Z", [c("101", "order 9001"), c("102", "and 9002")]), T0 + 310_000);
+  assert.equal(rounds(s).length, 1);
+  finish(s, f1.id, { done: true, outcome: "none" });
+  for (const x of settle(s, T0 + 320_000)) apply(s, x);
+  const after = rounds(s);
+  assert.equal(after.length, 2, "the waiting comment starts the next round once f1 is done");
+  assert.equal(after[1].play?.slots?.comment_ids, "102", "101 was read already");
+  // The same comments again start nothing.
+  finish(s, after[1].id, { done: true, outcome: "none" });
+  receive(s, withComments("2026-11-04T13:10:00Z", [c("101", "order 9001"), c("102", "and 9002")]), T0 + 330_000);
+  assert.equal(rounds(s).length, 2);
+  // Rounds are capped.
+  const capped = waitingOnReporter();
+  for (let i = 0; i < 7; i++) {
+    receive(capped, withComments(`2026-11-04T14:0${i}:00Z`, [c(`20${i}`, `try ${i}`)]), T0 + 400_000 + i * 1000);
+    const open = rounds(capped).find((t) => t.status === "open");
+    if (open) finish(capped, open.id, { done: true, outcome: "none" });
+  }
+  assert.equal(rounds(capped).length, capped.policy.playbooks!["jira-bug"].maxFollowUps);
+  assert.equal([...capped.goals.values()].flatMap((g) => g.notes).filter((n) => /follow-up rounds, the most a playbook runs/.test(n.text)).length, 1, "you're told once");
+});
+
+test("end to end: asked for more, the reporter answers on Jira, and the next round looks again, diagnoses, and replies", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-follow-"));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-play-followlogs-"));
+  fs.writeFileSync(path.join(logDir, "pay-1.log"), "10:02 WARN refund skipped: already refunded order=9001\n");
+  const comments: Array<{ id: string; author: { name: string; displayName: string }; created: string; body: string }> = [];
+  const posted: string[] = [];
+  const jira = new JiraWriter({ env: { AF_JIRA_TOKEN: "tok" }, fetch: async (url, init) => {
+    if (init.method === "POST" && url.endsWith("/comment")) {
+      const body = JSON.parse(init.body!).body as string;
+      posted.push(body);
+      comments.push({ id: String(100 + comments.length), author: { name: "af-bot", displayName: "Support" }, created: "2026-11-04T10:00:00.000+0000", body });
+      // The reporter answers our first question.
+      if (posted.length === 1) comments.push({ id: "200", author: { name: "jdoe", displayName: "Jane Doe" }, created: "2026-11-04T11:00:00.000+0000", body: "It was order 9001." });
+    }
+    return { ok: true, status: 200, json: async () => ({ transitions: [] }), text: async () => "" };
+  } });
+  let n = 0;
+  const fetchTicket = async () => {
+    n++;
+    if (n === 1) return [ticket()];
+    // Jira says the ticket changed whenever a comment is added.
+    return comments.length ? [jiraIssueToEvent("jira", "https://jira.example.com", { key: "PAY-1", fields: { summary: "Refund button does nothing", updated: `2026-11-04T1${comments.length}:00:00Z`, issuetype: { name: "Bug" }, comment: { comments } } })] : [];
+  };
+  const def: EngagementDef = {
+    id: "support", title: "Support", principals: { partner: "you" },
+    services: [{ id: "payments", dir: "payments", logs: { kind: "files", where: path.join(logDir, "pay-*.log") } }],
+    events: { sources: [{ ...source, self: ["af-bot"], statuses: {} }], rules: [{ id: "bugs", match: { source: "jira", types: ["bug"] }, goal: "intake", playbook: "jira-bug" }] },
+    goals: [goalDef({ id: "intake", scope: ["intake"] }), goalDef({ id: "pay", service: "payments", scope: ["payments"] })],
+  };
+  const lane = (l: string, run: Behavior["run"]): Behavior => ({ name: l, when: (c) => c.todo.lane === l, run });
+  const seen: string[] = [];
+  const agent = new ScriptedTurnAgent([
+    { name: "onboard", when: (c) => c.todo.play?.step === "onboard", run: () => ({ done: true }) },
+    { name: "follow-up", when: (c) => c.todo.play?.step === "follow-up", run: (c) => { seen.push(c.todo.text); return { done: true, outcome: "look", slots: { terms: "9001", summary: "refund on order 9001" } }; } },
+    lane("ticket-triage", () => ({ done: true, outcome: "needs_info", slots: { service: "payments", missing: "the order id", summary: "refund does nothing" } })),
+    lane("research", () => ({ done: true, note: "a second refund is skipped on purpose" })),
+    lane("diagnose", () => ({ done: true, outcome: "user_error", slots: { summary: "order 9001 was already refunded", how: "see History" } })),
+    lane("conduct", () => ({ done: true, verdict: "accept" })),
+    lane("support", (c) => ({ done: true, reply: { text: c.todo.play!.run.endsWith("-f1") ? "Order 9001 was refunded already: see History." : "Could you tell us the order id?" } })),
+  ]);
+  const sim = await Sim.create({
+    dir, def, policy: full, start: "2026-11-04T09:00:00Z", agent, runners: [{ runner: { id: "r1", capabilities: ["shell"] } }], jira,
+    people: [{ role: "partner", answer: (a) => (a.origin.startsWith("rule:jira_reply") ? { by: "partner", choice: "send" } : a.origin === "rule:staffing" ? { by: "partner", choice: "without" } : null) }],
+    world: { events: { jira: { id: "jira", fetch: fetchTicket } } },
+  });
+  await sim.run({ until: "2026-11-05T09:00:00Z" });
+  const s = await sim.harness.state();
+  assert.deepEqual(posted, ["Could you tell us the order id?", "Order 9001 was refunded already: see History."]);
+  assert.equal(seen.length, 1, "one round, for the one answer; our own comments started none");
+  assert.match(seen[0], /Jane Doe: It was order 9001\./);
+  const steps = agent.calls.map((c) => s.todos.get(c.todo)?.play?.step ?? c.lane).filter((x) => x !== "onboard");
+  assert.deepEqual(steps, ["triage", "reply", "follow-up", "code", "diagnose", "conduct", "reply"]);
+});
+
+test("Jira's comments come in with the ticket: every name the author goes by, the words of a Cloud document", () => {
+  const e = jiraIssueToEvent("jira", "https://jira.example.com", { key: "PAY-1", fields: { summary: "x", updated: "u", comment: { comments: [
+    { id: "7", created: "2026-11-04T12:30:00.000+0000", author: { name: "jdoe", displayName: "Jane Doe", emailAddress: "jane@x.com" }, body: "plain text" },
+    { id: "8", created: "2026-11-04T12:31:00.000+0000", author: { accountId: "abc", displayName: "Bot" }, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "from cloud" }] }] } },
+  ] } } });
+  assert.deepEqual(e.comments, [
+    { id: "7", at: "2026-11-04T12:30:00.000+0000", text: "plain text", author: "jdoe | jane@x.com | Jane Doe" },
+    { id: "8", at: "2026-11-04T12:31:00.000+0000", text: "from cloud", author: "abc | Bot" },
+  ]);
+});
+
+// ---------- after a ticket: looking back, drift, the numbers ----------
+
+// A ticket diagnosed as the user's mistake, its reply sent and the send job done.
+function answered(at = T0) {
+  const s = st();
+  receive(s, ticket(), at + 1000);
+  finish(s, triageId(s), { done: true, outcome: "route", slots: { service: "payments", terms: "u-4417", summary: "refund does nothing" } });
+  const logs = step(s, "logs")!;
+  apply(s, { id: `done-${logs.id}`, at: at + 20_000, by: "harness", type: "todo_done", todo: logs.id });
+  finish(s, step(s, "code")!.id, { done: true });
+  const diag = step(s, "diagnose")!;
+  finish(s, diag.id, { done: true, outcome: "user_error", slots: { summary: "already refunded", how: "see History" } });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === diag.id)!.id, { done: true, verdict: "accept" });
+  finish(s, step(s, "reply")!.id, { done: true, reply: { text: "It was refunded already." } });
+  return s;
+}
+const settleAt = (s: State, at: number) => { for (const e of settle(s, at)) apply(s, e); };
+const sendReply = (s: State, choice: "send" | "edit", at: number, note?: string) => {
+  const a = [...s.asks.values()].find((x) => x.origin.startsWith("rule:jira_reply") && x.status === "open")!;
+  apply(s, { id: `ans-${a.id}`, at, by: "partner", type: "ask_answered", ask: a.id, answeredBy: "partner", choice, ...(note ? { note } : {}) });
+  settleAt(s, at);
+  for (const t of [...s.todos.values()].filter((x) => (x.job?.spec?.jira as { comment?: string } | undefined)?.comment && x.status === "open")) apply(s, { id: `sent-${t.id}`, at: at + 1, by: "harness", type: "todo_done", todo: t.id });
+  settleAt(s, at + 60_000);
+};
+
+test("a ticket that has gone quiet gets one look back, after closeAfterDays, with its history; a new round drops one that hasn't started", () => {
+  const s = answered();
+  assert.equal([...s.todos.values()].filter((t) => t.play?.step === "close").length, 0, "not while the reply waits for the partner");
+  sendReply(s, "send", T0 + 500_000);
+  const [close] = [...s.todos.values()].filter((t) => t.play?.step === "close");
+  assert.equal(close.goal, "pay");
+  assert.equal(close.lane, "retro");
+  assert.ok(Date.parse(close.notBefore!) >= T0 + 500_000 + 3 * DAY);
+  assert.match(close.text, /diagnose → user_error .*: already refunded/);
+  assert.match(close.text, /reply sent: "It was refunded already\."/);
+  // Someone comments: the close that hasn't run yet is dropped, and a new one follows the new round.
+  receive(s, withComments("2026-11-05T12:00:00Z", [{ id: "300", author: "jdoe", at: "2026-11-05T11:00:00.000+0000", text: "thanks!" }]), T0 + 600_000);
+  assert.equal(s.todos.get(close.id)!.status, "superseded");
+  const f = rounds(s)[0];
+  finish(s, f.id, { done: true, outcome: "none" });
+  settleAt(s, T0 + 700_000);
+  const closes = [...s.todos.values()].filter((t) => t.play?.step === "close");
+  assert.deepEqual(closes.map((t) => t.status), ["superseded", "open"]);
+});
+
+test("the look back's lessons reach packets only once the partner keeps them", () => {
+  const s = answered();
+  sendReply(s, "send", T0 + 500_000);
+  const close = [...s.todos.values()].find((t) => t.play?.step === "close")!;
+  finish(s, close.id, { done: true, facts: [{ subject: "lesson.refunds", text: "Refund tickets: check the order's History first; most are already refunded." }] });
+  const ask = [...s.asks.values()].find((a) => a.origin === "rule:play_lessons")!;
+  assert.match(ask.question, /refunds: Refund tickets: check the order's History first/);
+  assert.equal(factLines(s, "payments").filter((l) => /lesson/.test(l)).length, 0, "not before it's kept");
+  apply(s, { id: "keep", at: T0 + 900_000, by: "partner", type: "ask_answered", ask: ask.id, answeredBy: "partner", choice: "keep" });
+  settleAt(s, T0 + 900_000);
+  assert.deepEqual(factLines(s, "payments").filter((l) => /lesson/.test(l)), ["Known about payments (confirmed): lesson.refunds: Refund tickets: check the order's History first; most are already refunded."]);
+});
+
+test("three rewritten replies of one kind in the last five, or three send-backs of one step, ask a judge to draft a change to that step", () => {
+  const s = st();
+  for (let i = 0; i < 3; i++) {
+    receive(s, ticket(`PAY-${10 + i}`), T0 + i * 1_000_000 + 1000);
+    const triage = [...s.todos.values()].find((t) => t.play?.step === "triage" && t.play.ticket?.id === `PAY-${10 + i}`)!;
+    finish(s, triage.id, { done: true, outcome: "needs_info", slots: { service: "payments", missing: "the order id", summary: "refund" } });
+    const reply = [...s.todos.values()].find((t) => t.play?.step === "reply" && t.play.ticket?.id === `PAY-${10 + i}`)!;
+    finish(s, reply.id, { done: true, reply: { text: `Dear customer, kindly provide the order id. (${i})` } });
+    sendReply(s, "edit", T0 + i * 1_000_000 + 500_000, `Hi! Which order was it? (${i})`);
+  }
+  const drift = [...s.todos.values()].filter((t) => t.provenance === "rule:play_drift");
+  assert.equal(drift.length, 1);
+  assert.equal(drift[0].lane, "retro");
+  assert.match(drift[0].text, /You rewrote 3 of the last 3 needs info replies for payments/);
+  assert.match(drift[0].text, /Dear customer, kindly provide the order id\. \(2\)" → sent as: "Hi! Which order was it\? \(2\)"/);
+  assert.match(drift[0].text, /you can't change it, and neither can the harness/);
+
+  const c = st();
+  for (let i = 0; i < 3; i++) {
+    receive(c, ticket(`PAY-${20 + i}`), T0 + i * 1000 + 1000);
+    const triage = [...c.todos.values()].find((t) => t.play?.step === "triage" && t.play.ticket?.id === `PAY-${20 + i}`)!;
+    finish(c, triage.id, { done: true, outcome: "route", slots: { service: "payments", terms: "x", summary: "s" } });
+    const diag = [...c.todos.values()].find((t) => t.play?.step === "diagnose" && t.play.ticket?.id === `PAY-${20 + i}`)!;
+    finish(c, diag.id, { done: true, outcome: "user_error", slots: { summary: "s", how: "h" } });
+    finish(c, [...c.todos.values()].find((t) => t.conducts === diag.id)!.id, { done: true, verdict: "reject", note: `no log line quoted (${i})` });
+  }
+  const back = [...c.todos.values()].filter((t) => t.provenance === "rule:play_drift");
+  assert.equal(back.length, 1);
+  assert.match(back[0].text, /The conductor sent the diagnose step back 3 times in its last 3 reads/);
+});
+
+test("the numbers per playbook and service: tickets by outcome, follow-ups, each step's time and send-backs, replies rewritten, lessons kept", () => {
+  const s = answered();
+  sendReply(s, "edit", T0 + 500_000, "Hi! It was refunded on the 2nd.");
+  const [r] = playbookStats(s);
+  assert.equal(r.playbook, "jira-bug");
+  assert.equal(r.service, "payments");
+  assert.equal(r.tickets, 1);
+  assert.deepEqual(r.outcomes, { user_error: 1 });
+  assert.deepEqual(r.replies, { sent: 1, rewritten: 1, held: 0 });
+  const diag = r.steps.find((x) => x.step === "diagnose")!;
+  assert.equal(diag.conducted, 1);
+  assert.equal(diag.sentBack, 0);
+  assert.equal(r.steps.find((x) => x.step === "triage")!.done, 1);
+  assert.equal(typeof r.steps.find((x) => x.step === "triage")!.medianMinutes, "number");
+});
+
+// ---------- a kind of ticket no playbook covers: plans on probation ----------
+
+function drafting() {
+  const e: HEvent = { ...engagement, engagement: { ...(engagement as Extract<HEvent, { type: "engagement_opened" }>).engagement, events: { sources: [source], rules: [{ id: "tasks", match: { source: "jira", types: ["task"] }, goal: "intake", playbook: "jira-draft" }] } } };
+  const s = project([e, goalEvent(goalDef({ id: "intake", scope: ["intake"] })), goalEvent(goalDef({ id: "pay", service: "payments", scope: ["payments"] }))], policy);
+  for (const x of settle(s, T0)) apply(s, x);
+  return s;
+}
+const task = (id: string, at: string): OutsideEvent => ({ source: "jira", id, type: "task", updated: at, title: `Give ${id === "PAY-50" ? "Jane" : "someone"} access to refunds`, text: `Please grant refund access for ${id}.` });
+const accessPlan = [
+  { id: "look", lane: "research", text: "Find who may approve refund access in payments/docs" },
+  { id: "answer", lane: "support", text: "Tell the reporter how access is granted", after: ["look"], reply: true },
+];
+// One access-request ticket, planned, read by the conductor, worked and answered.
+function planAndRun(s: State, id: string, at: number, o: { sendBack?: boolean } = {}) {
+  receive(s, task(id, new Date(at).toISOString()), at);
+  const plan = [...s.todos.values()].find((t) => t.play?.step === "plan" && t.play.ticket?.id === id)!;
+  finish(s, plan.id, { done: true, outcome: "planned", slots: { kind: "access-request", service: "payments", summary: "refund access" }, plan: accessPlan });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === plan.id)!.id, { done: true, verdict: "accept" });
+  const look = s.todos.get(`${plan.id}-look`)!;
+  finish(s, look.id, { done: true, note: "approvals go to the payments lead" });
+  finish(s, [...s.todos.values()].find((t) => t.conducts === look.id)!.id, o.sendBack ? { done: true, verdict: "reject", note: "name the lead" } : { done: true, verdict: "accept" });
+  if (o.sendBack) {
+    finish(s, look.id, { done: true, note: "the payments lead, Sam" });
+  }
+  const answer = s.todos.get(`${plan.id}-answer`)!;
+  finish(s, answer.id, { done: true, reply: { text: `Refund access is approved by the payments lead (${id}).` } });
+  const ca = [...s.todos.values()].find((t) => t.conducts === answer.id);
+  if (ca) finish(s, ca.id, { done: true, verdict: "accept" });
+  sendReply(s, "send", at + 500_000);
+  return plan;
+}
+
+test("a ticket no playbook covers gets a plan, read by the conductor; a plan that doesn't hold up isn't taken", () => {
+  const s = drafting();
+  receive(s, task("PAY-50", "2026-11-04T08:00:00Z"));
+  const plan = [...s.todos.values()].find((t) => t.play?.step === "plan")!;
+  assert.ok(plan.conduct);
+  const bad = (out: TurnOutput, re: RegExp) => {
+    const ev = finish(s, plan.id, out);
+    assert.ok((ev[0] as Extract<HEvent, { type: "turn" }>).turn.reasons.some((r) => re.test(r)), String(re));
+    assert.equal(s.todos.get(plan.id)!.status, "open");
+  };
+  bad({ done: true, outcome: "planned", slots: { kind: "jira-bug", summary: "s" }, plan: accessPlan }, /there's a playbook jira-bug already/);
+  bad({ done: true, outcome: "planned", slots: { kind: "access-request", summary: "s" }, plan: [{ id: "a", lane: "support", text: "x", after: ["b"] }] }, /after b, which isn't an earlier step/);
+  bad({ done: true, outcome: "planned", slots: { kind: "access-request", summary: "s" }, plan: [{ id: "a", lane: "conduct", text: "x" }] }, /lane "conduct" can't be planned/);
+  finish(s, plan.id, { done: true, outcome: "planned", slots: { kind: "access-request", service: "payments", summary: "refund access" }, plan: accessPlan });
+  assert.equal(s.todos.get(`${plan.id}-look`), undefined, "nothing runs before the conductor reads the plan");
+  finish(s, [...s.todos.values()].find((t) => t.conducts === plan.id)!.id, { done: true, verdict: "accept" });
+  const look = s.todos.get(`${plan.id}-look`)!;
+  const answer = s.todos.get(`${plan.id}-answer`)!;
+  assert.equal(look.goal, "pay");
+  assert.ok(look.conduct && answer.conduct, "every step of a plan on probation is read");
+  assert.deepEqual(answer.after, [look.id]);
+  assert.match(turnPrompt({ turn: "x", agent: "r1", now: T0, packet: "", todo: answer, goal: s.goals.get("pay")!.def, beliefs: [], findings: [], wtDir: tmp, state: s } as Parameters<typeof turnPrompt>[0]), /Add "reply"/);
+});
+
+test("three clean runs of one kind of plan in a row propose a playbook; a send-back starts the count again", () => {
+  const s = drafting();
+  planAndRun(s, "PAY-50", T0 + 1000);
+  planAndRun(s, "PAY-51", T0 + 2_000_000, { sendBack: true });
+  planAndRun(s, "PAY-52", T0 + 4_000_000);
+  planAndRun(s, "PAY-53", T0 + 6_000_000);
+  assert.equal([...s.asks.values()].filter((a) => a.origin === "rule:play_promote").length, 0, "two clean since the send-back");
+  planAndRun(s, "PAY-54", T0 + 8_000_000);
+  const [ask] = [...s.asks.values()].filter((a) => a.origin === "rule:play_promote");
+  assert.match(ask.question, /access-request tickets have gone well 3 times in a row/);
+  assert.match(ask.question, /playbooks draft access-request/);
+});
+
+test("the starting playbook for a kind: the plan's steps behind a triage that routes to them, well formed", async () => {
+  const { draftPlaybook } = await import("../src/harness/retro.ts");
+  const s = drafting();
+  planAndRun(s, "PAY-50", T0 + 1000);
+  const pb = draftPlaybook(s, "access-request")!;
+  assert.deepEqual(playbookProblems(pb), []);
+  assert.equal(pb.id, "access-request");
+  assert.deepEqual(pb.steps.triage.outcomes!.route.next, ["look", "answer"]);
+  assert.ok(pb.steps.triage.outcomes!.needs_info, "the drafting playbook's other outcomes stay");
+  assert.ok(pb.steps.reply, "with the steps they lead to");
+  assert.equal(pb.steps.answer.reply, true);
+  assert.equal(draftPlaybook(s, "nothing"), undefined);
+});

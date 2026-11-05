@@ -22,6 +22,7 @@ import * as path from "node:path";
 import { log, type Git } from "../git.ts";
 import { runCommand } from "../proc.ts";
 import type { GoalState, State, TodoState } from "./project.ts";
+import { stepOf } from "./playbook.ts";
 import { eid } from "./store.ts";
 import type { HEvent, TodoDraft } from "./types.ts";
 import type { JobOutcome } from "./world.ts";
@@ -55,7 +56,15 @@ const firstLine = (t: string) => t.split("\n")[0].slice(0, 120);
 // The files a todo's turns wrote under the goal's directory.
 export function shippedFiles(s: State, t: TodoState, dir: string): string[] {
   const pre = `${dir.replace(/\/+$/, "")}/`;
-  return [...new Set(s.turns.filter((x) => x.todo === t.id).flatMap((x) => x.files).filter((f) => f.startsWith(pre)))].sort();
+  const todos = new Set([t.id, ...shipsWith(s, t)]);
+  return [...new Set(s.turns.filter((x) => todos.has(x.todo)).flatMap((x) => x.files).filter((f) => f.startsWith(pre)))].sort();
+}
+
+// A playbook step can ship together with earlier steps of its run: a bug fix's pull request
+// carries the test that shows the bug (playbook.ts).
+function shipsWith(s: State, t: TodoState): string[] {
+  const st = stepOf(s, t);
+  return (st?.shipWith ?? []).map((x) => `${t.play!.run}-${x}`).filter((id) => s.todos.has(id));
 }
 
 // ---------- the rule ----------
@@ -68,6 +77,8 @@ export function shipRules(s: State, g: GoalState, now: number, emit: (e: HEvent)
   if (!d || g.status !== "active") return;
   for (const t of s.todos.values()) {
     if (t.goal !== g.id || t.kind !== "task" || t.status !== "done" || t.lane === "ship" || t.provenance === "rule:ship") continue;
+    // A step that ships only with a later one (a bug's failing test, with its fix).
+    if (t.play && stepOf(s, t)?.ship === false) continue;
     if (d.lanes?.length && !d.lanes.includes(t.lane)) continue;
     const files = shippedFiles(s, t, d.dir);
     if (!files.length) continue;
@@ -99,7 +110,7 @@ export function shipRules(s: State, g: GoalState, now: number, emit: (e: HEvent)
     const draft: TodoDraft & { id: string } = {
       id: jobId, kind: "job", lane: "ship", priority: 1, because: t.id,
       text: `Open a pull request on ${d.repo} for "${firstLine(t.text)}" and wait for its checks`,
-      job: { spec: { ship: t.id, turns: t.turns, repo: d.repo, dir: d.dir, base: d.base ?? "main", api: d.api ?? API, tokenEnv: d.tokenEnv ?? "AF_GITHUB_TOKEN", ...(d.remote ? { remote: d.remote } : {}), title: firstLine(t.text) }, ...(t.tests ? { informs: [{ assumption: t.tests, metric: "checks_failed" }] } : {}) },
+      job: { spec: { ship: t.id, turns: t.turns, repo: d.repo, dir: d.dir, base: d.base ?? "main", api: d.api ?? API, tokenEnv: d.tokenEnv ?? "AF_GITHUB_TOKEN", ...(d.remote ? { remote: d.remote } : {}), title: firstLine(t.text), ...(shipsWith(s, t).length ? { with: shipsWith(s, t) } : {}), ...(t.play?.ticket ? { body: `For ${t.play.ticket.id}${t.play.ticket.url ? ` (${t.play.ticket.url})` : ""}: ${t.play.slots?.summary ?? t.play.ticket.title}.${t.play.slots?.where ? `\n\nWhere: ${t.play.slots.where}` : ""}` } : {}) }, ...(t.tests ? { informs: [{ assumption: t.tests, metric: "checks_failed" }] } : {}) },
     };
     emit({ id: `add-${jobId}`, at: now, by: "harness", type: "todo_added", todo: { ...draft, goal: g.id }, provenance: "rule:ship" });
   }
@@ -118,7 +129,7 @@ export function shipRules(s: State, g: GoalState, now: number, emit: (e: HEvent)
 
 // ---------- GitHub ----------
 
-export type ShipSpec = { ship: string; turns: number; repo: string; dir: string; base: string; api: string; tokenEnv: string; remote?: string; title: string };
+export type ShipSpec = { ship: string; turns: number; repo: string; dir: string; base: string; api: string; tokenEnv: string; remote?: string; title: string; with?: string[]; body?: string };
 type Fetch = (url: string, init: { method?: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>;
 type Run = (args: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }) => Promise<string>;
 
@@ -184,7 +195,8 @@ export class GitHubShip {
       await git(["reset", "-q", "--hard", `origin/${spec.base}`]);
       await git(["clean", "-qfdx"]);
       // The work's own commits, oldest first, each one's change under dir.
-      const commits = log(this.control, "HEAD").filter((c) => (c.trailers.Todo ?? []).includes(spec.ship)).reverse();
+      const todos = [spec.ship, ...(spec.with ?? [])];
+      const commits = log(this.control, "HEAD").filter((c) => (c.trailers.Todo ?? []).some((x) => todos.includes(x))).reverse();
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "af-ship-"));
       try {
         for (const [i, c] of commits.entries()) {
@@ -212,7 +224,7 @@ export class GitHubShip {
       if (!open.ok) return failedHandle(`GitHub answered ${open.status} listing pull requests: ${(await open.text()).slice(0, 160)}`);
       let pr = ((await open.json()) as Array<{ number: number }>)[0]?.number;
       if (!pr) {
-        const made = await this.api(spec, token, `/repos/${spec.repo}/pulls`, { method: "POST", body: { title: spec.title, head: branch, base: spec.base, body: `Opened by the AgentFactory harness for its work \`${spec.ship}\`, after you approved it.\n\nMerging is yours.` } });
+        const made = await this.api(spec, token, `/repos/${spec.repo}/pulls`, { method: "POST", body: { title: spec.title, head: branch, base: spec.base, body: `${spec.body ? `${spec.body}\n\n` : ""}Opened by the AgentFactory harness for its work \`${spec.ship}\`, after you approved it.\n\nMerging is yours.` } });
         if (!made.ok) return failedHandle(`GitHub answered ${made.status} opening the pull request: ${(await made.text()).slice(0, 160)}`);
         pr = ((await made.json()) as { number: number }).number;
       }

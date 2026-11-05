@@ -5,6 +5,7 @@
 import type { AskState, State, TodoState } from "./project.ts";
 import { beliefs, openAsks } from "./project.ts";
 import { activeFreezes, phase } from "./select.ts";
+import { factLines } from "./playbook.ts";
 
 function cut(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
@@ -51,6 +52,9 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
   // in a real run repeated the same mistake until the todo ran out of tries.
   const last = s.turns.findLast((x) => x.todo === t.id);
   const thrownAway = last?.result === "validation_failed" && last.reasons?.length ? [`Your last try was thrown away: ${cut(last.reasons.join(" | "), 300)}`] : [];
+  // Work sent back (by the conductor, a reviewer or a person) hears why, or the next turn
+  // repeats what was sent back. The reason was recorded but never shown before.
+  const sentBack = t.sentBack ? [`Sent back: ${cut(t.sentBack, 500)}`] : [];
   // The checks see the whole worktree, so a test another todo broke fails this turn too.
   // Agents that weren't told so called such failures "not mine" and said they were done.
   const red = s.engagement?.redLines ?? [];
@@ -58,6 +62,8 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
   // The goal's other open work. Without it, a turn that finished one step proposed the
   // planned next steps again as new todos, in lanes of its own, every time.
   const planned = [...s.todos.values()].filter((x) => x.goal === g.id && x.id !== t.id && !["done", "superseded"].includes(x.status));
+  // What's known about the goal's service, so a ticket starts from what earlier ones found.
+  const known = g.def.service ? factLines(s, g.def.service, 3) : [];
   const plannedLine = planned.length ? [`Already planned, so don't propose it again: ${cut(planned.map((x) => `${x.id} (${x.lane}): ${cut(x.text, 50)}`).join("; "), 400)}`] : [];
 
   // Lines in priority order; the tail is dropped first when over budget.
@@ -65,11 +71,14 @@ export function buildPacket(s: State, t: TodoState, why: string, about: string[]
     `${cut(s.engagement?.title ?? "", 60)} · ${g.id} v${g.version}: ${cut(g.def.objective, 140)}`,
     ph ? `Phase: ${ph.category}. Riskiest open assumption ${ph.assumption}: "${cut(g.def.assumptions.find((a) => a.id === ph.assumption)?.text ?? "", 90)}"` : "Phase: no open assumptions",
     `Beliefs: ${count("supported")} supported, ${count("refuted")} refuted, ${count("contested")} contested, ${count("testing")} testing, ${count("untested")} untested`,
-    `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, 600)}`,
+    // A ticket's own words are most of a triage step's todo: keep more of them.
+    `Your todo ${t.id} [P${t.priority}, ${t.lane}]: ${cut(t.text, t.play?.ticket ? 1000 : 600)}`,
     ...thrownAway,
+    ...sentBack,
     ...checks,
     ...answersFor(s, t).map((a) => `From ${a.answeredBy} (${a.id}): ${cut(a.note ?? `chose ${a.choice}`, 320)}`),
     ...about.slice(0, 2),
+    ...known,
     `Why this one: ${cut(why, 160)}`,
     `Write only: ${(t.writeScope ?? []).join(", ") || "nothing (findings, todos and asks only)"}${freezes.length ? ` · frozen: ${freezes.map((f) => f.paths.join(",")).join("; ")}` : ""}`,
     ...plannedLine,

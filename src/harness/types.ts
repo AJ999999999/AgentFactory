@@ -92,6 +92,7 @@ export type GoalDef = {
   budget: Budget;
   share?: number; // compute share among goals (default 1)
   perpetual?: boolean; // never "done" (maintenance, monitoring)
+  service?: string; // the service (EngagementDef.services) whose tickets this goal works on
   monitors?: MonitorDef[];
   blackouts?: Blackout[];
   interfaces?: string[]; // contract files a child goal builds against; must exist to spawn it
@@ -125,6 +126,38 @@ export type EngagementDef = {
   // Events from outside (Jira, feedback, production checks) and the rules that route them
   // into goals (events.ts). Kept here, in your private folder, since they name your systems.
   events?: import("./events.ts").EventsDef;
+  // The services the firm supports, for playbooks to route tickets to (playbook.ts). Each has
+  // a goal of its own whose `service` names it.
+  services?: ServiceDef[];
+};
+
+// A service: where its code is, how it's built and tested, and where its logs are. The logs
+// are described and shown by a sample, never parsed by rules: the model reads them.
+export type ServiceDef = {
+  id: string;
+  names?: string[]; // what people call it in tickets
+  jiraComponents?: string[];
+  repo?: string; // "owner/name", for reference
+  dir?: string; // where its code is in the engagement's repo
+  build?: string;
+  test?: string;
+  // kind "files": `where` is a path whose file name may hold a * (one file per day, say).
+  logs?: { kind: "files"; where: string; notes?: string };
+  sample?: string; // a short log file in the engagement's repo, personal data removed
+  sop?: string; // where the team's own procedure for this service is written
+  owners?: string[];
+};
+
+// A todo that is a step of a playbook run: which playbook, which run (one per ticket), which
+// step, and what the run knows so far (the ticket, the service, earlier outcomes' slots).
+export type PlayRef = {
+  playbook: string;
+  version: number;
+  run: string;
+  step: string;
+  ticket?: { source: string; id: string; title: string; url?: string };
+  service?: string;
+  slots?: Record<string, string>;
 };
 
 // ---------- work ----------
@@ -167,6 +200,9 @@ export type TodoDraft = {
   maxTurns?: number; // stopping rule for open-ended tasks
   reviews?: string; // probation review: the todo whose output this reviews
   prReview?: string; // a pull request's review: the ship job whose pull request this reviews (ship.ts)
+  conducts?: string; // the conductor's read of a finished todo: that todo (docs/conductor.md)
+  conduct?: boolean; // the conductor reads it when it's done, even with the policy's conductor off
+  play?: PlayRef; // a step of a playbook run (playbook.ts)
 };
 
 // ---------- the team ----------
@@ -324,6 +360,23 @@ export type HEvent = Base &
     | { type: "note"; goal: string; text: string; turn?: string }
     | { type: "seat_staffed"; seat: SeatDef; ask?: string }
     | { type: "review_verdict"; todo: string; review: string; seat: string; verdict: Verdict; note?: string }
+    // The conductor's verdict on a finished todo: accept lets it count, reject sends it
+    // back with directions. Kept apart from review_verdict so it never moves probation.
+    | { type: "conduct_verdict"; todo: string; conduct: string; lane: string; seat?: string; verdict: Verdict; note?: string }
+    // A playbook step's turn chose where the run goes next, with what it found (slots). The
+    // branch is taken once the step is done: after the conductor, when it reads the step.
+    | { type: "play_outcome"; todo: string; run: string; step: string; outcome: string; slots: Record<string, string>; turn: string }
+    // A drafted reply to the person who filed a ticket. It goes out only once the partner
+    // says send (playbook.ts); the loop sends it, never a turn.
+    // A plan drafted for a kind of ticket no playbook covers yet: its steps become the run's
+    // own, on probation (playbook.ts). The latest one for a run replaces the one before.
+    | { type: "play_plan"; todo: string; run: string; kind: string; steps: PlanStep[] }
+    | { type: "reply_drafted"; todo: string; run: string; outcome: string; text: string; ticket: { source: string; id: string; title: string; url?: string } }
+    // Something learned about a service (where code is, what the logs look like), as an
+    // agent reported it: unconfirmed until the partner confirms it. The newest on a subject
+    // replaces the one before. A fact learned under an older playbook version is rechecked.
+    | { type: "fact_recorded"; fact: Fact }
+    | { type: "fact_confirmed"; service: string; subject: string; fact: string }
     // The partner stops anything new from starting, or lets it start again.
     | { type: "paused"; paused: boolean; reason?: string }
     // The model service said "not now" (a usage limit, a rate limit). Model turns wait
@@ -332,3 +385,16 @@ export type HEvent = Base &
   );
 
 export type EventOf<T extends HEvent["type"]> = Extract<HEvent, { type: T }>;
+
+export type PlanStep = { id: string; lane: string; text: string; after?: string[]; reply?: boolean; writes?: boolean };
+
+export type Fact = {
+  id: string;
+  service: string;
+  subject: string; // "logs.format", "code.refunds"
+  text: string;
+  source?: string; // repo:<path>, or the log excerpt it was read from
+  by: string; // the seat that recorded it
+  playbook?: { id: string; version: number }; // learned while running this
+  turn?: string;
+};

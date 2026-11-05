@@ -4,9 +4,9 @@
 
 ![Node 22.18+](https://img.shields.io/badge/node-22.18%2B-2f6bff) ![Zero dependencies](https://img.shields.io/badge/dependencies-zero-12bf78) ![Copilot CLI · Claude Code · Codex · pi](https://img.shields.io/badge/agents-Copilot%20CLI%20·%20Claude%20Code%20·%20Codex%20·%20pi-7c4dff) ![Everything in git](https://img.shields.io/badge/state-all%20in%20git-ff7a1a)
 
-<a href="docs/film/agentfactory.en.mp4"><img src="docs/film/agentfactory.en.gif" width="100%" alt="A P1 in Project Orion: the reply to the reporter waits for your Send, a failing test comes first, then the fix, its checks and the merge you approve"></a>
+<a href="docs/film/launch.en.mp4"><img src="docs/film/launch.en.gif" width="100%" alt="A turn's log beside what it made: the reply to the reporter sent with one tap and kept as a rule, then a test that fails on the bug, and passes with the fix"></a>
 
-**▶ [Watch the 47-second film](docs/film/agentfactory.en.mp4)** · [中文版](docs/film/agentfactory.zh.mp4) · [what in it is real today](docs/film.md)
+**▶ [Watch the 41-second launch film](docs/film/launch.en.mp4)** · [中文版](docs/film/launch.zh.mp4) · [the one-shot story, 47 s](docs/film/agentfactory.en.mp4) · [what in it is real today](docs/film.md)
 
 A P1 lands in Jira at 8:15. A strong model triages it, the logs and the code are read side by side, and the diagnosis gets a second read. The reply to the reporter waits for your Send. Then a test that fails on the bug comes first, the fix makes it pass, and by 10:49 a reviewed pull request is waiting for your approval. AgentFactory is built to make that ordinary. It pulls work in from Jira, alerts and feedback, staffs it with agents on the CLIs you already use, and keeps going for weeks, waking itself on timers.
 

@@ -26,6 +26,27 @@ The last two steps are where it's going, not what it does today:
 
 The clock, the counts and the pacing are illustrative.
 
+## The launch film
+
+`film/launch.en.mp4` and `film/launch.zh.mp4` are a 41-second launch cut of the same ticket, made for the top of the README. Its structure follows the launch film of [SenseNova Code2Video](https://github.com/OpenSenseNova/SenseNova-6.8-Code2Video):
+
+- a typed hook;
+- three short cards: "No standups." "No babysitting." "Just your calls.";
+- the title;
+- five proof segments, each a turn's log beside what it produced: the triaged ticket, the diagnosis and the conductor's accept, your one tap kept as a rule, the test red on the bug and green with the fix, the pull request and its merge;
+- a wall of a thousand engagements;
+- an end card with `npm run demo:harness`.
+
+Where that film shows each video's code next to the frame it renders, this one shows each turn's log next to its outcome. It shows the same steps as the story film above, and the same parts are real and illustrative.
+
+It was made the way that project's `code-video` skill works:
+
+- a spec first, `scripts/film/LAUNCH-SPEC.md`, with the copy, the cues and the checks;
+- every frame a function of time;
+- the music built from the film's own event list, so each hit lands on its frame;
+- contact sheets and strips around the key moments, read before delivery;
+- the final file checked for length, frame count and loudness.
+
 ## Rendering it
 
 The film is code: `scripts/film/film.js` draws every frame as a function of time, and `make_en.py` builds the English cut from it. `music.py` synthesises the score, with each accent on something that happens on screen. `render.py` puts the frames, the music and the encoding together.
@@ -44,6 +65,10 @@ playwright install chromium
 python scripts/film/render.py en
 ```
 
-Use `zh` for the Chinese cut and `--workers N` to set how many browsers render in parallel. It takes about a minute and a half with four. To check a change without a full render, `--preview 12 28.5` writes those moments as stills to `scripts/film/.cache/preview/`. The Chinese font, Noto Sans SC (SIL Open Font License), is downloaded into that cache the first time.
+```bash
+python scripts/film/render.py en --film launch
+```
+
+The first renders the story film, the second the launch film. Use `zh` for the Chinese cut and `--workers N` to set how many browsers render in parallel. It takes about a minute and a half with four. To check a change without a full render, `--preview 12 28.5` writes those moments as stills to `scripts/film/.cache/preview/`. The Chinese font, Noto Sans SC (SIL Open Font License), is downloaded into that cache the first time.
 
 The render pipeline and the music's instruments follow [motion-atlas](https://github.com/skylarzzzz/motion-atlas) (MIT, `scripts/film/LICENSE-motion-atlas`).

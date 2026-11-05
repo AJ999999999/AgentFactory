@@ -10,8 +10,10 @@ import { askShape, type Standing, standingKey } from "./standing.ts";
 import type { Received } from "./events.ts";
 import type {
   Ask, AssumptionDef, BeliefStatus, Category, Criterion, EngagementDef, Finding, GoalDef, GoalRevision, Grade, HEvent, Op,
-  SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
+  EventOf, Fact, PlanStep, SeatDef, TodoDraft, TodoKind, TurnRecord, Verdict,
 } from "./types.ts";
+import { loadPlaybooks } from "./playbook.ts";
+import type { Playbook } from "./playbook.ts";
 
 export type HarnessPolicy = {
   version: number;
@@ -44,14 +46,22 @@ export type HarnessPolicy = {
   // Standing answers ("from now on"): how long one lasts, and origins that are always
   // asked on top of the built-in must-ask list (standing.ts).
   standing?: { days?: number; mustAsk?: string[] };
+  // A strong model reads each finished todo before it counts, and sends it back with
+  // directions when it went the wrong way (docs/conductor.md). Off when absent.
+  // lanes: only these work lanes (default: every work lane). skipChecked: not when the
+  // todo's own checker passed. maxRedirects: send-backs per todo before it goes through.
+  conductor?: { lanes?: string[]; skipChecked?: boolean; maxRedirects?: number };
+  // Playbooks by id, loaded from the folder the policy names (playbook.ts).
+  playbooks?: Record<string, Playbook>;
 };
 
 export function loadPolicy(file: string): HarnessPolicy {
-  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Omit<HarnessPolicy, "team"> & { team?: { library: string; catalog: string } };
-  const { team, ...rest } = raw;
-  if (!team) return rest;
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Omit<HarnessPolicy, "team" | "playbooks"> & { team?: { library: string; catalog: string }; playbooks?: string };
+  const { team, playbooks, ...rest } = raw;
+  const pbs = playbooks ? { playbooks: loadPlaybooks(path.resolve(path.dirname(file), playbooks)) } : {};
+  if (!team) return { ...rest, ...pbs };
   const read = (f: string) => JSON.parse(fs.readFileSync(path.resolve(path.dirname(file), f), "utf8"));
-  return { ...rest, team: { library: read(team.library) as Library, catalog: read(team.catalog) as Catalog } };
+  return { ...rest, ...pbs, team: { library: read(team.library) as Library, catalog: read(team.catalog) as Catalog } };
 }
 
 export type GoalState = {
@@ -91,6 +101,8 @@ export type TodoState = TodoDraft & {
   reviewTodo?: string; // a probation review in progress
   doneAt?: number;
   reason?: string;
+  sentBack?: string; // why it was last sent back, until its next turn reads it
+  redirects: number; // times the conductor sent it back
 };
 
 export type SeatState = SeatDef & {
@@ -143,6 +155,13 @@ export type State = {
   shipSynced: Map<string, string>;
   // Pull request reviews by review todo: the verdict, and whether it's on GitHub yet.
   prReviews: Map<string, { ship: string; verdict: Verdict; note?: string; at: number; posted?: boolean }>;
+  // The conductor's verdicts, oldest first: what its send-back rate is worked out from.
+  conducted: Array<{ todo: string; conduct: string; lane: string; goal: string; seat?: string; verdict: Verdict; note?: string; at: number }>;
+  // Playbook runs: each fork step's latest outcome, drafted replies, and facts by service.
+  playOutcomes: Map<string, { run: string; step: string; outcome: string; slots: Record<string, string>; at: number }>;
+  replies: Map<string, EventOf<"reply_drafted">>;
+  plans: Map<string, { kind: string; steps: PlanStep[]; at: number }>; // by run
+  facts: Map<string, Map<string, Fact & { at: number; confirmed?: boolean }>>;
   // Decisions the harness made without asking anyone: what the daily audit draws from.
   autonomous: Array<{ event: string; type: string; goal: string; at: number; what: string }>;
   eventIds: Set<string>;
@@ -168,6 +187,11 @@ export function project(events: HEvent[], policy: HarnessPolicy): State {
     outside: new Map(),
     shipSynced: new Map(),
     prReviews: new Map(),
+    conducted: [],
+    playOutcomes: new Map(),
+    replies: new Map(),
+    plans: new Map(),
+    facts: new Map(),
     autonomous: [],
     eventIds: new Set(),
     lastAt: 0,
@@ -254,7 +278,7 @@ export function apply(s: State, e: HEvent): void {
       const g = s.goals.get(e.todo.goal);
       s.todos.set(e.todo.id, {
         ...e.todo, kind: e.todo.kind ?? "task", priority: e.todo.priority ?? 2, status: "open", goalVersion: g?.version ?? 1,
-        addedAt: e.at, provenance: e.provenance, failures: 0, turns: 0, capFrom: 0,
+        addedAt: e.at, provenance: e.provenance, failures: 0, turns: 0, capFrom: 0, redirects: 0,
       });
       break;
     }
@@ -275,7 +299,7 @@ export function apply(s: State, e: HEvent): void {
     }
     case "todo_reopened": {
       const t = s.todos.get(e.todo);
-      if (t && t.status !== "superseded") Object.assign(t, { status: "open", stopped: false, reason: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
+      if (t && t.status !== "superseded") Object.assign(t, { status: "open", stopped: false, reason: e.reason, sentBack: e.reason, failures: e.resetFailures ? 0 : t.failures, capFrom: e.resetFailures ? t.turns : t.capFrom, handle: undefined, startedAt: undefined, reviewTodo: undefined });
       break;
     }
     case "todo_superseded": {
@@ -372,6 +396,7 @@ export function apply(s: State, e: HEvent): void {
         if (e.turn.result === "host_failure" || e.turn.result === "validation_failed") t.failures++;
         else if (e.turn.result !== "claim_lost" && e.turn.result !== "stopped") t.failures = 0;
         t.stopped = e.turn.result === "stopped";
+        t.sentBack = undefined; // this turn was told
       }
       break;
     }
@@ -410,6 +435,34 @@ export function apply(s: State, e: HEvent): void {
     case "paused":
       s.paused = e.paused ? { at: e.at, by: e.by, reason: e.reason } : null;
       break;
+    case "play_outcome":
+      s.playOutcomes.set(e.todo, { run: e.run, step: e.step, outcome: e.outcome, slots: e.slots, at: e.at });
+      break;
+    case "play_plan":
+      s.plans.set(e.run, { kind: e.kind, steps: e.steps, at: e.at });
+      break;
+    case "reply_drafted":
+      // The first draft is the one asked about; a later turn's draft doesn't replace it.
+      if (!s.replies.has(e.todo)) s.replies.set(e.todo, e);
+      break;
+    case "fact_recorded": {
+      const m = s.facts.get(e.fact.service) ?? new Map();
+      s.facts.set(e.fact.service, m);
+      // The newest on a subject replaces the one before, and isn't confirmed until it is.
+      m.set(e.fact.subject, { ...e.fact, at: e.at });
+      break;
+    }
+    case "fact_confirmed": {
+      const f = s.facts.get(e.service)?.get(e.subject);
+      if (f && f.id === e.fact) f.confirmed = true;
+      break;
+    }
+    case "conduct_verdict": {
+      const t = s.todos.get(e.todo);
+      if (t && e.verdict === "reject") t.redirects++;
+      s.conducted.push({ todo: e.todo, conduct: e.conduct, lane: e.lane, goal: t?.goal ?? "", seat: e.seat, verdict: e.verdict, note: e.note, at: e.at });
+      break;
+    }
     case "review_verdict": {
       const seat = s.seats.get(e.seat);
       if (!seat) break;

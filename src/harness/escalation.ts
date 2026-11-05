@@ -193,3 +193,33 @@ export function auditRule(s: State, now: number, emit: (e: HEvent) => void): voi
     },
   });
 }
+
+// The conductor's record: how many finished todos it read and sent back, by lane, and its
+// latest reasons. A lane it often sends back points at that lane's profile or contracts;
+// once it rarely sends anything back it costs turns for nothing (docs/conductor.md).
+export type ConductorReport = {
+  read: number;
+  sentBack: number;
+  byLane: Array<{ lane: string; read: number; sentBack: number }>;
+  recent: Array<{ todo: string; lane: string; note: string }>;
+};
+
+export function conductorReport(events: HEvent[], recent = 5): ConductorReport {
+  const lanes = new Map<string, { lane: string; read: number; sentBack: number }>();
+  const back: ConductorReport["recent"] = [];
+  let read = 0;
+  let sentBack = 0;
+  for (const e of [...events].sort((a, b) => a.at - b.at)) {
+    if (e.type !== "conduct_verdict") continue;
+    const l = lanes.get(e.lane) ?? { lane: e.lane, read: 0, sentBack: 0 };
+    lanes.set(e.lane, l);
+    l.read++;
+    read++;
+    if (e.verdict === "reject") {
+      l.sentBack++;
+      sentBack++;
+      back.push({ todo: e.todo, lane: e.lane, note: e.note ?? "" });
+    }
+  }
+  return { read, sentBack, byLane: [...lanes.values()].sort((a, b) => b.read - a.read || a.lane.localeCompare(b.lane)), recent: back.slice(-recent).reverse() };
+}

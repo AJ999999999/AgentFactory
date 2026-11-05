@@ -21,6 +21,8 @@ export const MUST_ASK = new Set([
   "rule:turn_cap", "rule:stopped", "rule:base_failed",
   // A pull request larger than the goal's ship.maxFiles: look at it every time.
   "rule:ship_large",
+  // Telling a ticket's reporter the problem was their own doing (playbook.ts).
+  "rule:jira_reply_user_error",
 ]);
 // The effects a standing answer may repeat: ones that don't change the goal itself.
 const STANDABLE = new Set(["ack", "approve", "retry", "reopen"]);

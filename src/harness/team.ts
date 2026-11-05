@@ -21,6 +21,8 @@ import type { HEvent, SeatDef } from "./types.ts";
 import { eid } from "./store.ts";
 
 export const REVIEW_LANE = "probation-review";
+// The conductor's lane: a strong model reads finished work before it counts (docs/conductor.md).
+export const CONDUCT_LANE = "conduct";
 
 export function seatAskId(goal: string, lane: string): string {
   return eid("ask-seat", goal, lane);

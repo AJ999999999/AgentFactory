@@ -16,12 +16,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
-import type { AskOption, Budget, Direction, Effect, Finding, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import type { AskOption, Budget, Direction, Effect, Fact, Finding, PlanStep, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import { stepOf } from "./playbook.ts";
 import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
 import { activeFreezes } from "./select.ts";
 import { eid, safeId } from "./store.ts";
-import { REVIEW_LANE } from "./team.ts";
+import { CONDUCT_LANE, REVIEW_LANE } from "./team.ts";
 
 export type FindingDraft = { assumption?: string; direction: Direction; grade: Grade; source: string; text: string; metrics?: Record<string, number> };
 export type AskDraft = { question: string; options: AskOption[]; to?: string; recommend?: { option: string; why: string } };
@@ -36,7 +37,13 @@ export type TurnOutput = {
   supersede?: Array<{ todo: string; reason: string }>;
   discount?: Array<{ finding: string; reason: string }>;
   note?: string;
-  verdict?: Verdict; // probation reviews only
+  verdict?: Verdict; // reviews and the conductor only
+  // A playbook step (playbook.ts): where the run goes next, and what the turn found.
+  outcome?: string;
+  slots?: Record<string, string>;
+  reply?: { text: string }; // a step that drafts the reply to the ticket's reporter
+  facts?: Array<{ subject: string; text: string; source?: string }>; // about the goal's service
+  plan?: PlanStep[]; // a planning step's steps for this ticket (playbook.ts)
 };
 
 export type Validated = { result: TurnResult; granularity: Granularity; events: HEvent[]; reasons: string[] };
@@ -199,12 +206,55 @@ export function validateTurn(input: {
     }
   }
 
+  // ---- facts about the goal's service ----
+  for (const [i, f] of (o.facts ?? []).slice(0, 6).entries()) {
+    const service = g.def.service;
+    const subject = typeof f?.subject === "string" ? f.subject.trim().slice(0, 80) : "";
+    const text = typeof f?.text === "string" ? f.text.trim().slice(0, 400) : "";
+    if (!service) { reasons.push(`fact ${i}: facts are about a service, and ${t.goal} has none`); continue; }
+    if (!/^[a-z0-9][\w.-]*$/i.test(subject) || !text) { reasons.push(`fact ${i}: needs a "subject" like logs.format and a "text"`); continue; }
+    const pb = t.play ? s.policy.playbooks?.[t.play.playbook] : undefined;
+    const fact: Fact = { id: eid(turn, "fact", i), service, subject, text, ...(typeof f.source === "string" && f.source ? { source: f.source.slice(0, 200) } : {}), by: actor, ...(pb ? { playbook: { id: pb.id, version: pb.version } } : {}), turn };
+    events.push({ id: fact.id, at, by, type: "fact_recorded", fact });
+  }
+
   // ---- note ----
   if (o.note) events.push({ id: eid(turn, "note"), at, by, type: "note", goal: t.goal, text: String(o.note).slice(0, p.proposals.noteChars), turn });
 
   // ---- outcome ----
   let result: TurnResult = "progress";
   let done = !!o.done;
+  // ---- playbook steps: a fork needs its outcome, a reply step its draft ----
+  const step = stepOf(s, t);
+  if (done && t.play && step?.outcomes) {
+    const branch = typeof o.outcome === "string" ? step.outcomes[o.outcome] : undefined;
+    const slots = cleanSlots(o.slots);
+    const missing = (branch?.needs ?? []).filter((n) => !slots[n]);
+    if (!branch) {
+      reasons.push(`step ${t.play.step} needs an "outcome": one of ${Object.keys(step.outcomes).join(", ")}`);
+      done = false;
+    } else if (missing.length) {
+      reasons.push(`outcome ${o.outcome} needs slots ${missing.join(", ")}`);
+      done = false;
+    } else if (step.plans && o.outcome === "planned") {
+      // A plan for a kind of ticket no playbook covers: the run's own steps, if they hold up.
+      const p = planOf(s, t, o.plan, slots.kind);
+      if (typeof p === "string") {
+        reasons.push(`plan: ${p}`);
+        done = false;
+      } else {
+        events.push({ id: eid("plan", t.id, turn), at, by, type: "play_plan", todo: t.id, run: t.play.run, kind: slots.kind, steps: p });
+        events.push({ id: eid("outcome", t.id, turn), at, by, type: "play_outcome", todo: t.id, run: t.play.run, step: t.play.step, outcome: o.outcome!, slots, turn });
+      }
+    } else events.push({ id: eid("outcome", t.id, turn), at, by, type: "play_outcome", todo: t.id, run: t.play.run, step: t.play.step, outcome: o.outcome!, slots, turn });
+  }
+  if (done && t.play && step?.reply) {
+    const text = typeof o.reply?.text === "string" ? o.reply.text.trim().slice(0, 2000) : "";
+    if (!text || !t.play.ticket) {
+      reasons.push(text ? "a reply needs the run's ticket" : `step ${t.play.step} needs "reply": {"text": "..."}`);
+      done = false;
+    } else events.push({ id: eid("reply", t.id), at, by, type: "reply_drafted", todo: t.id, run: t.play.run, outcome: t.play.slots?.outcome ?? "", text, ticket: t.play.ticket });
+  }
   if (o.blocker) {
     const id = eid("ask-blocked", t.id, t.turns + 1);
     events.push({
@@ -255,6 +305,22 @@ export function validateTurn(input: {
       events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
       result = "completed";
     }
+  } else if (done && t.conducts) {
+    // The conductor's verdict: accept lets the work count, reject sends it back with
+    // directions the next turn reads. Without directions a send-back helps no one.
+    const why = String(o.note ?? "").trim().slice(0, 600);
+    if (o.verdict !== "accept" && o.verdict !== "reject") reasons.push(`the conductor needs a verdict: "accept" or "reject"`);
+    else if (o.verdict === "reject" && !why) reasons.push(`a send-back needs directions in "note": what to change, and where`);
+    else {
+      const target = s.todos.get(t.conducts);
+      if (target && target.status === "review" && target.reviewTodo === t.id) {
+        events.push({ id: eid("conducted", t.id), at, by, type: "conduct_verdict", todo: target.id, conduct: t.id, lane: target.lane, seat: seatKeyOf(target), verdict: o.verdict, ...(why ? { note: why } : {}) });
+        if (o.verdict === "accept") events.push({ id: eid("done", target.id, "conduct", t.id), at, by, type: "todo_done", todo: target.id, turn });
+        else events.push({ id: eid("reopen", target.id, "conduct", t.id), at, by, type: "todo_reopened", todo: target.id, reason: `the conductor sent it back: ${why}` });
+      }
+      events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
+      result = "completed";
+    }
   } else if (done) {
     const firstAsk = events.find((e) => e.type === "ask_opened" && e.ask.origin === `turn:${turn}` && !autoClosed.has(e.ask.id));
     if (firstAsk && firstAsk.type === "ask_opened" && !t.review) {
@@ -283,12 +349,25 @@ export function validateTurn(input: {
         },
       });
       events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, reviewTodo: rid });
+    } else if (conducted(s, t, input.checked)) {
+      // The conductor reads finished work before it counts, so a turn that went the wrong
+      // way is turned back before other work builds on it (docs/conductor.md).
+      const cid = eid("cnd", t.id, t.turns + 1);
+      const note = o.note ? ` The worker's note: "${String(o.note).slice(0, 200)}".` : "";
+      events.push({
+        id: `add-${cid}`, at, by: "harness", type: "todo_added", provenance: "rule:conductor",
+        todo: {
+          id: cid, goal: t.goal, lane: CONDUCT_LANE, kind: "task", priority: Math.max(1, t.priority), conducts: t.id, because: t.id, maxTurns: 2,
+          text: `Read the finished ${t.lane} todo ${t.id} before it counts: "${t.text.slice(0, 240)}". It changed ${files.join(", ") || "no files"}${input.checked ? `, and its check ${t.check} passed` : ""}.${note} Did it do what the todo, the goal and its contracts ask? Reply with a verdict, "accept" or "reject"; to reject, say in "note" exactly what to change and where.`,
+        },
+      });
+      events.push({ id: eid("review", t.id, t.turns + 1), at, by, type: "todo_review", todo: t.id, reviewTodo: cid });
     } else {
       events.push({ id: eid("done", t.id, t.turns + 1), at, by, type: "todo_done", todo: t.id, turn });
     }
     result = "completed";
   }
-  if (o.verdict && !t.reviews && !t.prReview) reasons.push("verdict ignored: only a review gives one");
+  if (o.verdict && !t.reviews && !t.prReview && !t.conducts) reasons.push("verdict ignored: only a review gives one");
 
   // ---- granularity ----
   const flips = beliefFlips(s, accepted.findings);
@@ -311,6 +390,63 @@ export function validateTurn(input: {
   events.unshift({ id: `turn-${turn}`, at, by, type: "turn", turn: rec });
   return { result, granularity, events, reasons };
 }
+
+// Whether a finished todo goes to the conductor first: only when the policy has one, only
+// work lanes (judges, reviews and the conductor itself never), and at most maxRedirects
+// send-backs per todo, so it can't hold work forever.
+export function conducted(s: State, t: TodoState, checked: boolean): boolean {
+  // A todo marked `conduct` (a playbook's diagnosis) is read even with the policy's off.
+  const c = s.policy.conductor ?? (t.conduct ? {} : undefined);
+  if (!c || t.kind !== "task" || t.reviews || t.prReview || t.conducts) return false;
+  const judges = new Set([...(s.policy.team?.library.judgeLanes ?? []), REVIEW_LANE, CONDUCT_LANE]);
+  if (judges.has(t.lane)) return false;
+  if (!t.conduct && c.lanes && !c.lanes.includes(t.lane)) return false;
+  if (!t.conduct && c.skipChecked && checked) return false;
+  return t.redirects < (c.maxRedirects ?? 1);
+}
+
+// A plan's steps, checked: short ids of their own, lanes the harness knows how to staff
+// (never a judge's), an order that only looks back, and at most eight steps. Writing code
+// only where the service has a folder to write in.
+const RESERVED = new Set(["plan", "close", "follow-up", "onboard"]);
+function planOf(s: State, t: TodoState, raw: unknown, kind: string): PlanStep[] | string {
+  if (!/^[a-z][a-z0-9-]{1,40}$/.test(kind ?? "")) return `"kind" must be a short lowercase name for this kind of ticket, like access-request`;
+  if (s.policy.playbooks?.[kind]) return `there's a playbook ${kind} already: this kind of ticket isn't new`;
+  if (!Array.isArray(raw) || !raw.length) return `needs "plan": [{"id", "lane", "text", "after", "reply", "writes"}]`;
+  if (raw.length > 8) return "at most eight steps";
+  const judges = new Set([...(s.policy.team?.library.judgeLanes ?? []), REVIEW_LANE, CONDUCT_LANE]);
+  const pb = stepOf(s, t) ? s.policy.playbooks?.[t.play!.playbook] : undefined;
+  const seen = new Set<string>();
+  const out: PlanStep[] = [];
+  for (const [i, x] of raw.entries()) {
+    const d = (x ?? {}) as Partial<PlanStep>;
+    const id = String(d.id ?? "");
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(id) || RESERVED.has(id) || pb?.steps[id] || seen.has(id)) return `step ${i}: needs an id of its own, short and lowercase`;
+    const lane = String(d.lane ?? "");
+    if (!/^[a-z][a-z0-9-]{0,40}$/.test(lane) || judges.has(lane)) return `step ${id}: lane "${lane}" can't be planned`;
+    const text = String(d.text ?? "").trim();
+    if (!text) return `step ${id}: says nothing to do`;
+    const after = Array.isArray(d.after) ? d.after.map(String) : [];
+    const bad = after.find((a) => !seen.has(a));
+    if (bad) return `step ${id}: after ${bad}, which isn't an earlier step`;
+    seen.add(id);
+    out.push({ id, lane, text: text.slice(0, 600), ...(after.length ? { after } : {}), ...(d.reply === true ? { reply: true } : {}), ...(d.writes === true ? { writes: true } : {}) });
+  }
+  return out;
+}
+
+// What a turn found, as short strings only: an agent's JSON isn't trusted to be small.
+function cleanSlots(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, x] of Object.entries(v).slice(0, 12)) {
+    if (!/^[a-z][\w-]{0,30}$/i.test(k) || x === null || x === undefined) continue;
+    out[k] = (Array.isArray(x) ? x.join(", ") : String(x)).slice(0, 400);
+  }
+  return out;
+}
+
+const seatKeyOf = (t: TodoState) => `${t.goal}/${t.lane}`;
 
 function failed(input: { s: State; todo: TodoState; agent: string; turn: string; now: number; why: string; files: string[]; seat?: SeatState }, hard: string[]): Validated {
   const rec: TurnRecord = { id: input.turn, todo: input.todo.id, goal: input.todo.goal, agent: input.agent, result: "validation_failed", granularity: "none", reasons: hard, files: input.files, why: input.why, seat: input.seat?.key };

@@ -50,7 +50,7 @@ To run it on real work, with Jira coming in, questions on Slack and pull request
 <!-- Each guide is its own file, so a change to one feature touches only its own page. Add a new page for a new feature and a line here; don't grow this README. -->
 
 - **Start here:** [how it works](docs/how-it-works.md) · [setting it up in the office](docs/setup.md) · [the film](docs/film.md) · [harness design](docs/harness.md), against the six cases
-- **Work in and out:** [events from Jira](docs/events.md) · [done work as pull requests](docs/ship.md) · [questions on Slack](docs/harness-slack.md)
+- **Work in and out:** [events from Jira](docs/events.md) · [Jira bugs, triaged, diagnosed and answered](docs/jira-bugs.md) · [done work as pull requests](docs/ship.md) · [questions on Slack](docs/harness-slack.md)
 - **Your seat:** [the panel](docs/panel.md) · [the desk](docs/desk.md), every Copilot CLI terminal as a thread, with Ctrl+K between them · [the partner's MCP tools](docs/partner-tools.md)
-- **Running it:** [which CLI and model run a seat](docs/models.md) · [usage limits](docs/usage-limits.md) · [Windows](docs/windows.md) · [memory about the people you serve](docs/memory.md)
+- **Running it:** [which CLI and model run a seat](docs/models.md) · [the conductor](docs/conductor.md), a strong model that sends work going the wrong way back · [usage limits](docs/usage-limits.md) · [Windows](docs/windows.md) · [memory about the people you serve](docs/memory.md)
 - **Honest notes:** [what testing found](docs/testing-findings.md) · [not real yet](docs/not-real-yet.md) · [a terminal animation of one engagement](docs/demo-animation.md)

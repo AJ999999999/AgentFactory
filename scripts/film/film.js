@@ -4,7 +4,7 @@
 const W = 1920, H = 1080, TOTAL = 47; window.TOTAL = TOTAL;
 const cv = document.getElementById('out'); cv.width = W; cv.height = H; const X = cv.getContext('2d');
 const F = { sans: '"AF Sans", "WenQuanYi Zen Hei"', inter: 'Inter', disp: '"Inter Display"', mono: '"DejaVu Sans Mono"' };
-const NAVY = '14,27,61', BLUE = '47,107,255', ORANGE = '255,122,26', GREEN = '18,191,120', VIOLET = '124,77,255', PINK = '255,51,119', CYAN = '0,184,217', YELLOW = '255,190,0', WHITE = '255,255,255', MUTE = '120,134,166';
+const NAVY = '14,27,61', BLUE = '47,107,255', ORANGE = '255,122,26', GREEN = '18,191,120', VIOLET = '124,77,255', PINK = '255,51,119', CYAN = '0,184,217', YELLOW = '255,190,0', RED = '224,69,47', WHITE = '255,255,255', MUTE = '120,134,166';
 window.ready = Promise.all(['500 40px "AF Sans"', '700 40px "AF Sans"', '900 40px "AF Sans"', '600 40px Inter', '800 40px Inter', '900 40px Inter', '700 40px Inter', '500 40px "DejaVu Sans Mono"'].map(s => document.fonts.load(s, '字Aa1')));
 const cl = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x)), lerp = (a, b, u) => a + (b - a) * u;
 const sm = x => { x = cl(x); return x * x * (3 - 2 * x); }, eio = x => { x = cl(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
@@ -24,7 +24,7 @@ function branch(u) {
   return bez([3450, -220], [3550, -220], [3600, 0], [3700, 0], (u - .8) / .2);
 }
 const bu = t => { const l = seg(t, 26, 30); return l * .85 + eio(l) * .15; };
-const CHECKS = [[27.2, 'test'], [28.0, 'lint'], [28.8, 'review']].map(([tt, n]) => ({ t: tt, n, p: branch(bu(tt)) }));
+const CHECKS = [[27.2, '测试先红'], [28.0, '修复变绿'], [28.8, '另一模型审查']].map(([tt, n]) => ({ t: tt, n, p: branch(bu(tt)) }));
 function P(t) {
   if (t < 5.4) { const bob = sm(seg(t, 3.4, 4)) * (1 - sm(seg(t, 4.9, 5.4))); return [0, -260 + Math.sin(t * 2.2) * 8 * bob]; }
   if (t < 6) return [0, lerp(-260, 0, ei(seg(t, 5.4, 6)))];
@@ -33,7 +33,7 @@ function P(t) {
   if (t < 11.2) return RULE;
   if (t < 12) return arc(RULE, FIX, eio(seg(t, 11.2, 12)), 150);
   if (t < 15.5) return FIX;
-  if (t < 16.5) return arc(FIX, JUDGE, eio(seg(t, 15.5, 16.5)), 70);
+  if (t < 16.5) return arc(FIX, JUDGE, eio(seg(t, 15.5, 16.5)), 0); // straight between the logs and the code cards
   if (t < 20) return JUDGE;
   if (t < 21.5) { const k = Math.min(2, Math.floor((t - 20) / .5)), a = k ? STEPS[k - 1] : JUDGE; return arc(a, STEPS[k], eio(seg(t, 20 + k * .5, 20.5 + k * .5)), 70); }
   if (t < 22.3) return arc(STEPS[2], WAIT, eio(seg(t, 21.5, 22.3)), 20);
@@ -130,29 +130,32 @@ function engagement(t, fade) {
     if (t >= at) { const u = pulse(t, at, .6); if (u !== null) ring(x, 0, 16 + 60 * eo(u), rgb, (1 - u) * fade, 3); }
   });
   pill('每件事只记一次', 170, 104, NAVY, WHITE, fade * sm(seg(t, 8.2, 8.6)) * (1 - sm(seg(t, 11, 12))), 16, F.sans, '700', 14, 32);
-  // the rule that routes it
+  // the playbook takes it
   const ra = sm(seg(t, 10.3, 10.6)) * (1 - sm(seg(t, 12.5, 13.3)));
   if (ra > 0) { X.globalAlpha = ra * fade; X.strokeStyle = `rgb(${ORANGE})`; X.setLineDash([8, 8]); X.lineWidth = 3; X.beginPath(); X.moveTo(600, -22); X.lineTo(600, -260); X.stroke(); X.setLineDash([]); X.globalAlpha = 1;
-    const txt = '规则：Jira bug → FIX'; X.save(); X.translate(700, -120); const tw = pill(txt.slice(0, Math.max(1, Math.ceil(txt.length * seg(t, 10.4, 10.9)))), 0, 0, WHITE, ORANGE, ra * fade, 18, F.sans, '700'); X.restore();
-    X.globalAlpha = ra * fade; X.strokeStyle = `rgb(${ORANGE})`; X.lineWidth = 2; rrect(700 - tw / 2, -138, tw, 36, 18); X.stroke(); X.globalAlpha = 1; }
-  // stations: one per lane
-  const LANE = { OPS: CYAN, FDB: VIOLET, FIX: BLUE };
-  SEATS.forEach(([x, y, n], i) => {
-    const a = back(seg(t, 9.4 + i * .18, 10.1 + i * .18)); if (a <= 0) return; const on = n === 'FIX' && t > 12 && t < 16.5;
-    const cy = y + 60; card(x, cy, 150, 104, LANE[n], n, cl(a) * fade, cl(a, 0, 1.2));
-    X.globalAlpha = cl(a) * fade; if (on) { X.strokeStyle = `rgb(${ORANGE})`; X.lineWidth = 4; rrect(x - 79, cy - 56, 158, 112, 19); X.stroke(); }
-    X.globalAlpha = 1; label('工位 · worker', x, cy + 34, MUTE, cl(a) * fade, 15, 'center', F.sans, '500');
-    if (n !== 'FIX') for (let q = 0; q < 3 - i; q++) { X.globalAlpha = cl(a) * fade; X.fillStyle = `rgb(${LANE[n]})`; rrect(x - 30 + q * 22, cy - 82, 16, 16, 4); X.fill(); X.globalAlpha = 1; }
+    const txt = '处理流程：jira-bug'; X.save(); X.translate(560, -120); const tw = pill(txt.slice(0, Math.max(1, Math.ceil(txt.length * seg(t, 10.4, 10.9)))), 0, 0, WHITE, ORANGE, ra * fade, 18, F.sans, '700'); X.restore();
+    X.globalAlpha = ra * fade; X.strokeStyle = `rgb(${ORANGE})`; X.lineWidth = 2; rrect(560 - tw / 2, -138, tw, 36, 18); X.stroke(); X.globalAlpha = 1; }
+  // triage, on a strong model
+  const ta = back(seg(t, 9.6, 10.3));
+  if (ta > 0) { card(800, -270, 180, 110, VIOLET, 'TRIAGE · 分诊', cl(ta) * fade, cl(ta, 0, 1.2)); label('强模型', 800, -246, VIOLET, cl(ta) * fade, 19, 'center', F.sans, '700');
+    if (t > 12.1 && t < 13.2) { const u = seg(t, 12.1, 12.9); X.globalAlpha = fade; rrect(730, -232, 140, 8, 4); X.fillStyle = rgba(VIOLET, .15); X.fill(); rrect(730, -232, 140 * u, 8, 4); X.fillStyle = `rgb(${VIOLET})`; X.fill(); X.globalAlpha = 1; }
+    const v = back(seg(t, 12.9, 13.25)) * (1 - sm(seg(t, 19, 19.8))); if (v > 0) { X.save(); X.translate(800, -178); X.scale(cl(v, 0, 1.2), cl(v, 0, 1.2)); pill('→ checkout-api', 0, 0, NAVY, WHITE, cl(v) * fade, 16, F.inter, '700', 14, 32); X.restore(); } }
+  // logs and code, side by side, then together into the diagnosis
+  const SIDE = [[1025, -470, CYAN, 'LOGS · 日志', '一个 job：42 行', 13.1], [1025, -190, BLUE, 'CODE · 代码', 'retry.ts 第 88 行', 13.3]];
+  SIDE.forEach(([x, y, c, title, body, at]) => {
+    const a = back(seg(t, at, at + .4)) * (1 - .55 * sm(seg(t, 19.2, 20))); if (a <= 0) return;
+    const ln = sm(seg(t, at - .1, at + .3));
+    X.globalAlpha = fade * ln * .8; X.strokeStyle = `rgb(${c})`; X.setLineDash([6, 7]); X.lineWidth = 3; X.beginPath(); X.moveTo(890, -270); X.bezierCurveTo(920, -270, 900, y, x - 100, y); X.moveTo(x + 100, y); X.bezierCurveTo(1130, y, 1120, -270, 1155, -270); X.stroke(); X.setLineDash([]); X.globalAlpha = 1;
+    card(x, y, 200, 96, c, title, cl(a) * fade, cl(a, 0, 1.2), 38); label(body, x, y + 32, NAVY, cl(a) * fade * sm(seg(t, at + .5, at + .8)), 18, 'center', F.sans, '700');
+    for (const [s0, p0, p1, p2, p3] of [[at, [890, -270], [920, -270], [900, y], [x - 100, y]], [14.7, [x + 100, y], [1130, y], [1120, -270], [1155, -270]]]) {
+      const u = seg(t, s0, s0 + .9); if (u <= 0 || u >= 1) continue; const q = bez(p0, p1, p2, p3, eio(u)); X.globalAlpha = fade; X.fillStyle = `rgb(${c})`; X.beginPath(); X.arc(q[0], q[1], 9, 0, 7); X.fill(); X.strokeStyle = '#fff'; X.lineWidth = 3; X.stroke(); X.globalAlpha = 1; }
   });
-  { const a = back(seg(t, 12, 12.35)) * (1 - sm(seg(t, 15, 15.5))); if (a > 0) { X.save(); X.translate(800, -440); X.scale(cl(a, 0, 1.2), cl(a, 0, 1.2)); pill('#1 风险最高', 0, 0, YELLOW, NAVY, cl(a) * fade, 17, F.sans, '900'); X.restore(); } }
-  // the worker's turn: a progress bar and the steps it takes
-  if (t > 12 && t < 16.6) { const u = seg(t, 12.2, 15.3), a = fade * (1 - sm(seg(t, 16, 16.6))); X.globalAlpha = a; rrect(740, -272, 120, 8, 4); X.fillStyle = rgba(BLUE, .15); X.fill(); rrect(740, -272, 120 * u, 8, 4); X.fillStyle = `rgb(${ORANGE})`; X.fill(); X.globalAlpha = 1; }
-  [['改 retry.ts', 12.6, BLUE], ['跑测试', 13.5, BLUE], ['3/3 通过', 14.4, GREEN]].forEach(([s, at, c], i) => { const a = fade * sm(seg(t, at, at + .2)) * (1 - sm(seg(t, 16, 16.8))); if (a <= 0) return; X.save(); X.translate(800, -180 + i * 42); X.scale(.6 + .4 * back(seg(t, at, at + .3)), 1); pill(s, 0, 0, c, WHITE, a, 16, F.sans, '700', 12, 32); X.restore(); });
-  // the judge, on another model
+  // the diagnosis, read by the conductor before the branch is taken
   const ja = back(seg(t, 13.6, 14.4));
-  if (ja > 0) { card(1250, -270, 190, 110, VIOLET, 'JUDGE · 审查', cl(ja) * fade, cl(ja, 0, 1.2)); label('另一个模型', 1250, -246, VIOLET, cl(ja) * fade, 19, 'center', F.sans, '700');
+  if (ja > 0) { card(1250, -270, 190, 110, BLUE, 'DIAGNOSE · 诊断', cl(ja) * fade, cl(ja, 0, 1.2)); label('日志 + 代码', 1250, -246, BLUE, cl(ja) * fade, 19, 'center', F.sans, '700');
     if (t > 16.5 && t < 18.2) { const u = seg(t, 16.5, 18); X.globalAlpha = fade; rrect(1180, -232, 140, 8, 4); X.fillStyle = rgba(VIOLET, .15); X.fill(); rrect(1180, -232, 140 * u, 8, 4); X.fillStyle = `rgb(${VIOLET})`; X.fill(); X.globalAlpha = 1; }
-    const st = back(seg(t, 18, 18.35)) * (1 - sm(seg(t, 21, 21.8))); if (st > 0) { X.save(); X.translate(1250, -440); X.scale(cl(st, 0, 1.3), cl(st, 0, 1.3)); shadow(true, 16, 6, .2); pill('✓ 通过', 0, 0, GREEN, WHITE, cl(st) * fade, 22, F.sans, '900', 20, 44); shadow(false); X.restore(); } }
+    const cd = back(seg(t, 16.5, 16.85)) * (1 - sm(seg(t, 17.85, 18))); if (cd > 0) { X.save(); X.translate(1320, -440); X.scale(cl(cd, 0, 1.2), cl(cd, 0, 1.2)); pill('CONDUCTOR · 强模型在复读', 0, 0, VIOLET, WHITE, cl(cd) * fade, 18, F.sans, '900', 18, 40); X.restore(); }
+    const st = back(seg(t, 18, 18.35)) * (1 - sm(seg(t, 21, 21.8))); if (st > 0) { X.save(); X.translate(1320, -440); X.scale(cl(st, 0, 1.3), cl(st, 0, 1.3)); shadow(true, 16, 6, .2); pill('✓ 是 bug · conductor 同意', 0, 0, GREEN, WHITE, cl(st) * fade, 20, F.sans, '900', 20, 44); shadow(false); X.restore(); } }
   // evidence: a bar chart, belief rises with the grade
   const BASE = -110; const ca0 = sm(seg(t, 19.3, 19.7)) * fade * (1 - .5 * sm(seg(t, 25, 26)));
   if (ca0 > 0) { X.globalAlpha = ca0; X.fillStyle = rgba(NAVY, .2); X.fillRect(1470, BASE, 580, 3); X.globalAlpha = 1;
@@ -168,8 +171,8 @@ function engagement(t, fade) {
     const gone = 1 - sm(seg(t, 25.2, 25.5)); // the card has become the rule chip
     card(cx, cy, 420, 240, PINK, '只问你 · ASK', fade * gone, s, 44);
     X.save(); X.translate(cx, cy); X.scale(s, s);
-    label('重试改成 3 次？', -186, -22, NAVY, ia * fade, 34, 'left', F.sans, '900');
-    const tap = t > 23.5; [['1  改', -126], ['2  先不', 14]].forEach(([s_, bx], i) => { X.globalAlpha = fade * ia; rrect(bx - 60, 6, 124, 46, 23); if (i === 0 && tap) { X.fillStyle = `rgb(${PINK})`; X.fill(); } else { X.strokeStyle = rgba(NAVY, .25); X.lineWidth = 2; X.stroke(); } X.globalAlpha = 1; label(s_, bx + 2, 37, i === 0 && tap ? WHITE : NAVY, ia * fade, 19, 'center', F.sans, '700'); });
+    label('回复报告人？', -186, -36, NAVY, ia * fade, 30, 'left', F.sans, '900'); label('“确认是我们的 bug，正在修。”', -186, -8, MUTE, ia * fade, 17, 'left', F.sans, '700');
+    const tap = t > 23.5; [['1  发送', -126], ['2  我来改', 14]].forEach(([s_, bx], i) => { X.globalAlpha = fade * ia; rrect(bx - 60, 6, 124, 46, 23); if (i === 0 && tap) { X.fillStyle = `rgb(${PINK})`; X.fill(); } else { X.strokeStyle = rgba(NAVY, .25); X.lineWidth = 2; X.stroke(); } X.globalAlpha = 1; label(s_, bx + 2, 37, i === 0 && tap ? WHITE : NAVY, ia * fade, 19, 'center', F.sans, '700'); });
     const ft = t > 24.0; X.globalAlpha = ia * fade; rrect(-186, 72, 22, 22, 6); if (ft) { X.fillStyle = `rgb(${PINK})`; X.fill(); } else { X.strokeStyle = `rgb(${PINK})`; X.lineWidth = 2; X.stroke(); } X.globalAlpha = 1;
     if (ft) check(-175, 83, 8, PINK, 0); label('以后都这样', -154, 90, ft ? PINK : NAVY, ia * fade, 18, 'left', F.sans, '700');
     X.restore();
@@ -181,16 +184,17 @@ function engagement(t, fade) {
   const ba = seg(t, 25.9, 26.7);
   if (ba > 0) { X.globalAlpha = fade; shadow(true, 12, 5, .15); X.strokeStyle = `rgb(${GREEN})`; X.lineWidth = 14; X.lineCap = 'round'; X.lineJoin = 'round'; X.beginPath(); const n = Math.floor(60 * eio(ba)); for (let k = 0; k <= n; k++) { const p = branch(k / 60); k ? X.lineTo(p[0], p[1]) : X.moveTo(p[0], p[1]); } X.stroke(); shadow(false); X.lineCap = 'butt'; X.globalAlpha = 1;
     X.save(); X.translate(3000, -290); pill('PR #41 · af/orion-1427', 0, 0, NAVY, WHITE, fade * sm(seg(t, 26.4, 26.8)), 17, F.inter, '700'); X.restore();
-    CHECKS.forEach(({ t: at, n, p }) => { const a = sm(seg(t, 26.4, 26.8)) * fade, ok = t > at; const s = ok ? back(seg(t, at, at + .3)) : 1;
-      X.save(); X.translate(p[0], p[1]); X.scale(s, s); X.globalAlpha = a; shadow(true, 10, 4, .2); X.fillStyle = ok ? `rgb(${GREEN})` : '#fff'; X.beginPath(); X.arc(0, 0, 22, 0, 7); X.fill(); shadow(false); if (!ok) { X.strokeStyle = rgba(GREEN, .6); X.lineWidth = 3; X.stroke(); } X.restore(); X.globalAlpha = 1;
-      if (ok) check(p[0], p[1], 22 * cl(s, 0, 1.3), GREEN, a); label(n, p[0], p[1] + 54, ok ? GREEN : MUTE, a, 17, 'center', F.inter, '800'); const u = pulse(t, at, .6); if (u !== null) ring(p[0], p[1], 24 + 40 * eo(u), GREEN, (1 - u) * fade, 3); });
+    CHECKS.forEach(({ t: at, n, p }, i) => { const a = sm(seg(t, 26.4, 26.8)) * fade, ok = t > at, CK = i ? GREEN : RED; const s = ok ? back(seg(t, at, at + .3)) : 1; // the new test must fail first: that red is the proof
+      X.save(); X.translate(p[0], p[1]); X.scale(s, s); X.globalAlpha = a; shadow(true, 10, 4, .2); X.fillStyle = ok ? `rgb(${CK})` : '#fff'; X.beginPath(); X.arc(0, 0, 22, 0, 7); X.fill(); shadow(false); if (!ok) { X.strokeStyle = rgba(CK, .6); X.lineWidth = 3; X.stroke(); } if (ok && !i) { X.strokeStyle = '#fff'; X.lineWidth = 5; X.lineCap = 'round'; X.beginPath(); X.moveTo(-8, -8); X.lineTo(8, 8); X.moveTo(8, -8); X.lineTo(-8, 8); X.stroke(); X.lineCap = 'butt'; } X.restore(); X.globalAlpha = 1;
+      if (ok && i) check(p[0], p[1], 22 * cl(s, 0, 1.3), GREEN, a); label(n, p[0], p[1] + 54, ok ? CK : MUTE, a, 17, 'center', F.sans, '900'); const u = pulse(t, at, .6); if (u !== null) ring(p[0], p[1], 24 + 40 * eo(u), CK, (1 - u) * fade, 3); });
   }
   { const ap = back(seg(t, 29.2, 29.55)) * (1 - sm(seg(t, 31.2, 31.8))); if (ap > 0) { X.save(); X.translate(MERGE[0] + 150, -110); X.scale(cl(ap, 0, 1.2), cl(ap, 0, 1.2)); shadow(true, 14, 6, .2); pill('✓ 你已批准', 0, 0, PINK, WHITE, cl(ap) * fade, 19, F.sans, '900', 18, 40); shadow(false); X.restore(); } }
   if (t > 30) { // merged: a burst of colour
     const u = seg(t, 30, 31.6), cols = [ORANGE, BLUE, GREEN, VIOLET, PINK, CYAN, YELLOW];
     if (u < 1) for (let k = 0; k < 70; k++) { const ang = hash(k, 1) * Math.PI * 2, sp = 180 + hash(k, 2) * 420, d = sp * eo(u), x = MERGE[0] + Math.cos(ang) * d, y = MERGE[1] + Math.sin(ang) * d + 260 * u * u; X.save(); X.translate(x, y); X.rotate(ang + u * 8 * hash(k, 3)); X.globalAlpha = fade * (1 - u); X.fillStyle = `rgb(${cols[k % 7]})`; X.fillRect(-7, -4, 14, 8); X.restore(); }
     X.globalAlpha = 1; for (let r = 0; r < 2; r++) { const v = pulse(t, 30 + r * .12, 1.1); if (v !== null) ring(MERGE[0], 0, 20 + (200 + r * 80) * eo(v), r ? ORANGE : GREEN, (1 - v) * fade, 6 - r * 2); }
-    X.save(); X.translate(MERGE[0], 60); const s = back(seg(t, 30.05, 30.4)); X.scale(s, s); shadow(true, 14, 6, .2); pill('已合并 → main', 0, 0, GREEN, WHITE, fade * cl(s), 20, F.sans, '900', 18, 40); shadow(false); X.restore(); }
+    X.save(); X.translate(MERGE[0], 60); const s = back(seg(t, 30.05, 30.4)); X.scale(s, s); shadow(true, 14, 6, .2); pill('已合并 → main', 0, 0, GREEN, WHITE, fade * cl(s), 20, F.sans, '900', 18, 40); shadow(false); X.restore();
+    const rs = back(seg(t, 30.8, 31.15)); if (rs > 0) { X.save(); X.translate(MERGE[0], 116); X.scale(cl(rs, 0, 1.2), cl(rs, 0, 1.2)); shadow(true, 14, 6, .2); pill('已回复报告人：已修复 · 工单关闭', 0, 0, WHITE, GREEN, fade * cl(rs), 18, F.sans, '900', 18, 40); shadow(false); X.restore(); } }
   // the path it took, kept
   if (t > 5.4) { X.globalAlpha = .9 * fade; X.strokeStyle = `rgb(${ORANGE})`; X.lineWidth = Math.max(5, 2.4 / z); X.lineJoin = 'round'; X.lineCap = 'round'; X.setLineDash([2, 12]); X.beginPath(); const end = Math.min(t, 30); for (let s = 5.4; s <= end + 1e-6; s += .01) { const p = P(Math.min(s, end)); s === 5.4 ? X.moveTo(p[0], p[1]) : X.lineTo(p[0], p[1]); } const p = P(end); X.lineTo(p[0], p[1]); X.stroke(); X.setLineDash([]); X.lineCap = 'butt'; X.globalAlpha = 1; }
 }
@@ -262,16 +266,16 @@ function ending(t) {
     const g = X.createLinearGradient(W / 2 - w / 2, 0, W / 2 + w / 2, 0); g.addColorStop(0, `rgb(${BLUE})`); g.addColorStop(.55, `rgb(${VIOLET})`); g.addColorStop(1, `rgb(${PINK})`); X.fillStyle = g; X.fillText('AgentFactory', W / 2, H / 2 + 20 + dy); X.letterSpacing = '0px';
     X.fillStyle = `rgb(${ORANGE})`; X.beginPath(); X.arc(W / 2 + w / 2 + 20, H / 2 + 8 + dy, 14, 0, 7); X.fill();
     X.globalAlpha = sm(seg(t, 43.45, 43.9)); X.fillStyle = `rgb(${NAVY})`; font('900', 46, F.sans); X.fillText('一个人，经营一家 agent 公司。你只做决定。', W / 2, H / 2 + 116); X.textAlign = 'left';
-    const tags = [['接入', ORANGE], ['分派', BLUE], ['审查', VIOLET], ['证据', CYAN], ['交付', GREEN], ['规模', YELLOW]]; let tx = W / 2 - 330;
+    const tags = [['接入', ORANGE], ['分诊', VIOLET], ['诊断', BLUE], ['证据', CYAN], ['交付', GREEN], ['规模', YELLOW]]; let tx = W / 2 - 330;
     tags.forEach(([s_, c], i) => { const b = back(seg(t, 43.6 + i * .06, 43.95 + i * .06)); if (b <= 0) return; X.save(); X.translate(tx + 52, H / 2 + 190); X.scale(cl(b, 0, 1.2), cl(b, 0, 1.2)); pill(s_, 0, 0, c, c === YELLOW ? NAVY : WHITE, cl(b), 18, F.sans, '700', 22, 38); X.restore(); tx += 112; });
     X.globalAlpha = 1; }
   const fo = sm(seg(t, 46.4, 47)); if (fo > 0) { X.globalAlpha = fo; X.fillStyle = '#F2F5FB'; X.fillRect(0, 0, W, H); X.globalAlpha = 1; }
 }
 
 // ---------- lower third: one numbered step at a time ----------
-const SUBS = [[.6, 5.3, '01', '接入', ORANGE, '早上 8:15，一张工单进来了。'], [6.2, 9.7, '02', '记录', BLUE, '每件事只记一次，写进 git 里的记录。'], [10.2, 13.8, '03', '分派', BLUE, '规则决定先做什么、交给谁。'],
-  [14.2, 19.8, '04', '审查', VIOLET, '干活的和审查的，不是同一个模型。'], [20.2, 25.8, '05', '决策', PINK, '证据够硬才算数；该你拍板的，只问你。'], [26.2, 31.7, '06', '交付', GREEN, '开 PR，过检查，你批准了才合并。'],
-  [32.4, 35.8, '07', '规模', CYAN, '这只是一千条线里的一条。'], [36.2, 39.9, '08', '学习', PINK, '每个回答都被记住，它问你的越来越少。']];
+const SUBS = [[.6, 5.3, '01', '接入', ORANGE, '早上 8:15，一张 P1 进了 Jira。'], [6.2, 9.7, '02', '记录', BLUE, '每件事只记一次，写进 git 里的记录。'], [10.2, 13.8, '03', '分诊', VIOLET, '处理流程接手：强模型先分诊。'],
+  [14.2, 19.8, '04', '诊断', BLUE, '日志和代码一起查，诊断还要过强模型这一关。'], [20.2, 25.8, '05', '决策', PINK, '证据够硬才算数；回复报告人，等你点发送。'], [26.2, 31.7, '06', '交付', GREEN, '先写失败的测试，再修；你批准了才合并。'],
+  [32.4, 35.8, '07', '规模', CYAN, '这只是一千条线里的一条。'], [36.2, 39.9, '08', '学习', PINK, '每张工单都在教它，它问你的越来越少。']];
 function subs(t) {
   screen();
   for (const [a, b, no, sec, col, s] of SUBS) { const k = sm(seg(t, a, a + .3)) * (1 - sm(seg(t, b - .3, b))); if (k <= 0) return_(); else draw(); function return_() {} function draw() {

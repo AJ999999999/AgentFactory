@@ -71,4 +71,49 @@ python scripts/film/render.py en --film launch
 
 The first renders the story film, the second the launch film. Use `zh` for the Chinese cut and `--workers N` to set how many browsers render in parallel. It takes about a minute and a half with four. To check a change without a full render, `--preview 12 28.5` writes those moments as stills to `scripts/film/.cache/preview/`. The Chinese font, Noto Sans SC (SIL Open Font License), is downloaded into that cache the first time.
 
+## Checking a film
+
+Two checks, both after [Code2Video](https://github.com/showlab/Code2Video): its layout critic, and its TeachQuiz, which measures what a viewer learned rather than how the film looks.
+
+**Layout, from the frames.** This renders the film every 0.1 s and records where each piece of text really lands:
+
+```bash
+python scripts/film/check_layout.py en --film launch
+```
+
+It reports, as time ranges:
+
+- text overlapping other text;
+- text past the 3% safe area;
+- copy under 26 px that stays on screen for 0.3 s or more.
+
+It exits non-zero when it finds any. Both cuts of the launch film pass. The story film doesn't yet: many of its labels are 18 to 23 px, and its zoom-out keeps drawing labels after they shrink to a pixel.
+
+**What a viewer learned.** `scripts/film/quiz/questions.md` has ten questions on what AgentFactory does. To run the quiz:
+
+1. Give one frame a second of a film to a model that didn't make it. Tell it to answer from the frames alone, and to say NULL when the frames don't show the answer.
+2. Give the same questions, with no film, to another fresh model. That's the baseline.
+3. Score both:
+
+   ```bash
+   python scripts/film/quiz/score.py answers.txt baseline.txt
+   ```
+
+   It prints what the film taught.
+
+The viewer also rates five things, out of 20 each, and names the hardest moment. That moment is what to fix next.
+
+Results so far, with viewers on a different model from the one that made the films:
+
+| | Quiz | Five ratings, out of 100 | Hardest moment |
+|---|---|---|---|
+| No film | 0/10 | | |
+| Story film | 9/10 | 80 | the evidence bars, and a bare "review" dot that never says who reviews |
+| Launch film, first cut | 10/10 | 87 | the conductor's stamp with no word on what it is; "from now on" cut off mid-word |
+| Launch film, revised | 10/10 | 84 | the hook: "waiting on you" before the film has said what waits |
+
+The launch film's later changes come from that last column: a line saying what the conductor does, a tag saying what "from now on" does, the event finished before the cut, and brighter secondary text.
+
+The revised viewer cited the new conductor line and the "from now on" tag as its evidence for those two answers, which the first viewer could only infer. Its ratings came out three points lower. Ratings move that much from one viewer to the next, so they say less than the quiz and the hardest moment do.
+
 The render pipeline and the music's instruments follow [motion-atlas](https://github.com/skylarzzzz/motion-atlas) (MIT, `scripts/film/LICENSE-motion-atlas`).

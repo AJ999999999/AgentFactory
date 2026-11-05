@@ -7,7 +7,7 @@ const LANG = window.LANG || 'en';
 const F = { ui: 'Inter, "AF Sans"', mono: '"JetBrains Mono", "AF Sans", monospace', cjk: '"AF Sans", Inter' };
 window.ready = Promise.all(['900 40px Inter', '800 40px Inter', '600 40px Inter', '500 40px "JetBrains Mono"', '700 40px "JetBrains Mono"', '900 40px "AF Sans"', '700 40px "AF Sans"'].map(s => document.fonts.load(s, '字Aa1')));
 
-const C = { bg: '#070b16', ink: '#f2f5ff', ink2: '#9aa6c4', ink3: '#5d6a8a', blue: '#4d86ff', orange: '#ff7a1a', green: '#22d38b', violet: '#9b6dff', pink: '#ff3d7f', cyan: '#18c4e6', yellow: '#ffc21a', red: '#ff5a47' };
+const C = { bg: '#070b16', ink: '#f2f5ff', ink2: '#b4bed6', ink3: '#5d6a8a', blue: '#4d86ff', orange: '#ff7a1a', green: '#22d38b', violet: '#9b6dff', pink: '#ff3d7f', cyan: '#18c4e6', yellow: '#ffc21a', red: '#ff5a47' };
 const cl = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x)), lerp = (a, b, u) => a + (b - a) * u, seg = (t, a, b) => cl((t - a) / (b - a));
 const sm = x => { x = cl(x); return x * x * (3 - 2 * x); }, eo = x => 1 - Math.pow(1 - cl(x), 3), eio = x => { x = cl(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
 // damped spring 0→1 from t0 (from the code-video skill's motion grammar): a decisive move, an overshoot, a settle
@@ -30,10 +30,10 @@ const COPY = {
     punch: [['No standups.', ''], ['No babysitting.', ''], ['Just ', 'your calls.']],
     title: 'A firm of agents that keeps working for months.',
     segs: ['Triage', 'Diagnose', 'Your call', 'Failing test first', 'Ship'],
-    segSub: ['a strong model reads the ticket', 'logs and code, then a second read', 'one tap, kept as a rule', 'the red is the proof', 'a review on another model · merging is yours'],
+    segSub: ['a strong model reads the ticket', 'logs and code · the conductor reads it before it counts', 'one tap, kept as a rule', 'the red is the proof', 'a review on another model · merging is yours'],
     jira: { kind: 'JIRA · BUG · P1', title: 'Checkout webhooks time out (EU)', status: 'Status', open: 'Open', triaged: 'Triaged', comp: 'Component', none: '—', reporter: 'Reporter', who: 'support desk' },
-    diag: { head: 'DIAGNOSIS', verdict: 'Verdict', bug: 'bug', evid: 'Evidence', e1: 'retry.ts:88 · one 30 s timeout for every try', e2: '42 log lines · eu-1 only', cond: 'CONDUCTOR · accept' },
-    slack: { head: 'AgentFactory · orion', q: 'Reply to the reporter?', quote: '“Confirmed, the bug is on our side. A fix is on the way.”', b1: 'Send', b2: 'Edit', b3: "Don't send", keep: 'from now on' },
+    diag: { head: 'DIAGNOSIS', verdict: 'Verdict', bug: 'bug', evid: 'Evidence', e1: 'retry.ts:88 · one 30 s timeout for every try', e2: '42 log lines · eu-1 only', cond: 'CONDUCTOR · accept', condWhat: 'a strong model checks the diagnosis; it could send it back' },
+    slack: { head: 'AgentFactory · orion', q: 'Reply to the reporter?', quote: '“Confirmed, the bug is on our side. A fix is on the way.”', b1: 'Send', b2: 'Edit', b3: "Don't send", keep: 'from now on', rule: 'next time, a reply like this goes out without asking' },
     test: { fail: 'FAILS ON THE BUG', pass: 'PASSES WITH THE FIX' },
     pr: { title: 'Retry EU webhooks with backoff per attempt', branch: 'af/ORION-1427 → main', c1: 'unit', c2: 'e2e', c3: 'review · a different model', merge: 'Merge pull request', merged: 'Merged', reply: 'Reply sent: fixed · ticket resolved' },
     wall1: 'One partner.', wall2: 'A thousand engagements.', wallCount: 'engagements', wallAsk: '1 question waiting on you',
@@ -45,10 +45,10 @@ const COPY = {
     punch: [['不开站会。', ''], ['不用盯着。', ''], ['只等', '你拍板。']],
     title: '一家 agent 公司，连续干上几个月。',
     segs: ['分诊', '诊断', '你来拍板', '先写失败的测试', '交付'],
-    segSub: ['强模型先读工单', '日志和代码，再复读一遍', '点一下，以后都这样', '红色就是证据', '另一个模型审查 · 合并由你'],
+    segSub: ['强模型先读工单', '日志和代码 · conductor 复读后才算数', '点一下，以后都这样', '红色就是证据', '另一个模型审查 · 合并由你'],
     jira: { kind: 'JIRA · BUG · P1', title: '结账回调超时（欧洲区）', status: '状态', open: '待处理', triaged: '已分诊', comp: '服务', none: '—', reporter: '报告人', who: '客服台' },
-    diag: { head: '诊断', verdict: '结论', bug: 'bug', evid: '证据', e1: 'retry.ts:88 · 每次重试共用 30 秒', e2: '42 行日志 · 只在 eu-1', cond: 'CONDUCTOR · 同意' },
-    slack: { head: 'AgentFactory · orion', q: '回复报告人？', quote: '“确认是我们这边的 bug，修复正在路上。”', b1: '发送', b2: '我来改', b3: '不发', keep: '以后都这样' },
+    diag: { head: '诊断', verdict: '结论', bug: 'bug', evid: '证据', e1: 'retry.ts:88 · 每次重试共用 30 秒', e2: '42 行日志 · 只在 eu-1', cond: 'CONDUCTOR · 同意', condWhat: '强模型复查诊断，不对就退回重做' },
+    slack: { head: 'AgentFactory · orion', q: '回复报告人？', quote: '“确认是我们这边的 bug，修复正在路上。”', b1: '发送', b2: '我来改', b3: '不发', keep: '以后都这样', rule: '下次同类回复：直接发出，不再问你' },
     test: { fail: '在 bug 上失败', pass: '修复后通过' },
     pr: { title: '欧洲区回调按次退避重试', branch: 'af/ORION-1427 → main', c1: 'unit', c2: 'e2e', c3: 'review · 另一个模型', merge: '合并 PR', merged: '已合并', reply: '已回复报告人：已修复 · 工单关闭' },
     wall1: '一个合伙人。', wall2: '一千个项目。', wallCount: '个项目', wallAsk: '今天 1 个问题等你',
@@ -170,12 +170,13 @@ function segDiagnose(t) {
     text('· ' + COPY.diag.e1, x + 40, y + 345, C.ink, CJK ? 30 : 28, '700', UI, 'left', a * sm(seg(lt, 1.8, 2.1)));
     text('· ' + COPY.diag.e2, x + 40, y + 395, C.ink, CJK ? 30 : 28, '700', UI, 'left', a * sm(seg(lt, 2.0, 2.3)));
     const u = spring(lt, 2.6, 2.4, .45); if (u > 0) { X.save(); X.translate(x + 425, y + 490); X.rotate(-.05 * (1 - cl(u))); X.scale(u, u); pill('✓ ' + COPY.diag.cond, 0, 0, C.violet, '#fff', a, 28, '900', UI, 24, 60); X.restore(); }
+    text(COPY.diag.condWhat, x + 425, y + 552, C.violet, CJK ? 28 : 26, '700', UI, 'center', a * sm(seg(lt, 2.9, 3.2)));
   }, C.blue);
 }
 function segCall(t) {
   segFrame(t, 2, [
-    ['events/000143-answer.json', C.ink3, .1, false], ['{', C.ink2, 2.2, false], ['  "kind": "answer",', C.ink, 2.3, true], ['  "ask": "reply-1427",', C.ink, 2.55, true],
-    ['  "choice": "send",', C.green, 2.8, true], ['  "by": "partner",', C.pink, 3.0, true], ['  "standing": true', C.pink, 3.2, true], ['}', C.ink2, 3.4, false],
+    ['events/000143-answer.json', C.ink3, .1, false], ['{', C.ink2, 2.1, false], ['  "kind": "answer",', C.ink, 2.15, true], ['  "ask": "reply-1427",', C.ink, 2.35, true],
+    ['  "choice": "send",', C.green, 2.55, true], ['  "by": "partner",', C.pink, 2.72, true], ['  "standing": true', C.pink, 2.88, true], ['}', C.ink2, 3.1, false],
   ], 'event log · git', 'append-only', (x, y, lt, a) => {
     card(x, y, 850, 580, a, 'slack · ' + COPY.slack.head, C.pink); text(COPY.slack.q, x + 40, y + 130, C.ink, CJK ? 46 : 44, '900', UI, 'left', a);
     text(COPY.slack.quote, x + 40, y + 200, C.ink2, CJK ? 30 : 27, '700', UI, 'left', a);
@@ -183,6 +184,7 @@ function segCall(t) {
     [COPY.slack.b1, COPY.slack.b2, COPY.slack.b3].forEach((s, i) => { X.globalAlpha = a; rr(bx[i], y + 260, 200, 64, 14); if (!i) { X.fillStyle = tap ? C.pink : 'rgba(255,61,127,.18)'; X.fill(); } X.strokeStyle = i ? 'rgba(255,255,255,.2)' : C.pink; X.lineWidth = 2; X.stroke(); X.globalAlpha = 1; text(s, bx[i] + 100, y + 302, i ? C.ink2 : '#fff', 26, '800', UI, 'center', a); });
     const kp = lt > 2.6; X.globalAlpha = a; rr(x + 40, y + 370, 34, 34, 8); if (kp) { X.fillStyle = C.pink; X.fill(); } X.strokeStyle = C.pink; X.lineWidth = 2.5; X.stroke(); X.globalAlpha = 1; if (kp) chk(x + 57, y + 387, 13, C.pink, a);
     text(COPY.slack.keep, x + 92, y + 398, kp ? C.pink : C.ink2, 28, '800', UI, 'left', a);
+    { const r = spring(lt, 2.85, 2.4, .6); if (r > 0) { X.save(); X.translate(x + 425, y + 480); X.scale(r, r); pill(COPY.slack.rule, 0, 0, 'rgba(255,61,127,.14)', C.pink, a, CJK ? 28 : 26, '800', UI, 22, 54, C.pink); X.restore(); } }
     const cu = eio(seg(lt, 1.2, 1.9)), cs = lt > 1.95 && lt < 2.1 ? .85 : 1, ca = a * sm(seg(lt, 1.1, 1.3)) * (1 - sm(seg(lt, 3.0, 3.3)));
     const cx = lerp(x + 700, x + 140, cu) + (lt > 2.2 ? lerp(0, -80, eio(seg(lt, 2.2, 2.55))) : 0), cy = lerp(y + 520, y + 300, cu) + (lt > 2.2 ? lerp(0, 90, eio(seg(lt, 2.2, 2.55))) : 0);
     cursor(cx, cy, cs, ca); [2.0, 2.6].forEach(at => { const v = seg(lt, at, at + .5); if (v > 0 && v < 1) { X.globalAlpha = (1 - v) * a; X.strokeStyle = C.pink; X.lineWidth = 3; X.beginPath(); X.arc(at < 2.5 ? x + 140 : x + 57, at < 2.5 ? y + 292 : y + 387, 20 + 60 * eo(v), 0, 7); X.stroke(); X.globalAlpha = 1; } });

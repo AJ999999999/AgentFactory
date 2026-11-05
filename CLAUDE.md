@@ -133,6 +133,7 @@ Several Claude Code sessions, Copilot turns and people change this repo at once.
 - **The README is an index.** A new feature gets its own page under `docs/` and one line in the README's Guides list.
 - **JSON config merges by key.** Run `npm run setup` once per clone. It points git at `scripts/git/json-merge.mjs` for `policy/*.json` and `package.json`, so two branches that each add a key don't conflict. Two different values for the same key still do.
 - **Don't stack on another session's open PR.** Branch from the latest `main`. If you need its work, wait for it to merge.
+- **Fixes from a real run merge fast.** One fix per pull request, named after the run that found it, merged within a day. A fix left waiting in an open PR got hit again by the next run. The scheduled task and every manual run use `main`; a local branch that merges open PRs is a stopgap, deleted once they merge.
 - **Say which files you'll change before you start**, when another session may be working nearby, and stay inside them. Ask the coordinator before you change code another open PR changes.
 
 ## Next work

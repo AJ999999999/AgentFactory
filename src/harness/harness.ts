@@ -830,7 +830,7 @@ export class Harness {
             // Thrown away only by its checks, and they fail on the commit it started from too:
             // not the turn's doing, and another try would fail the same way (docs/real-runs.md).
             const base = v.result === "validation_failed" && failures.length && v.reasons.every((r) => failures.includes(r))
-              ? await this.failsOnBase(wt, t, files, failures)
+              ? await this.failsOnBase(wt, t, files, failures, s)
               : null;
             if (v.result === "validation_failed") await discard(wt);
             else if (t.artifact && t.pins?.length && v.result === "completed") {
@@ -914,8 +914,11 @@ export class Harness {
   // returns that commit when every check the turn failed fails there too. A failure is
   // matched by its check ("red line x", the todo's checker), not its text: test output
   // differs from run to run.
-  private async failsOnBase(wt: Git, t: TodoState, files: string[], failures: string[]): Promise<string | null> {
+  private async failsOnBase(wt: Git, t: TodoState, files: string[], failures: string[], s: State): Promise<string | null> {
     const which = (f: string) => f.split(":")[0];
+    // The playbook's tests-fail check already compares with the starting commit: the tests
+    // pass there by design, and its failure is about this turn's test (checks.ts).
+    if (failures.some((f) => which(f) === "tests-fail")) return null;
     let rev: string;
     try {
       rev = wt.head();
@@ -925,7 +928,7 @@ export class Harness {
     const dir = path.join(os.tmpdir(), `af-base-${this.engagement}-${rev.slice(0, 10)}-${process.pid}-${Date.now().toString(36)}`);
     try {
       await addDetachedWorktree(this.control, dir, rev);
-      const there = new Set((await this.runCheckers(dir, t, files)).failures.map(which));
+      const there = new Set((await this.runCheckers(dir, t, files, s)).failures.map(which));
       return failures.every((f) => there.has(which(f))) ? rev : null;
     } catch (e) {
       this.log("base_check_failed", { todo: t.id, error: (e as Error).message.slice(0, 200) });

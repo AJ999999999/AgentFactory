@@ -108,3 +108,15 @@ test("the rule asks once per such turn, blocks the work until it's answered, and
 test("a standing \"retry\" never answers it: only a person can say the setup is fixed", () => {
   assert.ok(MUST_ASK.has("rule:base_failed"));
 });
+
+test("the playbook's tests-fail check, which compares with the starting commit itself, is never read as a broken setup", async () => {
+  // Its tests pass on the starting commit by design, so "fails there too" would be wrong.
+  const d = engagement();
+  d.goals[0].todos![0].check = "tests-fail";
+  const agent = new ScriptedTurnAgent([{ name: "app", when: (c) => c.todo.id === "app", run: (c) => { write(c.wtDir, "app/main.ts", "export {}"); return { done: true }; } }]);
+  const sim = await Sim.create({ dir: tmp("tf"), def: d, policy, start: "2026-11-02T09:00:00Z", agent, runners: [runner], people: [], world: {} });
+  await sim.harness.tick({ runner: runner.runner });
+  const s = await sim.harness.state();
+  assert.equal(s.turns[0].result, "validation_failed");
+  assert.match(s.turns[0].reasons[0], /^tests-fail: /);
+});

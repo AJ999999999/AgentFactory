@@ -64,9 +64,45 @@ export class ScriptedTurnAgent implements TurnAgent {
 // Checked against Copilot CLI 1.0.105 on Windows.
 export type LaneConfig = { agent: string; model: string };
 
-// What every agent is told, whichever CLI runs it: the handoff packet, the role, and the
-// one JSON object to end with.
-export function turnPrompt(ctx: TurnContext): string {
+// What a seat may run, as its turn is told it. Each CLI builds this from the same grant it
+// enforces, so what the turn reads can't drift from what it's allowed. A builder that wasn't
+// told tried `python -m pytest`, inline scripts and PowerShell, was refused each time, and
+// gave up on testing without trying `npm test`, the one command it had (docs/real-runs.md).
+// `any` is for a CLI that can't limit commands; it says what holds them instead.
+export type TurnCommands = { any: string } | { list: string[] };
+
+// "git diff:*" (Copilot) or "git diff *" (Claude, the gate) is a prefix: any arguments.
+const showCommand = (c: string) => {
+  const prefix = c.trim().replace(/(:\*|\s\*)$/, "");
+  return prefix === c.trim() ? `\`${prefix}\`` : `\`${prefix}\` with any arguments`;
+};
+
+export function commandsLine(c: TurnCommands | undefined): string[] {
+  if (!c) return [];
+  if ("any" in c) return [c.any];
+  if (!c.list.length) return ["You can't run any commands in this turn, tests included: read and write files only. If the todo needs a command run, say which in your note."];
+  // The project's own commands (its tests) first, whatever order the CLI's grant lists them in.
+  const list = [...c.list.filter((x) => !/^git\s/.test(x)), ...c.list.filter((x) => /^git\s/.test(x))];
+  return [
+    `Commands you can run: ${list.map(showCommand).join(", ")}. Anything else is refused, so don't try other ways to run code (another test runner, python, node, a script, PowerShell).`,
+    "If the todo or its checks name a command that isn't here, use what's here and say in your note which command you needed.",
+  ];
+}
+
+// The shell commands in a Copilot or Claude grant: "shell(npm test)" or "Bash(npm test)",
+// and the bare tool name for any command.
+export function grantedCommands(allowed: string[], denied: string[], tool: "shell" | "Bash"): TurnCommands {
+  const inner = (t: string) => (t.startsWith(`${tool}(`) && t.endsWith(")") ? t.slice(tool.length + 1, -1) : null);
+  if (allowed.includes(tool)) {
+    const not = denied.map(inner).filter((x): x is string => !!x).map(showCommand);
+    return { any: `You can run any shell command${not.length ? `, except ${not.join(", ")}` : ""}.` };
+  }
+  return { list: [...new Set(allowed.map(inner).filter((x): x is string => !!x))] };
+}
+
+// What every agent is told, whichever CLI runs it: the handoff packet, the role, what it
+// may run, and the one JSON object to end with.
+export function turnPrompt(ctx: TurnContext, commands?: TurnCommands): string {
   const seat = ctx.seat;
   const probation = seat?.probation ? ["You're on probation: an independent reviewer checks your finished work before it counts."] : [];
   const role = !seat ? [] : ctx.skill ? [
@@ -93,6 +129,7 @@ export function turnPrompt(ctx: TurnContext): string {
     "",
     ...review,
     "Do one bounded piece of this todo now, then stop. Write files only inside the scope above.",
+    ...commandsLine(commands),
     "Finish with ONE JSON object on the last lines, nothing after it:",
     `{"done": bool, "blocker": "why you can't continue" | null, "note": "<= 280 chars for whoever picks this up next",`,
     ` "findings": [{"assumption": "id", "direction": "supports|refutes|neutral", "grade": "opinion|reported", "source": "a URL you opened in this turn, or repo:<path> of a file in the repo", "text": "...", "metrics": {}}],`,
@@ -177,7 +214,9 @@ export class CopilotTurnAgent implements TurnAgent {
   }
 
   prompt(ctx: TurnContext): string {
-    return turnPrompt(ctx);
+    const flags = this.launch(ctx).flags;
+    const named = (flag: string) => flags.flatMap((f, i) => (flags[i - 1] === flag ? [f] : []));
+    return turnPrompt(ctx, grantedCommands(named("--allow-tool"), named("--deny-tool"), "shell"));
   }
 
   // Which custom agent, model and tools this turn gets.

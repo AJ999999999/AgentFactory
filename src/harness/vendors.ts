@@ -20,7 +20,8 @@ import type { RunError } from "../proc.ts";
 import { spawnCommand } from "../proc.ts";
 import type { LaneConfig, TurnAgent, TurnContext } from "./agents.ts";
 import type { Capacity } from "./agents.ts";
-import { CapacityError, ConnectionWatch, StoppedError, classifyCapacity, parseTurnOutput, turnEnv, turnPrompt } from "./agents.ts";
+import { CapacityError, ConnectionWatch, StoppedError, classifyCapacity, parseTurnOutput, turnEnv, turnPrompt, grantedCommands } from "./agents.ts";
+import type { TurnCommands } from "./agents.ts";
 import type { TurnOutput } from "./validate.ts";
 
 export const GATE = path.resolve(import.meta.dirname, "..", "..", "integrations", "pi", "turn-gate.ts");
@@ -157,6 +158,8 @@ abstract class CliTurnAgent implements TurnAgent {
     return [...new Set([...(map?.always ?? []), ...s.perms.flatMap((p) => map?.[permKey(p)] ?? [])])];
   }
 
+  // What the turn is told it may run (turnPrompt): the CLI's own grant, read the way it enforces it.
+  abstract commands(ctx: TurnContext, s: Seat): TurnCommands;
   abstract command(ctx: TurnContext, s: Seat, prompt: string): { args: string[]; input?: string; env?: Record<string, string>; header: string[] };
   abstract stream(say: (...lines: string[]) => void, now: number): TurnStream;
 
@@ -181,7 +184,7 @@ abstract class CliTurnAgent implements TurnAgent {
       say(`session ${ctx.session!.id} (${ctx.session!.scope}, turn ${ctx.session!.turn}${ctx.session!.resumed ? ", resumed" : ", new"})`);
     }
     const s = this.seat(ctx);
-    const prompt = turnPrompt(ctx);
+    const prompt = turnPrompt(ctx, this.commands(ctx, s));
     const c = this.command(ctx, s, prompt);
     say(...c.header);
     say("--- prompt ---", ...prompt.split("\n"), "--- work ---");
@@ -313,6 +316,10 @@ export class ClaudeCodeTurnAgent extends CliTurnAgent {
     const allow = [...s.perms.flatMap((p) => this.cfg.tools?.[permKey(p)] ?? []), ...(this.cfg.always ?? [])];
     return { model: s.model, charter: this.charter(s.role), allow: [...new Set(allow)].filter((t) => !deny.includes(t)), deny };
   }
+  commands(ctx: TurnContext): TurnCommands {
+    const l = this.launch(ctx);
+    return grantedCommands(l.allow, l.deny, "Bash");
+  }
   command(ctx: TurnContext, _s: Seat, prompt: string) {
     const l = this.launch(ctx);
     return {
@@ -433,6 +440,12 @@ export class CodexTurnAgent extends CliTurnAgent {
     fs.mkdirSync(ctx.session.dir, { recursive: true });
     fs.writeFileSync(path.join(ctx.session.dir, "codex-threads.json"), JSON.stringify(t, null, 2));
   }
+  // Codex can't limit commands to a list, so the turn is told what holds them instead.
+  commands(_ctx: TurnContext, s: Seat): TurnCommands {
+    return { any: s.writes
+      ? "You can run commands inside a sandbox that lets you write only in this worktree. Its .git is read-only, so don't commit: the harness takes your files from the worktree."
+      : "You can run commands inside a read-only sandbox: you can read and run, but not write." };
+  }
   command(ctx: TurnContext, s: Seat, prompt: string) {
     const sandbox = s.writes ? "workspace-write" : "read-only";
     const settings = [...(this.cfg.config ?? []), ...(process.platform === "win32" ? this.cfg.windowsConfig ?? [] : []), ...s.perms.flatMap((p) => this.cfg.tools?.[permKey(p)] ?? [])];
@@ -531,6 +544,10 @@ abstract class GatedTurnAgent extends CliTurnAgent {
     ])];
     const gate = { root: ctx.wtDir, write: s.writes ? s.scope : [], commands, tools };
     return { tools, commands, env: { AF_GATE: JSON.stringify(gate) } };
+  }
+  commands(ctx: TurnContext, s: Seat): TurnCommands {
+    const g = this.grant(ctx, s);
+    return { list: g.tools.some((t) => (this.cfg.shell ?? []).includes(t)) ? g.commands : [] };
   }
   header(name: string, s: Seat, g: { tools: string[]; commands: string[] }): string[] {
     return [`${name}${s.model ? ` --model ${s.model}` : ""} (turn gate on)`, `tools: ${g.tools.join(", ")}`, `commands: ${g.commands.join(", ") || "-"}`, `writes: ${s.writes ? s.scope.join(", ") || "none (no write scope)" : "none"}`];

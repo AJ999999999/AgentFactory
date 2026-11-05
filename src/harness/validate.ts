@@ -509,6 +509,10 @@ function checkTodo(s: State, goal: string, d: TodoDraft, id: string, goalScope: 
     if (pre && inf.threshold && JSON.stringify(pre) !== JSON.stringify(inf.threshold)) return `${inf.assumption} has a pre-registered threshold; a test can't change it`;
     if (!pre && !inf.threshold) return `${inf.assumption} has no pre-registered threshold for ${inf.metric}: state the pass line before the data exists`;
   }
+  // Work outside a turn can spend money, and money is approved before it's spent (rules.ts).
+  // That check only sees a cost someone wrote down: in mars-base-set a 300-parent survey
+  // reached the partner as a plain action. So the proposer must say, even when it's 0.
+  if (kind !== "task" && !(d.cost && typeof d.cost.usd === "number" && Number.isFinite(d.cost.usd) && d.cost.usd >= 0)) return `${kind === "action" ? "an" : "a"} ${kind} needs "cost": {"usd": n}, what it will spend (0 if nothing)`;
   if (kind === "wait" && (!d.wait || !sources.includes(d.wait.source))) return `wait needs a known metric source (${sources.join(", ") || "none configured"})`;
   if (kind === "job" && !d.job) return "job needs a spec";
   const principals = s.engagement?.principals ?? {};

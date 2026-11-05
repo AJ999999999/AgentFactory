@@ -234,7 +234,7 @@ test("validation: agents can't mint strong evidence, invent busywork, or propose
       { assumption: "D", direction: "supports", grade: "expert", source: "me", text: "trust me" },
       { assumption: "D", direction: "supports", grade: "reported", source: "https://example.com/survey", text: "a survey" },
     ],
-    todos: [{ lane: "polish", text: "Tidy up the docs" }, { lane: "test", text: "Pre-order test", tests: "D", kind: "wait", wait: { source: "signups", informs: [{ assumption: "D", metric: "preorders", threshold: { metric: "preorders", op: ">=", value: 20 } }] } }],
+    todos: [{ lane: "polish", text: "Tidy up the docs" }, { lane: "test", text: "Pre-order test", tests: "D", kind: "wait", cost: { usd: 0 }, wait: { source: "signups", informs: [{ assumption: "D", metric: "preorders", threshold: { metric: "preorders", op: ">=", value: 20 } }] } }],
     asks: [{ question: "Shall we close?", options: [{ id: "y", label: "y", effect: { type: "close", status: "done" } }, { id: "n", label: "n" }] }],
   });
   assert.equal(v.result, "progress");
@@ -682,4 +682,19 @@ test("a note with no words in it is refused, so a placeholder copied from an exa
   assert.ok(answerEvents(s, ask.id, { by: "partner", choice: "done", note: "喜欢火车" }, T0 + 1).length, "words in any script count");
   for (const e of answerEvents(s, ask.id, { by: "partner", choice: "done", note: "Loves trains." }, T0 + 1)) apply(s, e);
   assert.throws(() => correctionEvents(s, ask.id, { by: "partner", note: "..." }, T0 + 2), /has no words in it/, "nor can a correction be one");
+});
+
+test("work outside a turn must say what it will spend, so paid work waits for the partner's approval", () => {
+  // mars-base-set: a 300-parent survey reached the partner as a plain action with no cost.
+  const s0 = st(goal({ id: "G", assumptions: [A({ id: "D" })] }), todo("G", { id: "r", lane: "research", text: "research" }));
+  const survey = { lane: "research", text: "Parent survey, n>=300", tests: "D", kind: "action" as const, assignee: "partner" };
+  const unstated = validate(s0, "r", { done: true, todos: [survey] });
+  assert.ok(unstated.reasons.some((r) => /an action needs "cost": \{"usd": n\}/.test(r)));
+  assert.ok(!unstated.events.some((e) => e.type === "todo_added"));
+  const paid = validate(s0, "r", { done: true, todos: [{ ...survey, cost: { usd: 1500 } }] });
+  const added = paid.events.find((e) => e.type === "todo_added");
+  assert.ok(added && added.type === "todo_added");
+  const s1 = settle(project([engagement, goal({ id: "G", assumptions: [A({ id: "D" })] }), todo("G", { id: "r", lane: "research", text: "research" }), ...paid.events], policy), T0 + 2 * DAY);
+  assert.ok(s1.some((e) => e.type === "ask_opened" && /Approve \$1500/.test(e.ask.question)), "the partner approves the money before the survey is theirs to run");
+  assert.ok(!validate(s0, "r", { done: true, todos: [{ ...survey, cost: { usd: 0 } }] }).reasons.length, "free work says 0");
 });

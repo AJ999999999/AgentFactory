@@ -63,7 +63,7 @@ After `maxFollowUps` rounds (5) on one ticket, its new comments are yours to rea
 
 ## What you set up, once
 
-Everything below names your systems, so it goes in `engagement.json` in your private folder, not in this repo.
+Everything below names your systems, so it goes in `engagement.json` in your private folder, not in this repo. A complete example with made-up names, two services and a seed folder with log samples is in [examples/jira-support](examples/jira-support/engagement.json). Copy it to your private folder, change the names, and open it with `npm run harness -- open engagement.json --seed seed`.
 
 **1. The services**, one entry each:
 

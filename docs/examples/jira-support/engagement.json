@@ -1,0 +1,93 @@
+{
+  "id": "contoso-support",
+  "title": "Contoso support",
+  "principals": { "partner": "you" },
+
+  "services": [
+    {
+      "id": "payments",
+      "names": ["PayAPI", "payments", "checkout", "refunds"],
+      "jiraComponents": ["Payments"],
+      "repo": "contoso/payments-api",
+      "dir": "payments",
+      "build": "dotnet build",
+      "test": "dotnet test --no-restore",
+      "logs": {
+        "kind": "files",
+        "where": "\\\\pay-prod-01\\logs\\PayApi-*.log",
+        "notes": "one file per day, times in UTC; an exception's stack trace follows its ERROR line until a blank line"
+      },
+      "sample": "samples/payments.log",
+      "sop": "https://wiki.contoso.example/payments/support",
+      "owners": ["pay-team"]
+    },
+    {
+      "id": "orders",
+      "names": ["Order portal", "orders"],
+      "jiraComponents": ["Orders"],
+      "dir": "orders",
+      "test": "npm test",
+      "logs": {
+        "kind": "files",
+        "where": "D:\\logs\\orders\\orders-*.log",
+        "notes": "JSON lines; the user is in \"uid\", the request in \"rid\""
+      },
+      "sample": "samples/orders.log"
+    }
+  ],
+
+  "goals": [
+    {
+      "id": "intake",
+      "title": "New tickets",
+      "objective": "Route each new ticket to its service, or plan it when no playbook covers it",
+      "owner": "partner",
+      "scope": ["intake"],
+      "assumptions": [],
+      "budget": { "turnsPerWeek": 100 },
+      "perpetual": true
+    },
+    {
+      "id": "pay",
+      "title": "Payments support",
+      "objective": "Answer and fix Payments tickets",
+      "owner": "partner",
+      "service": "payments",
+      "scope": ["payments"],
+      "assumptions": [],
+      "budget": { "turnsPerWeek": 200 },
+      "perpetual": true,
+      "ship": { "repo": "contoso/payments-api", "dir": "payments", "base": "main", "tokenEnv": "AF_GITHUB_TOKEN" }
+    },
+    {
+      "id": "ord",
+      "title": "Orders support",
+      "objective": "Answer Orders tickets",
+      "owner": "partner",
+      "service": "orders",
+      "scope": ["orders"],
+      "assumptions": [],
+      "budget": { "turnsPerWeek": 100 },
+      "perpetual": true
+    }
+  ],
+
+  "events": {
+    "sources": [
+      {
+        "id": "jira",
+        "kind": "jira",
+        "url": "https://jira.contoso.example",
+        "jql": "project in (PAY, ORD) AND status not in (Done, Closed)",
+        "tokenEnv": "AF_JIRA_TOKEN",
+        "everyMinutes": 15,
+        "statuses": { "routed": "In Progress", "replied": "Waiting for customer", "resolved": "Resolved" },
+        "self": ["af-support-bot"]
+      }
+    ],
+    "rules": [
+      { "id": "bugs", "match": { "source": "jira", "types": ["Bug"] }, "goal": "intake", "playbook": "jira-bug", "maxOpen": 3 },
+      { "id": "tasks", "match": { "source": "jira", "types": ["Task", "Service Request"] }, "goal": "intake", "playbook": "jira-draft", "maxOpen": 2 }
+    ]
+  }
+}

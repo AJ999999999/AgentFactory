@@ -84,7 +84,7 @@ export function kidsRockets(): CaseSetup {
       return {
         done: true,
         findings: [{ assumption: "C1", direction: "refutes", grade: "reported", source: "https://tmsearch.uspto.gov", text: "SpaceX holds registered marks covering the name" }],
-        todos: [{ kind: "action", lane: "review", text: "Can we sell a printable kit called 'Starship Junior'?", assignee: "ip-lawyer", tests: "C1" }],
+        todos: [{ kind: "action", lane: "review", text: "Can we sell a printable kit called 'Starship Junior'?", assignee: "ip-lawyer", tests: "C1", cost: { usd: 0 } }], // counsel is on retainer
       };
     }),
     on("polish", (c) => { write(c, "site/landing/index.html", "<h1>Build a rocket tonight</h1><p>Not for children under 3: small parts.</p>"); return { done: true }; }),

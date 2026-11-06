@@ -21,3 +21,16 @@ test("the prompt says who an action can go to, and that a job or a wait needs it
   assert.match(p, /a page you couldn't open is no source, and the packet is not a file/);
   assert.match(turnPrompt(ctx()), /"assignee" one of: the engagement's people\./, "no engagement in view: still a usable sentence");
 });
+
+test("every turn reads the firm's constitution, after the packet and before its role", () => {
+  // Critical thinking and reflection hold whichever model runs the seat, so they live in one
+  // file every CLI's prompt includes, not in each role's profile.
+  const p = turnPrompt({ ...ctx(), seat: { role: "builder", skills: ["code"] } } as never);
+  const at = (s: string) => p.indexOf(s);
+  assert.ok(at("The firm's constitution:") > at("Your todo research"), "after the packet");
+  assert.ok(at("1. Think critically.") > at("The firm's constitution:"));
+  assert.ok(at("2. Reflect.") > at("1. Think critically."));
+  assert.ok(at("Your role: builder") > at("2. Reflect."), "before the role");
+  assert.match(p, /"Doubt:"/);
+  assert.match(p, /never what you may do/, "it changes how a turn works, never what it may touch");
+});

@@ -140,8 +140,10 @@ export function turnPrompt(ctx: TurnContext, commands?: TurnCommands): string {
     `{"done": bool, "blocker": "why you can't continue" | null, "note": "<= 280 chars for whoever picks this up next",`,
     ` "findings": [{"assumption": "id", "direction": "supports|refutes|neutral", "grade": "opinion|reported", "source": "a URL you opened in this turn, or repo:<path> of a file in the repo", "text": "...", "metrics": {}}],`,
     ` "todos": [{"lane": "...", "text": "...", "tests": "assumption id", "because": "finding/ask/todo id", "kind": "task|action|job|wait", "assignee": "for an action", "writeScope": []}],`,
+    ` "assumptions": [{"id": "A1", "text": "what the goal rests on", "category": "desirability|feasibility|viability|compliance|safety", "risk": 1-5, "uncertainty": 1-5, "loadBearing": bool}],`,
     ` "asks": [{"question": "...", "options": [{"id": "...", "label": "...", "consequence": "what follows if chosen", "irreversible": bool}], "recommend": {"option": "id", "why": "..."}}],`,
     ` "supersede": [{"todo": "id", "reason": "..."}], "discount": [{"finding": "id", "reason": "..."}]}`,
+    "If the goal rests on something its assumptions don't list yet, propose it in \"assumptions\". The partner adopts them or not in one question, and todos that test them wait for that answer.",
     "An ask should be answerable from what it says: say what follows from each option, mark the ones that can't be undone, and recommend one with your reason.",
     "Rules: every todo needs a reason to exist (tests or because). You can't record measured, behavioral, stated or expert evidence; propose a job, wait or action that produces it.",
     // What the first judge turn got wrong (docs/next/030): it cited a part of this prompt as a

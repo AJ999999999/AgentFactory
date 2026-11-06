@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { matchGlob, pathsOverlap, pathWithin, sha256 } from "../util.ts";
 import { AGENT_GRADES, GRADES } from "./types.ts";
-import type { AskOption, Budget, Direction, Effect, Fact, Finding, PlanStep, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
+import type { AskOption, AssumptionDef, Budget, Category, Direction, Effect, Fact, Finding, PlanStep, GoalDef, Grade, HEvent, TodoDraft, TurnRecord, TurnResult, Granularity, Verdict } from "./types.ts";
 import { stepOf } from "./playbook.ts";
 import type { AskState, Belief, SeatState, State, TodoState } from "./project.ts";
 import { beliefOf, findAssumption, goalChain } from "./project.ts";
@@ -26,6 +26,9 @@ import { CONDUCT_LANE, REVIEW_LANE } from "./team.ts";
 
 export type FindingDraft = { assumption?: string; direction: Direction; grade: Grade; source: string; text: string; metrics?: Record<string, number> };
 export type AskDraft = { question: string; options: AskOption[]; to?: string; recommend?: { option: string; why: string } };
+// What a turn thinks the goal rests on, before anyone has agreed it does (see "proposed
+// assumptions" below).
+export type AssumptionDraft = { id: string; text: string; category: Category; risk: number; uncertainty: number; loadBearing?: boolean };
 
 export type TurnOutput = {
   done?: boolean;
@@ -33,6 +36,7 @@ export type TurnOutput = {
   findings?: FindingDraft[];
   todos?: TodoDraft[];
   asks?: AskDraft[];
+  assumptions?: AssumptionDraft[];
   spawn?: GoalDef[];
   supersede?: Array<{ todo: string; reason: string }>;
   discount?: Array<{ finding: string; reason: string }>;
@@ -117,6 +121,25 @@ export function validateTurn(input: {
   }
 
   // ---- todos ----
+  // ---- proposed assumptions ----
+  // Only the owner decides what a goal rests on, and agents can't set beliefs. But in the
+  // first real intake (mars-base-set) the goal had no assumptions yet, so every todo the
+  // planner proposed to test its nine was dropped and the engagement had no work left. So a
+  // turn may propose assumptions: none of them counts until the partner adopts them in one
+  // question, and the todos that test them wait inside that question's answer.
+  const proposed: AssumptionDef[] = [];
+  for (const [i, d] of (o.assumptions ?? []).entries()) {
+    if (i >= MAX_ASSUMPTIONS) { reasons.push(`assumption ${i}: over the ${MAX_ASSUMPTIONS}-per-turn limit`); continue; }
+    const r = checkAssumption(s, t.goal, d, proposed);
+    if (r) { reasons.push(`assumption ${i}: ${r}`); continue; }
+    proposed.push({ id: d.id, text: String(d.text).slice(0, 300), category: d.category, risk: d.risk, uncertainty: d.uncertainty, ...(d.loadBearing === true ? { loadBearing: true } : {}) });
+  }
+  // Todos are checked as if the proposed assumptions were adopted; the ones that lean on
+  // them are held for the answer instead of added now.
+  const withProposed: State = proposed.length ? { ...s, goals: new Map(s.goals).set(g.id, { ...g, def: { ...g.def, assumptions: [...g.def.assumptions, ...proposed] } }) } : s;
+  const leansOnProposed = (d: TodoDraft) => [d.tests, ...(d.assumes ?? [])].some((x) => proposed.some((a) => a.id === x));
+  const held: TodoDraft[] = [];
+
   const known = (id: string) => s.todos.has(id) || s.asks.has(id) || s.findings.has(id) || accepted.findings.some((f) => f.id === id);
   const goalScope = g.def.scope;
   const newIds = new Set<string>();
@@ -127,13 +150,33 @@ export function validateTurn(input: {
     const d = { ...raw, ...(Array.isArray(raw.writeScope) && { writeScope: slashes(raw.writeScope) }), ...(Array.isArray(raw.freeze) && { freeze: slashes(raw.freeze) }) };
     if (i >= p.proposals.maxTodosPerTurn) { reasons.push(`todo ${i}: over the ${p.proposals.maxTodosPerTurn}-per-turn limit`); continue; }
     const id = d.id ?? eid(t.id, "p", t.turns + 1, i);
-    const r = checkTodo(s, t.goal, d, id, goalScope, known, newIds, input.knownSources);
+    const r = checkTodo(withProposed, t.goal, d, id, goalScope, known, newIds, input.knownSources);
     if (r) { reasons.push(`todo ${i}: ${r}`); continue; }
     newIds.add(id);
     const draft = sanitize(s, { ...d, id });
+    if (leansOnProposed(d)) { held.push(draft); continue; }
     events.push({ id: `add-${id}`, at, by, type: "todo_added", todo: { ...draft, goal: t.goal }, provenance: `turn:${turn}` });
     accepted.todos++;
     if (d.tests || d.kind === "job" || d.kind === "wait" || d.kind === "action") accepted.testing++;
+  }
+
+  if (proposed.length) {
+    const id = eid("ask-adopt", t.goal, turn);
+    const list = proposed.map((a) => `${a.id} (${a.category}, risk ${a.risk}, uncertainty ${a.uncertainty}${a.loadBearing ? ", load-bearing" : ""}): ${a.text.slice(0, 160)}`).join("; ");
+    const work = held.length ? ` ${held.length} proposed todo(s) that test them start once you adopt them.` : "";
+    events.push({ id, at, by, type: "ask_opened", ask: {
+      id, goal: t.goal, to: g.def.owner, kind: "decision", origin: `turn:${turn}`, todo: t.id, goalVersion: g.version,
+      question: `Adopt these ${proposed.length} assumptions as what "${g.def.title}" rests on? ${list}.${work}`,
+      options: [
+        // revise replaces the whole set, so the effect carries today's set plus the new ones;
+        // goalVersion makes the question moot if the goal changes before it's answered.
+        { id: "adopt", label: "Adopt them", effect: { type: "revise", pivot: false, revision: { assumptions: [...g.def.assumptions, ...proposed], todos: held } },
+          consequence: `They become the goal's assumptions, and evidence starts to count for or against them.${work} To adopt only some, answer with --revision.` },
+        { id: "not-now", label: "Not now", consequence: "Nothing changes; the held todos are dropped." },
+      ],
+    } });
+    accepted.asks++;
+    accepted.testing += held.filter((d) => d.tests || d.kind !== "task").length;
   }
 
   // ---- asks ----
@@ -487,12 +530,28 @@ function sanitize(s: State, d: TodoDraft & { id: string }): TodoDraft & { id: st
   return { ...rest, priority: Math.max(1, d.priority ?? 2), maxTurns: d.maxTurns !== undefined ? Math.min(d.maxTurns, cap) : undefined };
 }
 
+const MAX_ASSUMPTIONS = 10;
+const CATEGORIES: Category[] = ["desirability", "feasibility", "viability", "compliance", "safety"];
+const scale = (x: unknown) => Number.isInteger(x) && (x as number) >= 1 && (x as number) <= 5;
+
+function checkAssumption(s: State, goal: string, d: AssumptionDraft, sofar: AssumptionDef[]): string | null {
+  if (!d || typeof d.id !== "string" || !safeId(d.id)) return `bad id ${d?.id}`;
+  if (findAssumption(s, goal, d.id) || sofar.some((a) => a.id === d.id)) return `${d.id} already exists`;
+  if (typeof d.text !== "string" || !d.text.trim()) return "needs a text";
+  if (!CATEGORIES.includes(d.category)) return `category is one of ${CATEGORIES.join(", ")}`;
+  if (!scale(d.risk) || !scale(d.uncertainty)) return "risk and uncertainty are whole numbers from 1 to 5";
+  return null;
+}
+
 function checkTodo(s: State, goal: string, d: TodoDraft, id: string, goalScope: string[], known: (id: string) => boolean, newIds: Set<string>, sources: string[]): string | null {
   if (!safeId(id)) return `bad id ${id}`;
   if (s.todos.has(id) || newIds.has(id)) return `${id} already exists`;
   if (!d.lane || !d.text) return "needs a lane and a text";
   const kind = d.kind ?? "task";
   if (!["task", "job", "wait", "action"].includes(kind)) return `unknown kind ${kind}`;
+  // Said before "no reason to exist": a todo that names the assumption it tests has a reason,
+  // and the planner needs to hear which assumption was missing.
+  if (d.tests && !findAssumption(s, goal, d.tests)) return `tests unknown assumption ${d.tests}: propose it in "assumptions"`;
   const grounded = (d.tests && findAssumption(s, goal, d.tests)) || (d.because && known(d.because)) || (d.after ?? []).some((x) => s.todos.has(x)) ||
     (d.job?.informs ?? d.wait?.informs ?? []).length > 0;
   if (!grounded) return "no reason to exist: name the assumption it tests, or the finding, question or todo behind it";

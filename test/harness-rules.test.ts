@@ -683,3 +683,43 @@ test("a note with no words in it is refused, so a placeholder copied from an exa
   for (const e of answerEvents(s, ask.id, { by: "partner", choice: "done", note: "Loves trains." }, T0 + 1)) apply(s, e);
   assert.throws(() => correctionEvents(s, ask.id, { by: "partner", note: "..." }, T0 + 2), /has no words in it/, "nor can a correction be one");
 });
+
+// ---------- proposed assumptions ----------
+
+test("a turn can propose what the goal rests on; nothing counts, and work that tests it waits, until the partner adopts it", () => {
+  // The first real intake (mars-base-set): the goal had no assumptions yet, so all four of
+  // the planner's todos were dropped and nothing was left to do after its questions.
+  const s0 = st(goal({ id: "G", scope: ["plan", "research"] }), todo("G", { id: "intake", lane: "plan", text: "intake" }));
+  const v = validate(s0, "intake", {
+    done: true,
+    assumptions: [
+      { id: "A1", text: "We may use the brand", category: "compliance", risk: 5, uncertainty: 4, loadBearing: true },
+      { id: "A2", text: "8 to 10 is the right age band", category: "desirability", risk: 3, uncertainty: 3 },
+      { id: "A3", text: "bad", category: "vibes" as never, risk: 9, uncertainty: 1 },
+    ],
+    todos: [
+      { lane: "research", text: "Survey comparable sets", tests: "A2", writeScope: ["research"] },
+      { lane: "research", text: "Fact sheet", tests: "A9", writeScope: ["research"] },
+    ],
+  });
+  assert.ok(v.reasons.some((r) => /assumption 2: category/.test(r)), "a malformed assumption is refused with its reason");
+  assert.ok(v.reasons.some((r) => /tests unknown assumption A9: propose it in "assumptions"/.test(r)), "a todo testing an unknown assumption is told which, not 'no reason to exist'");
+  assert.ok(!v.events.some((e) => e.type === "todo_added"), "the survey waits for the answer");
+  const opened = v.events.find((e) => e.type === "ask_opened");
+  assert.ok(opened && opened.type === "ask_opened");
+  assert.match(opened.ask.question, /Adopt these 2 assumptions.*A1 \(compliance, risk 5, uncertainty 4, load-bearing\).*1 proposed todo/);
+  assert.equal(opened.ask.goalVersion, 1, "moot if the goal changes before it's answered");
+
+  const base = [engagement, goal({ id: "G", scope: ["plan", "research"] }), todo("G", { id: "intake", lane: "plan", text: "intake" }), ...v.events];
+  const s1 = project(base, policy);
+  assert.equal(s1.goals.get("G")!.def.assumptions.length, 0, "proposed is not adopted");
+  const after = (choice: string) => project([...base, ...answerEvents(s1, opened.ask.id, { by: "partner", choice }, T0 + 2 * DAY)], policy);
+  const notNow = after("not-now");
+  assert.equal(notNow.goals.get("G")!.def.assumptions.length, 0);
+  assert.equal(notNow.todos.size, 1, "not now: the held todo never appears");
+  const adopted = after("adopt");
+  assert.deepEqual(adopted.goals.get("G")!.def.assumptions.map((a) => a.id), ["A1", "A2"]);
+  const survey = [...adopted.todos.values()].find((t) => t.text === "Survey comparable sets");
+  assert.equal(survey?.tests, "A2", "adopting starts the work that tests it");
+  assert.equal(adopted.goals.get("G")!.status, "active");
+});
